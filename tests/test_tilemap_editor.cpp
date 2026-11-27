@@ -1771,6 +1771,83 @@ AETHER_TEST(TilemapEditor_DuplicatesLayerIndependentlyAboveSource) {
     CHECK(TilemapToJson(saved) == TilemapToJson(doc.Map()));
 }
 
+AETHER_TEST(TilemapEditor_HistoryShortcutsRespectFocusAndTextEditing) {
+    HeadlessImGui ui;
+    TilemapEditDocument doc = Doc();
+    TilemapPanel panel(doc);
+    doc.brush = 4;
+    doc.Apply(1, 1);
+    doc.brush = 5;
+    doc.Apply(2, 1);
+    char text[32] = "note";
+    bool focus_text = false;
+    bool has_text_focus = false;
+    bool focus_other = false;
+    const auto draw = [&] {
+        if (focus_text) ImGui::SetKeyboardFocusHere();
+        ImGui::InputText("Text field", text, sizeof(text));
+        has_text_focus = ImGui::IsItemActive();
+        panel.Draw();
+        if (focus_other) ImGui::SetNextWindowFocus();
+        ImGui::Begin("Other tool");
+        ImGui::End();
+        focus_text = focus_other = false;
+    };
+    ImGuiIO& io = ImGui::GetIO();
+    const auto press = [&](ImGuiKey key, bool shift = false, bool hold = false) {
+        const ImGuiKey physical_mod = io.ConfigMacOSXBehaviors ? ImGuiMod_Super : ImGuiMod_Ctrl;
+        io.AddKeyEvent(physical_mod, true);
+        if (shift) io.AddKeyEvent(ImGuiMod_Shift, true);
+        io.AddKeyEvent(key, true);
+        ui.Frame(draw);
+        if (hold) {
+            io.DeltaTime = 0.5f;
+            ui.Frame(draw);
+            ui.Frame(draw);
+            io.DeltaTime = 1.0f / 60.0f;
+        }
+        io.AddKeyEvent(key, false);
+        if (shift) io.AddKeyEvent(ImGuiMod_Shift, false);
+        io.AddKeyEvent(physical_mod, false);
+        ui.Frame(draw);
+    };
+    ui.Frame(draw);
+    ui.Frame([&] { ImGui::SetWindowFocus(); draw(); });
+    ui.Frame(draw);
+    press(ImGuiKey_Z, false, true);
+    CHECK(doc.Map().Get(0, 1, 1) == 4 && doc.Map().Get(0, 2, 1) == kEmpty);
+    press(ImGuiKey_Z, true);
+    CHECK(doc.Map().Get(0, 2, 1) == 5);
+    press(ImGuiKey_Z);
+    press(ImGuiKey_Y);
+    CHECK(doc.Map().Get(0, 2, 1) == 5);
+
+    focus_other = true;
+    ui.Frame(draw);
+    ui.Frame(draw);
+    press(ImGuiKey_Z);
+    CHECK(doc.Map().Get(0, 2, 1) == 5);
+
+    focus_text = true;
+    ui.Frame([&] { ImGui::SetWindowFocus(); draw(); });
+    ui.Frame(draw);
+    CHECK(has_text_focus);
+    press(ImGuiKey_Z);
+    CHECK(doc.Map().Get(0, 2, 1) == 5);
+
+    io.AddKeyEvent(ImGuiKey_Escape, true);
+    ui.Frame(draw);
+    io.AddKeyEvent(ImGuiKey_Escape, false);
+    ui.Frame(draw);
+    CHECK(!has_text_focus);
+    io.ConfigMacOSXBehaviors = true;
+    ui.Frame(draw);
+    press(ImGuiKey_Z);
+    CHECK(doc.Map().Get(0, 2, 1) == kEmpty);
+    press(ImGuiKey_Z, true);
+    CHECK(doc.Map().Get(0, 2, 1) == 5);
+}
+
 AETHER_TEST(TilemapEditor_RectangleDragCancelsAndClipsWithoutPartialHistory) {
     HeadlessImGui ui;
     TilemapEditDocument doc = Doc();

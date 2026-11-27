@@ -232,6 +232,16 @@ void TilemapPanel::Draw() {
         ghost_verdicts_.reset();
         ghost_map_ = doc_.TilemapFile();
     }
+    const auto& io = ImGui::GetIO();
+    if (!dragging_ && !rect_active_ && !io.WantTextInput && !ImGui::IsAnyItemActive() &&
+        !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) {
+        // ImGui maps Cmd to its logical Ctrl modifier on macOS.
+        const bool undo = ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Z);
+        const bool redo_shift = ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Z);
+        const bool redo_alt = ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Y);
+        if (undo) doc_.Undo();
+        else if (redo_shift || redo_alt) doc_.Redo();
+    }
     DrawTools();
     DrawJumpProofTools();
     ImGui::Separator();
@@ -334,10 +344,12 @@ void TilemapPanel::DrawTools() {
     ImGui::SameLine();
     ImGui::BeginDisabled(!doc_.CanUndo());
     if (ImGui::Button("Undo")) doc_.Undo();
+    ImGui::SetItemTooltip("%s", ImGui::GetIO().ConfigMacOSXBehaviors ? "Undo (Cmd+Z)" : "Undo (Ctrl+Z)");
     ImGui::EndDisabled();
     ImGui::SameLine();
     ImGui::BeginDisabled(!doc_.CanRedo());
     if (ImGui::Button("Redo")) doc_.Redo();
+    ImGui::SetItemTooltip("%s", ImGui::GetIO().ConfigMacOSXBehaviors ? "Redo (Cmd+Shift+Z)" : "Redo (Ctrl+Y or Ctrl+Shift+Z)");
     ImGui::EndDisabled();
     ImGui::SameLine();
     ImGui::Checkbox("Grid", &show_grid);
