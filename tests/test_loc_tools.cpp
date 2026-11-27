@@ -298,13 +298,14 @@ AETHER_TEST(LocSync_UsesOnlyThePoHeaderToChooseTheTargetLanguage) {
     const std::string headerless = "msgctxt \"settings.language\"\nmsgid \"Language\"\n"
                                    "msgstr \"Language: English\"\n";
     CHECK(PoLanguage(headerless).empty());
-    Write(options.po_in / "fr.po", headerless);
+    Write(options.po_in / "fr.PO", headerless);
     // Only the real header field counts, even with comments and wrapped quoted strings.
     const std::string catalog = "# Language: de\nmsgid \"\"\nmsgstr \"\"\n"
                                 "\"X-Language: it\\n\"\n\"Language: pt\"\n\"_BR\\n\"\n\n"
                                 "msgctxt \"menu.play\"\nmsgid \"Play\"\nmsgstr \"Jogar\"\n";
     CHECK(PoLanguage(catalog) == "pt-BR");
-    Write(options.po_in / "reviewed.po", catalog);
+    Write(options.po_in / "reviewed.Po", catalog);
+    Write(options.po_in / "template.POT", "not a returned catalog");
 
     const SyncReport report = SyncProject(options);
     CHECK(report.ok && report.po_imported == 2);

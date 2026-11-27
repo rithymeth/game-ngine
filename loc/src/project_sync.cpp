@@ -12,6 +12,11 @@ namespace stdfs = std::filesystem;
 
 namespace {
 
+bool HasPoExtension(const stdfs::path& file) {
+    const std::string ext = file.extension().string();
+    return ext.size() == 3 && ext[0] == '.' && (ext[1] == 'p' || ext[1] == 'P') && (ext[2] == 'o' || ext[2] == 'O');
+}
+
 bool WriteText(const stdfs::path& file, const std::string& text) {
     const std::string path = file.string();
     // Compare raw bytes so CRLF and non-ASCII output are handled identically
@@ -59,7 +64,7 @@ SyncReport SyncProject(const SyncOptions& o) {
         std::vector<stdfs::path> files;
         if (stdfs::is_directory(o.po_in, ec)) {
             for (const auto& entry : stdfs::directory_iterator(o.po_in, ec)) {
-                if (entry.is_regular_file() && entry.path().extension() == ".po") files.push_back(entry.path());
+                if (entry.is_regular_file() && HasPoExtension(entry.path())) files.push_back(entry.path());
             }
             std::sort(files.begin(), files.end());
         } else {
