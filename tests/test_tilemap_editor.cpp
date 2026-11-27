@@ -354,6 +354,33 @@ AETHER_TEST(TilemapEditor_FloodPaintMatchesRegionThroughNarrowConnections) {
     CHECK(doc.Redo() && doc.Map().layers[1].cells == expected);
 }
 
+AETHER_TEST(TilemapEditor_DenseFillCountsNewAndRevertedCellsInTheSameRun) {
+    TilemapData map;
+    map.Resize(90, 28);
+    map.AddLayer("Ground");
+    map.Fill(0, 0, 0, 29, 27, 1);
+    map.Fill(0, 30, 0, 59, 27, 2);
+    map.Fill(0, 60, 0, 89, 27, 3);
+    const auto initial = map.layers[0].cells;
+    TilemapEditDocument doc(std::move(map), {});
+    doc.BeginStroke();
+    doc.brush = 3;
+    for (i32 y = 0; y < 28; ++y) for (i32 x = 0; x < 60; ++x) doc.Apply(x, y);
+    CHECK(doc.dirty());
+    doc.tool = TileTool::Fill;
+    doc.brush = 1;
+    doc.Apply(0, 0); // Restores the left third and changes the previously untouched right.
+    CHECK(doc.dirty() && doc.Map().Get(0, 89, 27) == 1);
+    doc.tool = TileTool::Paint;
+    for (i32 y = 0; y < 28; ++y) for (i32 x = 30; x < 90; ++x) {
+        doc.brush = x < 60 ? 2 : 3;
+        doc.Apply(x, y);
+    }
+    CHECK(!doc.dirty() && doc.Map().layers[0].cells == initial);
+    doc.EndStroke();
+    CHECK(!doc.CanUndo() && !doc.dirty());
+}
+
 AETHER_TEST(TilemapEditor_FloodPaintRemainsOneStrokeWithPaintAndRevert) {
     TilemapEditDocument doc = Doc();
     doc.BeginStroke();

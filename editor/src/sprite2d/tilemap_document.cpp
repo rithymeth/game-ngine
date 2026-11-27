@@ -197,7 +197,7 @@ void TilemapEditDocument::FloodPaint(i32 x, i32 y) {
     if (active_layer >= map_.layers.size() || !map_.InBounds(x, y)) return;
     const i32 target = map_.Get(active_layer, x, y);
     if (target == brush) return;
-    const auto& cells = map_.layers[active_layer].cells;
+    auto& cells = map_.layers[active_layer].cells;
     const usize width = map_.width;
     const usize height = map_.height;
     if (cells.size() != static_cast<u64>(width) * height) {
@@ -206,6 +206,7 @@ void TilemapEditDocument::FloodPaint(i32 x, i32 y) {
         return;
     }
 
+    auto& edit = stroke_[active_layer];
     struct Run { usize row, first, end; }; // end is exclusive
     std::deque<Run> pending;
     // As each horizontal run is discovered, paint it immediately. The new
@@ -217,7 +218,22 @@ void TilemapEditDocument::FloodPaint(i32 x, i32 y) {
         while (first > 0 && cells[base + first - 1] == target) --first;
         while (end < width && cells[base + end] == target) ++end;
         pending.push_back({row, first, end});
-        for (usize i = base + first; i < base + end; ++i) PaintCellAt(i, brush);
+        usize i = base + first;
+        const usize stop = base + end;
+        while (i < stop && std::holds_alternative<SparseCells>(edit.cells)) PaintCellAt(i++, brush);
+        if (i < stop) {
+            // Every cell in the remaining run has the same live value. Count
+            // new and reverted changes against the original row, then write once.
+            const auto& original = std::get<std::vector<i32>>(edit.cells);
+            usize changed = 0, restored = 0;
+            for (usize offset = i; offset < stop; ++offset) {
+                changed += original[offset] == target;
+                restored += original[offset] == brush;
+            }
+            edit.changed = edit.changed + changed - restored;
+            stroke_changed_cells_ = stroke_changed_cells_ + changed - restored;
+            std::fill_n(cells.data() + i, stop - i, brush);
+        }
         return end;
     };
     paint_run(static_cast<usize>(y), static_cast<usize>(x));
