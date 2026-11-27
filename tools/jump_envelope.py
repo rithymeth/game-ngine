@@ -101,30 +101,41 @@ def main():
     parser.add_argument("--key", required=True, help="canonical input key in the recording, e.g. Space")
     parser.add_argument("--press-frame", type=int, required=True, help="zero-based press frame in the recording")
     parser.add_argument("--radius", type=int, default=6, choices=range(1, MAX_RADIUS + 1))
+    parser.add_argument("--require-preserved-offsets", action="store_true",
+                        help="exit 5 if the candidate loses any passing baseline offset")
     parser.add_argument("--output", type=Path, help="write to a new JSON file instead of stdout")
     args = parser.parse_args()
+    if args.require_preserved_offsets and args.candidate is None:
+        parser.error("--require-preserved-offsets requires --candidate")
     try:
         if args.output is not None and args.output.exists():
             raise FileExistsError(f"output file already exists: {args.output}")
         trials, skipped = variants(args.route, args.key, args.press_frame, args.radius)
+        if args.require_preserved_offsets and len(trials) < 2:
+            raise ValueError("no valid shifted offsets to use as a release gate")
         report = {"schema": "aether.jump-envelope.experimental.v1", "key": args.key,
                   "press_frame": args.press_frame, "radius": args.radius, "skipped_offsets": skipped,
                   "scene": trials[0]["scene"], "fixed_hz": trials[0]["fixed_hz"]}
         with tempfile.TemporaryDirectory(prefix="aether-jump-envelope-") as scratch:
             root = Path(scratch)
             before = report["baseline"] = sweep(args.player.resolve(strict=True), trials, root / "before")
+            if args.require_preserved_offsets and 0 not in before["pass_offsets"]:
+                raise ValueError("the original route does not pass on the baseline package")
             if args.candidate is not None:
                 after = report["candidate"] = sweep(args.candidate.resolve(strict=True), trials, root / "after")
                 old, new = set(before["pass_offsets"]), set(after["pass_offsets"])
                 report.update(lost_pass_offsets=sorted(old - new), gained_pass_offsets=sorted(new - old))
+        if args.require_preserved_offsets:
+            report["gate"] = {"policy": "preserve-pass-offsets", "passed": not report["lost_pass_offsets"]}
         receipt = json.dumps(report, allow_nan=False)
         if args.output is None:
             print(receipt)
         else:
             write_new_json(args.output, receipt)
+        return 5 if args.require_preserved_offsets and not report["gate"]["passed"] else 0
     except (OSError, ValueError, OverflowError, subprocess.TimeoutExpired) as exc:
         parser.error(str(exc))
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
