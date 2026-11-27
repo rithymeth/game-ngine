@@ -206,11 +206,11 @@ void WorldPartitionPanel::TogglePin(const CellCoord& cell) {
 }
 
 std::optional<CellCoord> WorldPartitionPanel::CellAt(f32 sx, f32 sy) const {
-    if (cols_ <= 0 || rows_ <= 0 || pixels_per_cell <= 0.0f) return std::nullopt;
-    const i32 cx = static_cast<i32>(std::floor((sx - map_x_) / pixels_per_cell));
-    const i32 cz = static_cast<i32>(std::floor((sy - map_y_) / pixels_per_cell));
-    if (cx < 0 || cz < 0 || cx >= cols_ || cz >= rows_) return std::nullopt;
-    return CellCoord{min_x_ + cx, min_z_ + cz};
+    if (cols_ <= 0 || rows_ <= 0 || !std::isfinite(pixels_per_cell) || pixels_per_cell <= 0.0f) return std::nullopt;
+    const f64 cx = std::floor((static_cast<f64>(sx) - map_x_) / pixels_per_cell);
+    const f64 cz = std::floor((static_cast<f64>(sy) - map_y_) / pixels_per_cell);
+    if (!(cx >= 0.0 && cz >= 0.0 && cx < static_cast<f64>(cols_) && cz < static_cast<f64>(rows_))) return std::nullopt;
+    return CellCoord{static_cast<i32>(min_x_ + static_cast<i64>(cx)), static_cast<i32>(min_z_ + static_cast<i64>(cz))};
 }
 
 void WorldPartitionPanel::Draw() {
@@ -226,13 +226,17 @@ void WorldPartitionPanel::Draw() {
     }
     i32 x0 = index.cells.front().coord.x, x1 = x0, z0 = index.cells.front().coord.z, z1 = z0;
     for (const CellInfo& c : index.cells) x0 = std::min(x0, c.coord.x), x1 = std::max(x1, c.coord.x), z0 = std::min(z0, c.coord.z), z1 = std::max(z1, c.coord.z);
-    min_x_ = x0, min_z_ = z0, cols_ = x1 - x0 + 1, rows_ = z1 - z0 + 1;
+    min_x_ = x0, min_z_ = z0;
+    // Individually valid cells can span more than a signed 32-bit distance.
+    cols_ = static_cast<i64>(x1) - x0 + 1;
+    rows_ = static_cast<i64>(z1) - z0 + 1;
     const ImVec2 origin = ImGui::GetCursorScreenPos();
     map_x_ = origin.x, map_y_ = origin.y;
     const f32 s = pixels_per_cell;
     ImDrawList* dl = ImGui::GetWindowDrawList();
     for (const CellInfo& c : index.cells) {
-        const f32 px = map_x_ + static_cast<f32>(c.coord.x - x0) * s, py = map_y_ + static_cast<f32>(c.coord.z - z0) * s;
+        const f32 px = map_x_ + static_cast<f32>(static_cast<i64>(c.coord.x) - x0) * s;
+        const f32 py = map_y_ + static_cast<f32>(static_cast<i64>(c.coord.z) - z0) * s;
         const CellState st = streamer_.State(c.coord);
         const u32 fill = st == CellState::Loaded ? IM_COL32(60, 170, 80, 255) : st == CellState::Failed ? IM_COL32(190, 60, 60, 255) : IM_COL32(70, 70, 80, 255);
         dl->AddRectFilled(ImVec2(px + 1, py + 1), ImVec2(px + s - 1, py + s - 1), fill);

@@ -81,7 +81,8 @@ private:
     std::set<streaming::CellCoord> pinned_;
     // The last map's placement: the screen corner and the lowest cell drawn there.
     f32 map_x_ = 0.0f, map_y_ = 0.0f;
-    i32 min_x_ = 0, min_z_ = 0, cols_ = 0, rows_ = 0;
+    i32 min_x_ = 0, min_z_ = 0;
+    i64 cols_ = 0, rows_ = 0;
 };
 
 } // namespace aether::editor

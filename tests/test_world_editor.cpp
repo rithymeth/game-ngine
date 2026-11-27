@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <limits>
 #include <vector>
 
 // Phase 21 step 7: the world-building editors - terrain sculpting and
@@ -384,6 +385,26 @@ AETHER_TEST(WorldEditor_ParentedPartitionMarkerMatchesRuntimeCell) {
         }
         CHECK(vertices > 0);
         CHECK(panel.CellAt((low.x + high.x) * 0.5f, (low.y + high.y) * 0.5f) == CellCoord{1, 0});
+    });
+}
+
+AETHER_TEST(WorldEditor_PartitionMapHandlesWidelySeparatedCells) {
+    HeadlessImGui ui;
+    World game;
+    WorldIndex index;
+    constexpr i32 low = std::numeric_limits<i32>::min() + 1;
+    constexpr i32 high = std::numeric_limits<i32>::max();
+    index.cells.push_back({{low, low}, 1, {}, {}});
+    index.cells.push_back({{high, high}, 1, {}, {}});
+    WorldStreamer streamer(game, std::move(index), {});
+    WorldPartitionPanel panel(streamer);
+    ui.Frame([&] {
+        panel.Draw();
+        const ImVec2 start = ImGui::GetItemRectMin();
+        CHECK(panel.CellAt(start.x + 12.0f, start.y + 12.0f) == CellCoord{low, low});
+        CHECK(panel.CellAt(start.x + 36.0f, start.y + 12.0f) == CellCoord{low + 1, low});
+        CHECK(!panel.CellAt(start.x - 1.0f, start.y + 12.0f));
+        CHECK(!panel.CellAt(std::numeric_limits<f32>::max(), start.y));
     });
 }
 
