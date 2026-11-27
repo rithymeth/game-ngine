@@ -34,6 +34,16 @@ offsets when comparing two packages. Exit 0 means the experiment completed,
 not that the candidate preserved its timing margin. An error exits 2 and
 does not publish a receipt.
 
+### Opt-in release gate
+
+For two packages, add --require-preserved-offsets to fail a release check if
+any sampled passing baseline offset becomes a miss. A gain at another offset
+does not cancel the loss. Exit 5 means a regression; the diagnostic JSON is
+still written. Exit 0 means no observed loss under this policy. A missing
+candidate, a reference route that misses at offset zero, or a sweep with no
+valid shifted offsets exits 2 without a receipt. Skipped offsets are not
+coverage. Without the gate flag, the report remains informational.
+
 ## Prior art and what we would ship differently
 
 - [Unity InputEventTrace](https://docs.unity3d.com/Packages/com.unity.inputsystem@1.4/api/UnityEngine.InputSystem.LowLevel.InputEventTrace.html)
@@ -58,5 +68,5 @@ invocation, independent profiles, status/landing checks and report handling;
 it does not emulate Aether physics. Next, run the same experiment on two
 actual packaged 2D starter builds and verify the output against their
 traces. Before a production merge, also validate the desired platform(s).
-Editor UI, CI thresholds, multi-input perturbations, player skill and general
+Automatic CI wiring, editor UI, multi-input perturbations, player skill and general
 level playability are outside the spike.
