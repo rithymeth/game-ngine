@@ -356,6 +356,41 @@ AETHER_TEST(AssetDatabase_TilemapScanKeepsOnlyEffectiveJsonReferences) {
     stdfs::remove_all(root);
 }
 
+AETHER_TEST(AssetDatabase_RawGuidScanFindsAdjacentAndFinalTokens) {
+    const auto root = FreshContent("aether_test_raw_guid_scan");
+    Write(root / "First.png", "texture source");
+    Write(root / "Last.png", "texture source");
+    Write(root / "Unreferenced.png", "texture source");
+    AssetDatabase db(root);
+    db.Scan();
+    const auto* first = db.FindByPath("First.png");
+    const auto* last = db.FindByPath("Last.png");
+    const auto* unreferenced = db.FindByPath("Unreferenced.png");
+    if (!first || !last || !unreferenced) { AETHER_CHECK(false); return; }
+    const AssetGuid first_guid = first->guid, last_guid = last->guid;
+    std::string malformed = ToString(unreferenced->guid);
+    malformed[0] = 'g'; // all separator positions match, but it's not hex
+    std::string upper = ToString(first_guid);
+    for (char& ch : upper) {
+        if (ch >= 'a' && ch <= 'f') ch = static_cast<char>(ch - 'a' + 'A');
+    }
+    // Raw binary/text fallback must see GUIDs without a JSON string boundary,
+    // including an embedded NUL before the tokens and no suffix after the last.
+    const std::string bytes = malformed + '\0' + upper + ToString(last_guid);
+    Write(root / "Raw.ascene", bytes);
+    Write(root / "Raw.atilemap", bytes);
+    Write(root / "Exact.atilemap", ToString(last_guid));
+    db.Scan();
+    for (const char* path : {"Raw.ascene", "Raw.atilemap"}) {
+        const auto* record = db.FindByPath(path);
+        AETHER_CHECK(record && std::set<AssetGuid>(record->dependencies.begin(), record->dependencies.end()) ==
+                     (std::set<AssetGuid>{first_guid, last_guid}));
+    }
+    const auto* exact = db.FindByPath("Exact.atilemap");
+    AETHER_CHECK(exact && exact->dependencies == std::vector<AssetGuid>{last_guid});
+    stdfs::remove_all(root);
+}
+
 AETHER_TEST(AssetDatabase_Reports2DReferencesToMissingSourcesWithMetadata) {
     const auto root = FreshContent("aether_test_missing_referenced_sheet");
     using nlohmann::json;

@@ -449,8 +449,6 @@ ScanResult AssetDatabase::Scan() {
 
 namespace {
 
-bool IsHexDigit(u8 c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'); }
-
 // Every substring shaped like a UUID (8-4-4-4-12 hex digits) in `bytes`. JSON
 // and MessagePack both store strings as raw UTF-8, so this finds saved
 // AssetRef GUIDs in either scene format without parsing it.
@@ -458,14 +456,11 @@ std::vector<AssetGuid> FindGuidStrings(const std::vector<u8>& bytes) {
     std::vector<AssetGuid> found;
     constexpr usize kLength = 36;
     for (usize i = 0; i + kLength <= bytes.size(); ++i) {
-        bool shaped = true;
-        for (usize k = 0; k < kLength && shaped; ++k) {
-            const bool dash = k == 8 || k == 13 || k == 18 || k == 23;
-            shaped = dash ? bytes[i + k] == '-' : IsHexDigit(bytes[i + k]);
-        }
-        if (!shaped) {
-            continue;
-        }
+        // Check the rare fixed positions before examining any hex digits.
+        // Large tilemaps can contain tens of millions of ordinary numbers.
+        const u8* candidate = bytes.data() + i;
+        if (candidate[8] != '-' || candidate[13] != '-' ||
+            candidate[18] != '-' || candidate[23] != '-') continue;
         AssetGuid guid;
         if (ParseAssetGuid(std::string_view(reinterpret_cast<const char*>(bytes.data() + i), kLength), guid)) {
             found.push_back(guid);
