@@ -158,6 +158,37 @@ AETHER_TEST(SaveInspector_DeleteRemovesFileAndBackup) {
     CHECK(!doc.DeleteFile());
 }
 
+AETHER_TEST(SaveInspector_DeletePreservesPrimaryWhenBackupIsBlocked) {
+    const auto file = MakeBagSave(Dir("delete_blocked_backup"));
+    const auto bytes = Slurp(file);
+    auto backup = file;
+    backup += ".bak";
+    CHECK(stdfs::remove(backup));
+    CHECK(stdfs::create_directory(backup));
+    Spit(backup / "keep.txt", "not a backup");
+    SaveInspectorDocument doc;
+    CHECK(doc.Open(file));
+    CHECK(!doc.DeleteFile());
+    CHECK(doc.IsOpen() && doc.File() == file);
+    CHECK(!bytes.empty() && Slurp(file) == bytes);
+    CHECK(Slurp(backup / "keep.txt") == "not a backup");
+}
+
+AETHER_TEST(SaveInspector_DeletePreservesBackupWhenPrimaryIsADirectory) {
+    const auto file = MakeBagSave(Dir("delete_primary_directory"));
+    auto backup = file;
+    backup += ".bak";
+    const auto bytes = Slurp(backup);
+    SaveInspectorDocument doc;
+    CHECK(doc.Open(file));
+    CHECK(stdfs::remove(file));
+    CHECK(stdfs::create_directory(file));
+    CHECK(!doc.DeleteFile());
+    CHECK(doc.IsOpen() && doc.File() == file);
+    CHECK(stdfs::is_directory(file));
+    CHECK(!bytes.empty() && Slurp(backup) == bytes);
+}
+
 AETHER_TEST(SaveInspector_CopyValidatesTheName) {
     const stdfs::path dir = Dir("copy");
     const stdfs::path file = MakeBagSave(dir);

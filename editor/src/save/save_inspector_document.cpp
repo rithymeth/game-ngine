@@ -83,9 +83,17 @@ bool SaveInspectorDocument::DeleteFile() {
     std::error_code ec;
     stdfs::path backup = file_;
     backup += ".bak";
-    const bool a = stdfs::remove(file_, ec);
-    const bool b = stdfs::remove(backup, ec);
-    if (!a && !b) return false;
+    // A directory is not a save. Check both paths before removing either one.
+    for (const stdfs::path& path : {file_, backup}) {
+        const auto status = stdfs::symlink_status(path, ec);
+        if (ec && ec != std::errc::no_such_file_or_directory) return false;
+        if (stdfs::is_directory(status)) return false;
+    }
+    // A failed backup removal must not also remove the primary.
+    const bool removed_backup = stdfs::remove(backup, ec);
+    if (ec) return false;
+    const bool removed_primary = stdfs::remove(file_, ec);
+    if (ec || (!removed_primary && !removed_backup)) return false;
     Close();
     return true;
 }
