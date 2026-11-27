@@ -39,6 +39,26 @@ AETHER_TEST(Loc_LanguageTagsNormalizeAndFallBack) {
     CHECK((FallbackChain("fr-CA", "fr") == std::vector<std::string>{"fr-CA", "fr"}));
 }
 
+AETHER_TEST(Loc_FallbackSkipsDanglingExtensionSingletons) {
+    CHECK((FallbackChain("zh-Hant-CN-x-private1-private2") ==
+           std::vector<std::string>{"zh-Hant-CN-x-private1-private2", "zh-Hant-CN-x-private1",
+                                    "zh-Hant-CN", "zh-Hant", "zh", "en"}));
+    CHECK((FallbackChain("x-studio") == std::vector<std::string>{"x-studio", "en"}));
+    CHECK((FallbackChain("en-0-demo") == std::vector<std::string>{"en-0-Demo", "en"}));
+}
+
+AETHER_TEST(Loc_MalformedExtensionColumnDoesNotShadowRegionalText) {
+    StringTable table;
+    CHECK(table.ImportCsv("key,en,km-KH,km-KH-u,km-KH-u-nu-latn\n"
+                          "play,Play,Regional,Incomplete,\n"
+                          "quit,Quit,Regional,Incomplete,Exact\n"));
+    Localizer localizer;
+    localizer.SetTable(&table);
+    localizer.SetLanguage("km-KH-u-nu-latn");
+    CHECK(localizer.Resolve(LocText{"play", "Play"}) == "Regional");
+    CHECK(localizer.Resolve(LocText{"quit", "Quit"}) == "Exact");
+}
+
 AETHER_TEST(Loc_StringTableSetFindRemove) {
     StringTable table;
     CHECK(table.Empty());
