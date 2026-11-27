@@ -1255,7 +1255,20 @@ void Game::BuildFrame() {
     update.run = [this](World&, const FrameContext& frame) {
         // Menus: the keys and the pad move focus and press the focused control (only when the game has UI on screen, so a game
         // without one never sees its input used here); scripts read the clicks next frame through UI.WasClicked.
-        if (runtime_ && runtime_->ui_bridge && runtime_->ui_viewport.LayerCount() > 0) runtime_->ui_bridge->Update(input_state_, frame.dt);
+        if (runtime_ && runtime_->ui_bridge && runtime_->ui_viewport.LayerCount() > 0) {
+            if (ui_held_.empty()) {
+                runtime_->ui_bridge->Update(input_state_, frame.dt);
+            } else {
+                // On-screen controls write gameplay keys into input_state_.
+                // Do not route those same values back into the UI that produced them.
+                input::InputState navigation = input_state_;
+                for (const HeldControl& held : ui_held_) {
+                    if (held.key_a != input::Key::None) navigation.SetAxis(held.key_a, 0.0f);
+                    if (held.key_b != input::Key::None) navigation.SetAxis(held.key_b, 0.0f);
+                }
+                runtime_->ui_bridge->Update(navigation, frame.dt);
+            }
+        }
 #if AETHER_GAME_AI
         // Senses before scripts decide, so AI.GetKnown / AI.GetTarget are this frame's. The runtime's own
         // perception world (physics builds), else the active one a host supplied (a test, a tool).

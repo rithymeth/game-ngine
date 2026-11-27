@@ -996,12 +996,16 @@ AETHER_TEST(Player_PointersDriveTheUiAndVirtualControls) {
     game.Tick(1.0f / 60.0f);
     CHECK(dynamic_cast<ui::Button*>(viewport->Find("Play"))->IsPressed());
     CHECK(in.IsDown(Key::GamepadA) && !in.IsDown(Key::MouseLeft));
+    // Virtual A is for gameplay. It must not feed back into the UI as
+    // Accept and click this button before its pointer is released.
+    for (int i = 0; i < 4; ++i) game.Tick(1.0f / 60.0f);
+    auto* status = dynamic_cast<ui::Text*>(viewport->Find("Status"));
+    CHECK(status != nullptr && status->text == "idle");
     in.SetPointer(0, 150, 130, false, true);
     in.SetButton(Key::MouseLeft, false);
     game.Tick(1.0f / 60.0f);
     CHECK(!in.IsDown(Key::GamepadA)); // released with the button
     for (int i = 0; i < 4; ++i) game.Tick(1.0f / 60.0f);
-    auto* status = dynamic_cast<ui::Text*>(viewport->Find("Status"));
     CHECK(status != nullptr && status->text == "clicked");
 
     // A finger on the stick: dragging 30 pixels right of where it landed is half of the stick's 60 pixel reach.
