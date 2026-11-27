@@ -269,6 +269,11 @@ if(AETHER_BUILD_PHYSICS)
     # Vulkan SDK half-installed (loader and headers but no glslc/dxc, as on
     # Linux CI) it would still try to compile its shaders.
     set(JPH_USE_VK OFF CACHE BOOL "" FORCE)
+    # Keep Aether's own warning policy, but do not let Jolt turn compiler
+    # diagnostics into errors. GCC 14 diagnoses Float3's pointer-indexing
+    # implementation as an out-of-bounds access while compiling Jolt 5.6.0
+    # at -O3, which otherwise blocks every physics-enabled Release build.
+    set(ENABLE_ALL_WARNINGS OFF CACHE BOOL "" FORCE)
     # Jolt builds without C++ RTTI by default, but JoltJobSystemAdapter derives
     # from JPH::JobSystemWithBarrier in our own (RTTI-enabled) code, so its
     # vtable references Jolt's typeinfo. MSVC tolerates the mismatch; GCC and
