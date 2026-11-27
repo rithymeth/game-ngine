@@ -123,6 +123,8 @@ enum class Key : u16 {
     GamepadRightStickY,
     GamepadLeftTrigger,
     GamepadRightTrigger,
+    LeftSuper,
+    RightSuper,
     Count
 };
 
@@ -353,5 +355,7 @@ AETHER_ENUM(aether::input::Key, 1,
     AETHER_ENUM_VALUE(GamepadRightStickX),
     AETHER_ENUM_VALUE(GamepadRightStickY),
     AETHER_ENUM_VALUE(GamepadLeftTrigger),
-    AETHER_ENUM_VALUE(GamepadRightTrigger)
+    AETHER_ENUM_VALUE(GamepadRightTrigger),
+    AETHER_ENUM_VALUE(LeftSuper),
+    AETHER_ENUM_VALUE(RightSuper)
 )

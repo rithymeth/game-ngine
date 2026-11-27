@@ -20,6 +20,7 @@ AETHER_TEST(Window_KeyCodesMapToEngineKeys) {
     CHECK(KeyFromVirtualKey(0x70) == Key::F1 && KeyFromVirtualKey(0x7B) == Key::F12);
     CHECK(KeyFromVirtualKey(0x20) == Key::Space && KeyFromVirtualKey(0x1B) == Key::Escape && KeyFromVirtualKey(0x0D) == Key::Enter);
     CHECK(KeyFromVirtualKey(0xA1) == Key::RightShift && KeyFromVirtualKey(0x10) == Key::LeftShift && KeyFromVirtualKey(0xA5) == Key::RightAlt);
+    CHECK(KeyFromVirtualKey(0x5B) == Key::LeftSuper && KeyFromVirtualKey(0x5C) == Key::RightSuper);
     CHECK(KeyFromVirtualKey(0x25) == Key::Left && KeyFromVirtualKey(0x28) == Key::Down && KeyFromVirtualKey(0xC0) == Key::Grave);
     CHECK(KeyFromVirtualKey(0x01) == Key::MouseLeft && KeyFromVirtualKey(0x06) == Key::MouseButton5);
     CHECK(KeyFromVirtualKey(0xFF) == Key::None && KeyFromVirtualKey(0x7C) == Key::None); // F13: no name
@@ -28,6 +29,8 @@ AETHER_TEST(Window_KeyCodesMapToEngineKeys) {
     CHECK(KeyFromGlfwKey(290) == Key::F1 && KeyFromGlfwKey(301) == Key::F12 && KeyFromGlfwKey(302) == Key::None);
     CHECK(KeyFromGlfwKey(256) == Key::Escape && KeyFromGlfwKey(265) == Key::Up && KeyFromGlfwKey(96) == Key::Grave);
     CHECK(KeyFromGlfwKey(340) == Key::LeftShift && KeyFromGlfwKey(346) == Key::RightAlt && KeyFromGlfwKey(-1) == Key::None);
+    CHECK(KeyFromGlfwKey(343) == Key::LeftSuper && KeyFromGlfwKey(347) == Key::RightSuper);
+    CHECK(std::string(input::KeyName(Key::LeftSuper)) == "LeftSuper" && input::KeyFromName("RightSuper") == Key::RightSuper);
     // Mouse and gamepad.
     CHECK(KeyFromGlfwMouseButton(0) == Key::MouseLeft && KeyFromGlfwMouseButton(2) == Key::MouseMiddle && KeyFromGlfwMouseButton(7) == Key::None);
     CHECK(KeyFromGlfwGamepadButton(0) == Key::GamepadA && KeyFromGlfwGamepadButton(8) == Key::None && KeyFromGlfwGamepadButton(14) == Key::GamepadDPadLeft);

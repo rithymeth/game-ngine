@@ -41,6 +41,8 @@ Key KeyFromVirtualKey(u32 vk) {
     case 0x28: return Key::Down;
     case 0x2D: return Key::Insert;
     case 0x2E: return Key::Delete;
+    case 0x5B: return Key::LeftSuper;  // VK_LWIN
+    case 0x5C: return Key::RightSuper; // VK_RWIN
     case 0xA0: return Key::LeftShift;
     case 0xA1: return Key::RightShift;
     case 0xA2: return Key::LeftCtrl;
@@ -96,9 +98,11 @@ Key KeyFromGlfwKey(int key) {
     case 340: return Key::LeftShift;
     case 341: return Key::LeftCtrl;
     case 342: return Key::LeftAlt;
+    case 343: return Key::LeftSuper;
     case 344: return Key::RightShift;
     case 345: return Key::RightCtrl;
     case 346: return Key::RightAlt;
+    case 347: return Key::RightSuper;
     }
     return Key::None;
 }

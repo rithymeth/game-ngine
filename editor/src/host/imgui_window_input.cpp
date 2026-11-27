@@ -33,6 +33,8 @@ ImGuiKey ToImGuiKey(Key key) {
         case Key::RightCtrl: return ImGuiKey_RightCtrl;
         case Key::LeftAlt: return ImGuiKey_LeftAlt;
         case Key::RightAlt: return ImGuiKey_RightAlt;
+        case Key::LeftSuper: return ImGuiKey_LeftSuper;
+        case Key::RightSuper: return ImGuiKey_RightSuper;
         case Key::Up: return ImGuiKey_UpArrow;
         case Key::Down: return ImGuiKey_DownArrow;
         case Key::Left: return ImGuiKey_LeftArrow;
@@ -78,24 +80,26 @@ int MouseButton(Key key) {
 }
 
 // The modifier keys ImGui wants as ImGuiMod_* alongside the keys themselves.
-void UpdateModifier(ImGuiIO& io, Key key, bool down, bool (&held)[6]) {
-    static constexpr Key kKeys[6] = {Key::LeftShift, Key::RightShift, Key::LeftCtrl,
-                                     Key::RightCtrl, Key::LeftAlt,    Key::RightAlt};
-    for (int i = 0; i < 6; ++i) {
+void UpdateModifier(ImGuiIO& io, Key key, bool down, bool (&held)[8]) {
+    static constexpr Key kKeys[8] = {Key::LeftShift, Key::RightShift, Key::LeftCtrl,  Key::RightCtrl,
+                                    Key::LeftAlt,   Key::RightAlt,   Key::LeftSuper, Key::RightSuper};
+    for (int i = 0; i < 8; ++i) {
         if (kKeys[i] == key) held[i] = down;
     }
     io.AddKeyEvent(ImGuiMod_Shift, held[0] || held[1]);
     io.AddKeyEvent(ImGuiMod_Ctrl, held[2] || held[3]);
     io.AddKeyEvent(ImGuiMod_Alt, held[4] || held[5]);
+    io.AddKeyEvent(ImGuiMod_Super, held[6] || held[7]);
 }
 
 } // namespace
 
 void FeedImGuiEvents(std::span<const WindowEvent> events, ImGuiIO& io) {
     // ImGui keeps modifier state itself; reconstruct both sides from it.
-    bool held[6] = {ImGui::IsKeyDown(ImGuiKey_LeftShift), ImGui::IsKeyDown(ImGuiKey_RightShift),
+    bool held[8] = {ImGui::IsKeyDown(ImGuiKey_LeftShift), ImGui::IsKeyDown(ImGuiKey_RightShift),
                     ImGui::IsKeyDown(ImGuiKey_LeftCtrl),  ImGui::IsKeyDown(ImGuiKey_RightCtrl),
-                    ImGui::IsKeyDown(ImGuiKey_LeftAlt),   ImGui::IsKeyDown(ImGuiKey_RightAlt)};
+                    ImGui::IsKeyDown(ImGuiKey_LeftAlt),   ImGui::IsKeyDown(ImGuiKey_RightAlt),
+                    ImGui::IsKeyDown(ImGuiKey_LeftSuper), ImGui::IsKeyDown(ImGuiKey_RightSuper)};
     for (const WindowEvent& e : events) {
         switch (e.type) {
             case WindowEventType::Key: {

@@ -1,5 +1,6 @@
 #include "host/imgui_window_input.h"
 #include "test_framework.h"
+#include "workspace/command_registry.h"
 
 #if defined(AETHER_HAS_EDITOR_VULKAN)
 #include "host/imgui_vulkan_host.h"
@@ -96,6 +97,34 @@ AETHER_TEST(EditorHost_WindowEventsDriveImGui) {
     FeedImGuiEvents(std::vector<WindowEvent>{KeyEvent(Key::LeftCtrl, false)}, io);
     ImGui::NewFrame();
     CHECK(!io.KeyCtrl);
+    ImGui::EndFrame();
+}
+
+AETHER_TEST(EditorHost_SuperModifierReachesKeyboardShortcuts) {
+    ImGuiContextScope scope;
+    ImGuiIO& io = ImGui::GetIO();
+    const Key left = KeyFromVirtualKey(0x5B);
+    const Key right = KeyFromGlfwKey(347);
+    const CommandChord palette{ImGuiKey_K, true, false, false};
+    const auto feed = [&](std::vector<WindowEvent> events) {
+        FeedImGuiEvents(events, io);
+        ImGui::NewFrame();
+    };
+
+    feed({KeyEvent(Key::LeftCtrl, true), KeyEvent(left, true), KeyEvent(right, true), KeyEvent(Key::K, true)});
+    CHECK(io.KeyCtrl && io.KeySuper);
+    CHECK(ImGui::IsKeyDown(ImGuiKey_LeftSuper) && ImGui::IsKeyDown(ImGuiKey_RightSuper));
+    CHECK(!palette.Pressed(io));
+    ImGui::EndFrame();
+
+    feed({KeyEvent(left, false), KeyEvent(Key::K, false)});
+    CHECK(io.KeySuper);
+    CHECK(!ImGui::IsKeyDown(ImGuiKey_LeftSuper) && ImGui::IsKeyDown(ImGuiKey_RightSuper));
+    ImGui::EndFrame();
+
+    feed({KeyEvent(right, false), KeyEvent(Key::K, true)});
+    CHECK(io.KeyCtrl && !io.KeySuper);
+    CHECK(palette.Pressed(io));
     ImGui::EndFrame();
 }
 
