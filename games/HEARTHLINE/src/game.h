@@ -1,6 +1,8 @@
 #pragma once
 #include <array>
 #include <cstdint>
+#include <span>
+#include <string>
 #include <vector>
 
 namespace hearthline {
@@ -8,6 +10,7 @@ namespace hearthline {
 constexpr int kMapSize = 512;
 constexpr int kExpeditionSize = 128;
 constexpr int kLayerCount = 3;
+constexpr std::size_t kMaxSaveBytes = kMapSize*kMapSize*3+1024;
 constexpr int kRiverX = 62;
 constexpr int kBridgeY = 64;
 constexpr int kCombatTickMs = 50;
@@ -20,8 +23,8 @@ constexpr int kGuardRecoveryTicks = 12;
 enum class Tile : std::uint8_t { Grass, Tree, Rock, Water, Ruin, Floor };
 enum class Phase { Playing, Won, Lost };
 enum class GuardMode { Idle, Chase, Windup, Recovery, Return, Defeated };
-enum class Structure : std::uint8_t { None, Bridge, Wall, Campfire, Relay, SupplyCache, OpenedCache };
-enum class Action { Gather, BuildBridge, BuildWall, BuildCampfire, PlaceRelay, RotateRelay, Attack, Dodge, Heal, Refuel, Interact, Wait };
+enum class Structure : std::uint8_t { None, Bridge, Wall, Campfire, Relay, SupplyCache, OpenedCache, StoneFloor };
+enum class Action { Gather, BuildBridge, BuildWall, BuildCampfire, PlaceRelay, RotateRelay, Attack, Dodge, Heal, Refuel, Interact, Wait, BuildFloor };
 struct Point { int x = 0, y = 0; };
 struct Inventory { int wood = 0, stone = 0, energy = 0, food = 0; };
 struct SupplyCache { Point at{}; Inventory loot{}; const char* name = ""; };
@@ -29,6 +32,7 @@ struct Input { int dx = 0, dy = 0; bool move = false; };
 struct Relay { Point at{}; int direction = 0; };
 struct Snapshot {
     Point player{};
+    int facing = 0; // east, south, west, north
     Point guardian{}, guard_target{};
     GuardMode guard_mode = GuardMode::Idle;
     std::uint32_t combat_tick = 0;
@@ -47,6 +51,12 @@ public:
     [[nodiscard]] bool Visible(int x, int y) const;
     [[nodiscard]] bool ResourceAvailable(int index) const;
     [[nodiscard]] bool RotateNearbyRelay();
+    [[nodiscard]] Point BuildTarget() const;
+    void RotateBuildFacing();
+    [[nodiscard]] std::vector<std::uint8_t> Save() const;
+    [[nodiscard]] bool Load(std::span<const std::uint8_t> bytes);
+    [[nodiscard]] bool SaveFile(const std::string& path) const;
+    [[nodiscard]] bool LoadFile(const std::string& path);
     [[nodiscard]] static const std::array<SupplyCache,4>& Caches();
     [[nodiscard]] int OpenedCacheCount() const { return opened_caches_; }
     [[nodiscard]] int HarvestedCount() const { return harvested_count_; }
@@ -70,6 +80,8 @@ private:
     void AdvanceTurn();
     void Reveal();
     bool HarvestNearby();
+    bool ToggleBuild(Point at, Structure kind);
+    bool ConstructionSite(Point at) const;
     bool OpenNearbyCache();
     void Damage();
     bool CombatAttack();

@@ -9,9 +9,9 @@ int main(int argc,char** argv) {
     Game game(seed);
     std::cout<<"HEARTHLINE simulation | seed "<<seed<<" | 512x512 / 3 layers\n"
              <<"Commands: w a s d, g gather, b bridge, f fire, r refuel, h heal, "
-             <<"k attack, v dodge, . wait, p/q place relay, 2 rotate nearby relay, e activate, x exit\n";
+             <<"k attack, v dodge, . wait, p/q relay, 2 rotate relay, e interact, t face, 1 wall, 3 floor, j save, l load, x exit\n";
     char command=' ';
-    while(game.State().phase==Phase::Playing && std::cin>>command) {
+    while(std::cin>>command) {
         bool accepted=false;
         switch(command) {
             case 'w': accepted=game.Move(0,-1); break; case 's': accepted=game.Move(0,1); break;
@@ -27,6 +27,11 @@ int main(int argc,char** argv) {
             case 'p': accepted=game.Act(Action::PlaceRelay,{105,64}); break;
             case 'q': accepted=game.Act(Action::PlaceRelay,{107,64}); break;
             case '2': accepted=game.RotateNearbyRelay(); break;
+            case 't': game.RotateBuildFacing(); accepted=true; break;
+            case '1': accepted=game.Act(Action::BuildWall,game.BuildTarget()); break;
+            case '3': accepted=game.Act(Action::BuildFloor,game.BuildTarget()); break;
+            case 'j': std::cout<<(game.SaveFile("hearthline.sav")?"Saved.\n":"Save failed.\n"); continue;
+            case 'l': std::cout<<(game.LoadFile("hearthline.sav")?"Loaded.\n":"Load failed; state unchanged.\n"); continue;
             case 'e': accepted=game.Act(Action::Interact); break;
             case 'x': return 0;
         }
@@ -38,7 +43,7 @@ int main(int argc,char** argv) {
                  <<" energy="<<s.inventory.energy<<" food="<<s.inventory.food
                  <<" bridge="<<s.bridge<<" guardian="<<s.guardian_defeated
                  <<" guard_hp="<<s.guard_health<<" guard_pos="<<s.guardian.x<<","<<s.guardian.y
-                 <<" attack_cd="<<s.attack_ticks<<" guard_mode="<<static_cast<int>(s.guard_mode)
+                 <<" facing="<<s.facing<<" attack_cd="<<s.attack_ticks<<" guard_mode="<<static_cast<int>(s.guard_mode)
                  <<" caches="<<game.OpenedCacheCount()<<" harvested="<<game.HarvestedCount()
                  <<" beacon="<<s.beacon<<" night="<<s.night_turns
                  <<" fuel="<<s.fuel<<" phase="<<static_cast<int>(s.phase)<<"\n";

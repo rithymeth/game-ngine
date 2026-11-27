@@ -115,6 +115,39 @@ bool Game::OpenNearbyCache() {
     }
     return false;
 }
+Point Game::BuildTarget() const {
+    constexpr Point directions[]={{1,0},{0,1},{-1,0},{0,-1}};
+    const auto d=directions[state_.facing];
+    return {state_.player.x+d.x,state_.player.y+d.y};
+}
+void Game::RotateBuildFacing() {
+    if(state_.phase==Phase::Playing) state_.facing=(state_.facing+1)%4;
+}
+bool Game::ConstructionSite(Point at) const {
+    if(!Inside(at) || Protected(at) || Distance(at,Guardian())<=8) return false;
+    for(const auto& cache:kCaches) {
+        const auto p=cache.at;
+        if((at.x==p.x && at.y>=std::min(p.y,64) && at.y<=std::max(p.y,64)) ||
+           (std::abs(at.x-p.x)<=1 && std::abs(at.y-p.y)<=1)) return false;
+    }
+    const auto tile=Terrain(at.x,at.y);
+    return tile==Tile::Grass || tile==Tile::Floor || tile==Tile::Ruin;
+}
+bool Game::ToggleBuild(Point at,Structure kind) {
+    if(!Inside(at) || Distance(state_.player,at)!=1 || !ConstructionSite(at)) return false;
+    const int wood=kind==Structure::Wall?2:0;
+    const int stone=kind==Structure::StoneFloor?1:0;
+    auto& inv=state_.inventory;
+    auto& object=objects_[Cell(at)];
+    if(object==kind) {
+        object=Structure::None; inv.wood+=wood; inv.stone+=stone;
+        return true;
+    }
+    if(object!=Structure::None || !Walkable(at.x,at.y) ||
+       inv.wood<wood || inv.stone<stone) return false;
+    object=kind; inv.wood-=wood; inv.stone-=stone;
+    return true;
+}
 bool Game::HasStructure(Point p) const { return ObjectAt(p.x,p.y)==Structure::Wall; }
 bool Game::RotateNearbyRelay() {
     const auto p=state_.player;
@@ -146,6 +179,7 @@ void Game::AdvanceTurn() {
 }
 bool Game::Move(int dx,int dy) {
     if(state_.phase!=Phase::Playing || dx < -1 || dx > 1 || dy < -1 || dy > 1 || std::abs(dx)+std::abs(dy)!=1) return false;
+    state_.facing=dx==1?0:dy==1?1:dx==-1?2:3;
     Point next{state_.player.x+dx,state_.player.y+dy};
     if(!Walkable(next.x,next.y)) return false;
     if(!state_.guardian_defeated && Distance(next,state_.guardian)==0) return false;
@@ -177,17 +211,8 @@ bool Game::Act(Action action, Point at) {
             objects_[Cell({kRiverX+1,kBridgeY})]=Structure::Bridge;
         }
         break;
-    case Action::BuildWall:
-        if(!Inside(at) || Distance(s.player,at)!=1) break;
-        if(ObjectAt(at.x,at.y)==Structure::Wall) {
-            objects_[Cell(at)]=Structure::None;
-            s.inventory.wood+=2; accepted=true;
-        } else if(!Protected(at) && Terrain(at.x,at.y)!=Tile::Water &&
-                  ObjectAt(at.x,at.y)==Structure::None && Walkable(at.x,at.y) &&
-                  s.inventory.wood>=2 && s.beacon) {
-            s.inventory.wood-=2; objects_[Cell(at)]=Structure::Wall; accepted=true;
-        }
-        break;
+    case Action::BuildWall: accepted=ToggleBuild(at,Structure::Wall); break;
+    case Action::BuildFloor: accepted=ToggleBuild(at,Structure::StoneFloor); break;
     case Action::BuildCampfire:
         if(!s.fire && s.beacon && Distance(s.player,FireSite())<=4 && s.inventory.wood>=2 && s.inventory.stone>=2) {
             s.inventory.wood-=2; s.inventory.stone-=2; s.fire=true; accepted=true;
