@@ -136,6 +136,34 @@ AETHER_TEST(LocEditor_SaveReloadKeepsEverythingIncludingEmptyLanguages) {
     CHECK(!again.Open(file.parent_path() / "missing.astrings") && !again.Errors().empty());
 }
 
+AETHER_TEST(LocEditor_FailedOpenAndReloadPreserveTheCurrentTable) {
+    const stdfs::path file = MakeTable(Dir("failed_open"));
+    const stdfs::path missing = file.parent_path() / "missing.astrings";
+    LocalizationDocument doc;
+    CHECK(!doc.Open(missing) && !doc.IsOpen() && !doc.Errors().empty());
+    CHECK(doc.Open(file));
+    CHECK(doc.SetCell("de", "quit", "Beenden"));
+    const u64 revision = doc.Revision();
+    const auto preserves_edits = [&] {
+        const std::string* text = doc.Table().Find("de", "quit");
+        CHECK(doc.File() == file && doc.IsOpen() && doc.Dirty() && doc.Revision() == revision);
+        CHECK(doc.SourceLanguage() == "en" && text != nullptr && *text == "Beenden");
+        CHECK(!doc.Errors().empty());
+    };
+
+    CHECK(!doc.Open(missing));
+    preserves_edits();
+    Write(file, "wrong-header,en\r\nplay,Play\r\n");
+    CHECK(!doc.Reload());
+    preserves_edits();
+
+    CHECK(doc.Save());
+    CHECK(doc.Reload() && !doc.Dirty() && doc.Errors().empty());
+    const std::string* saved = doc.Table().Find("de", "quit");
+    CHECK(saved != nullptr && *saved == "Beenden");
+    CHECK(!stdfs::exists(missing));
+}
+
 AETHER_TEST(LocEditor_PoRoundTripAndGather) {
     const stdfs::path root = Dir("po_gather");
     const stdfs::path file = MakeTable(root);

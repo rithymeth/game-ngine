@@ -59,6 +59,7 @@ void LocalizationPanel::Draw() {
     if (previewing_ && preview_revision_ != doc_.Revision()) RefreshPreview();
     if (!doc_.IsOpen()) {
         ImGui::TextDisabled("No string table open (a .astrings file).");
+        for (const std::string& e : doc_.Errors()) ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.4f, 1.0f), "! %s", e.c_str());
         return;
     }
     ImGui::Text("%s%s", doc_.File().filename().string().c_str(), doc_.Dirty() ? " *" : "");

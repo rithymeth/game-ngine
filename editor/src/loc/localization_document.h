@@ -18,8 +18,7 @@ namespace aether::editor {
 
 class LocalizationDocument {
 public:
-    // Reads the table; false (with Errors()) if it can't. The file stays open
-    // either way, so what was wrong with it can be read.
+    // Reads the table; false with Errors() leaves the previous file and edits unchanged.
     bool Open(const std::filesystem::path& file);
     bool Reload() { return Open(file_); }
     void Close();

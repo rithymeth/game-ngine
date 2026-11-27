@@ -935,8 +935,7 @@ struct EditorWorkspace::Impl {
         type.name = "String Table";
         type.extension = ".astrings";
         type.open = [this](const std::filesystem::path& file) {
-            loc_doc->Open(file);
-            loc_panel->SetContentDirectory(file.parent_path().parent_path());
+            if (loc_doc->Open(file)) loc_panel->SetContentDirectory(file.parent_path().parent_path());
         };
         type.owner = "editor.loc";
         extensions.AddAssetType(std::move(type));

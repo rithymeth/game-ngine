@@ -9,23 +9,27 @@ namespace aether::editor {
 namespace stdfs = std::filesystem;
 
 bool LocalizationDocument::Open(const stdfs::path& file) {
-    file_ = file;
-    table_.Clear();
     errors_.clear();
-    dirty_ = false;
-    ++revision_;
     std::string text;
     if (!fs::ReadFileText(file.string(), text)) {
         errors_.push_back("Couldn't read " + file.string());
         return false;
     }
-    const bool ok = table_.ImportCsv(text, &errors_);
+    loc::StringTable loaded;
+    if (!loaded.ImportCsv(text, &errors_)) {
+        errors_.insert(errors_.begin(), "Couldn't open " + file.string());
+        return false;
+    }
+    file_ = file;
+    table_ = std::move(loaded);
+    dirty_ = false;
+    ++revision_;
     const std::vector<std::string> languages = table_.Languages();
     const std::string en = loc::NormalizeLanguage(source_language_);
     bool has_source = false;
     for (const std::string& l : languages) has_source = has_source || l == en;
     if (!has_source && !languages.empty()) source_language_ = languages.front();
-    return ok;
+    return true;
 }
 
 void LocalizationDocument::Close() {
