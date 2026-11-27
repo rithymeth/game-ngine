@@ -1,5 +1,7 @@
 #include "game.h"
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 using namespace hearthline;
 
@@ -29,6 +31,83 @@ void Windup(Game& g) {
     for(int i=0;i<120 && g.State().guard_mode!=GuardMode::Windup;++i) g.TickCombat();
     CHECK(g.State().guard_mode==GuardMode::Windup);
     CHECK(g.State().guard_ticks==kGuardWindupTicks);
+}
+void CheckRoundTrip(const Game& original) {
+    const auto bytes=original.Save();
+    Game restored(9999);
+    CHECK(restored.Load(bytes));
+    CHECK(restored.Save()==bytes);
+    CHECK(restored.Seed()==original.Seed());
+    CHECK(restored.DiscoveredCount()==original.DiscoveredCount());
+    CHECK(restored.HarvestedCount()==original.HarvestedCount());
+    CHECK(restored.OpenedCacheCount()==original.OpenedCacheCount());
+}
+void FixChecksum(std::vector<std::uint8_t>& bytes) {
+    std::uint32_t hash=2166136261u;
+    for(std::size_t i=0;i<bytes.size()-4;++i) { hash^=bytes[i]; hash*=16777619u; }
+    for(unsigned i=0;i<4;++i) bytes[bytes.size()-4+i]=static_cast<std::uint8_t>(hash>>(8*i));
+}
+void TestConstructionAndSave(unsigned seed) {
+    Game g(seed);
+    for(int i=0;i<6;++i) { To(g,Game::Resource(i).x-1,64); CHECK(g.Act(Action::Gather)); }
+    CHECK(!g.Act(Action::BuildWall,g.BuildTarget())); // protected road
+    CHECK(!g.Act(Action::BuildFloor,g.State().player));
+    bool built=false;
+    for(int x=30;x<=35;++x) {
+        To(g,x,64);
+        if(g.Terrain(x,61)!=Tile::Grass) continue;
+        To(g,x,62);
+        CHECK(g.BuildTarget().x==x && g.BuildTarget().y==61);
+        const auto target=g.BuildTarget();
+        const int wood=g.State().inventory.wood,stone=g.State().inventory.stone;
+        CHECK(g.Act(Action::BuildWall,target)); // building allowed before beacon
+        CHECK(g.State().inventory.wood==wood-2);
+        CHECK(!g.Walkable(x,61));
+        CHECK(!g.Move(0,-1));
+        CHECK(!g.Act(Action::BuildFloor,target));
+        CheckRoundTrip(g);
+        CHECK(g.Act(Action::BuildWall,target));
+        CHECK(g.State().inventory.wood==wood);
+        CHECK(g.Walkable(x,61));
+        CHECK(g.Act(Action::BuildFloor,target));
+        CHECK(g.State().inventory.stone==stone-1);
+        CHECK(g.ObjectAt(x,61)==Structure::StoneFloor && g.Walkable(x,61));
+        CheckRoundTrip(g);
+        CHECK(g.Act(Action::BuildFloor,target));
+        CHECK(g.State().inventory.stone==stone);
+        const auto before=g.BuildTarget();
+        for(int i=0;i<4;++i) g.RotateBuildFacing();
+        CHECK(g.BuildTarget().x==before.x && g.BuildTarget().y==before.y);
+        built=true; break;
+    }
+    CHECK(built);
+    const auto good=g.Save();
+    auto bad=good;
+    bad[100]^=1;
+    CHECK(!g.Load(bad)); CHECK(g.Save()==good);
+    CHECK(!g.Load(std::span<const std::uint8_t>(good).first(good.size()-1))); CHECK(g.Save()==good);
+    bad=good; bad[4]=2; FixChecksum(bad); // unknown format version
+    CHECK(!g.Load(bad)); CHECK(g.Save()==good);
+    bad=good; bad[16]=255; bad[17]=255; FixChecksum(bad); // out-of-bounds player
+    CHECK(!g.Load(bad)); CHECK(g.Save()==good);
+    bad.assign(kMaxSaveBytes+1,0);
+    CHECK(!g.Load(bad)); CHECK(g.Save()==good);
+    if(seed==1) {
+        const std::string path="hearthline-test-save.bin";
+        std::error_code ec;
+        std::filesystem::remove(path,ec);
+        CHECK(g.SaveFile(path));
+        Game restored(33);
+        CHECK(restored.LoadFile(path)); CHECK(restored.Save()==good);
+        CHECK(g.Move(0,1)); CHECK(g.SaveFile(path));
+        CHECK(restored.LoadFile(path)); CHECK(restored.Save()==g.Save());
+        { std::ofstream out(path,std::ios::binary|std::ios::trunc); out<<"broken"; }
+        const auto previous=restored.Save();
+        CHECK(!restored.LoadFile(path)); CHECK(restored.Save()==previous);
+        std::filesystem::remove(path,ec);
+        CHECK(!restored.LoadFile(path));
+        std::cout<<"Save file bytes: "<<good.size()<<"\n";
+    }
 }
 void TestExploration(unsigned seed) {
     Game g(seed);
@@ -61,6 +140,7 @@ void TestExploration(unsigned seed) {
     CHECK(g.State().guardian_defeated);
     claim(caches[3]);
     CHECK(g.OpenedCacheCount()==4);
+    CheckRoundTrip(g);
     CHECK(g.State().inventory.wood==7);
     CHECK(g.State().inventory.stone==7);
     CHECK(g.State().inventory.food==6);
@@ -88,6 +168,7 @@ void TestExploration(unsigned seed) {
         }
     }
     CHECK(tested);
+    CheckRoundTrip(wild);
 }
 void Test(unsigned seed) {
     Game g(seed);
@@ -117,6 +198,7 @@ void Test(unsigned seed) {
     CHECK(g.State().guardian.x==84 && g.State().guardian.y==64);
     CHECK(g.State().guard_target.x==82 && g.State().guard_target.y==64);
     CHECK(g.State().attack_ticks==0);
+    CheckRoundTrip(g);
 
     Game hit=g;
     Tick(hit,kGuardWindupTicks-1);
@@ -149,6 +231,7 @@ void Test(unsigned seed) {
     Game idle=g;
     Tick(idle,240);
     CHECK(idle.State().phase==Phase::Lost); // enemy attacks even without input
+    CheckRoundTrip(idle);
     const auto frozen=idle.State().combat_tick;
     Tick(idle,10);
     CHECK(idle.State().combat_tick==frozen);
@@ -172,6 +255,7 @@ void Test(unsigned seed) {
     CHECK(!g.Act(Action::PlaceRelay,{107,64}));
     CHECK(g.Act(Action::PlaceRelay,{105,64}));
     CHECK(g.Relays()[0].direction==3);
+    CheckRoundTrip(g);
     CHECK(g.RotateNearbyRelay());
     CHECK(g.Relays()[0].direction==0);
     To(g,106,64);
@@ -197,9 +281,10 @@ void Test(unsigned seed) {
         else CHECK(g.Act(Action::Wait));
     }
     CHECK(g.Complete());
+    CheckRoundTrip(g);
 }
 int main(){
-    for(unsigned seed=1;seed<=64;++seed) { Test(seed); TestExploration(seed); }
+    for(unsigned seed=1;seed<=64;++seed) { Test(seed); TestExploration(seed); TestConstructionAndSave(seed); }
     Game g(7);
     CHECK(g.Terrain(62,64)==Tile::Water);
     CHECK(g.Discovered(20,64));
@@ -212,5 +297,5 @@ int main(){
     CHECK(!g.Walkable(-1,64));
     CHECK(!g.Act(Action::BuildBridge));
     CHECK(!g.Act(Action::PlaceRelay,{105,64}));
-    std::cout<<"Hearthline 64 seeded expeditions, combat and exploration scenarios passed\n";
+    std::cout<<"Hearthline 64 seeded expeditions, exploration, construction and persistence scenarios passed\n";
 }
