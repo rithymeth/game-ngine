@@ -2902,6 +2902,37 @@ AETHER_TEST(TilemapEditor_HeightResizeRestoresOnlyCroppedRows) {
     CHECK(doc.Redo() && doc.Map().Get(1, 2, 2) == 8 && doc.Map().Get(0, 1, 1) == 3);
 }
 
+AETHER_TEST(TilemapEditor_DeepHeightCropMovesOldRowsIntoHistory) {
+    TilemapData map;
+    map.Resize(256, 128);
+    map.AddLayer("Floor");
+    map.AddLayer("Trim");
+    map.layers[1].collides = false;
+    map.AddLayer("Short");
+    map.Set(2, 0, 0, 17);
+    map.layers[2].cells.resize(1);
+    map.Set(0, 255, 20, 4);
+    map.Set(0, 255, 29, 5);
+    map.Set(1, 0, 127, AutotileCell(2));
+    TilemapEditDocument doc(std::move(map), {});
+    doc.active_layer = 1;
+    const auto* original_floor = doc.Map().layers[0].cells.data();
+    const auto* original_trim = doc.Map().layers[1].cells.data();
+    CHECK(doc.Resize(256, 24) && doc.active_layer == 1 && doc.dirty());
+    CHECK(doc.Map().Get(0, 255, 20) == 4 && doc.Map().Get(0, 255, 29) == kEmpty);
+    CHECK(!doc.Map().layers[1].collides && doc.Map().Get(2, 0, 0) == 17 &&
+          doc.Map().layers[2].cells.size() == 256 * 24 && doc.Map().Get(2, 255, 23) == kEmpty);
+    const auto* smaller_floor = doc.Map().layers[0].cells.data();
+    CHECK(smaller_floor != original_floor);
+    CHECK(doc.Undo() && !doc.dirty());
+    CHECK(doc.Map().height == 128 && doc.Map().layers[0].cells.data() == original_floor &&
+          doc.Map().layers[1].cells.data() == original_trim);
+    CHECK(doc.Map().Get(0, 255, 29) == 5 && doc.Map().Get(1, 0, 127) == AutotileCell(2));
+    CHECK(doc.Map().layers[2].cells == std::vector<i32>{17});
+    CHECK(doc.Redo() && doc.Map().height == 24 && doc.Map().layers[0].cells.data() == smaller_floor &&
+          doc.Map().Get(0, 255, 20) == 4);
+}
+
 AETHER_TEST(TilemapEditor_ResizePreservesOverlapAndUndoRestoresCroppedLayers) {
     auto doc = Doc();
     doc.RenameLayer(0, "Ground");

@@ -468,8 +468,12 @@ void TilemapEditDocument::SwapHeight(HeightEdit& edit) {
 bool TilemapEditDocument::Resize(u32 width, u32 height) {
     if (!CanResize(width, height)) return false;
     const u64 old_count = static_cast<u64>(map_.width) * map_.height;
-    if (width == map_.width && std::all_of(map_.layers.begin(), map_.layers.end(),
-                                        [old_count](const TileLayer& layer) { return layer.cells.size() == old_count; })) {
+    // For a deep crop, move the old allocation into history and copy the
+    // smaller retained prefix instead of copying most of the original map.
+    const bool deep_height_crop = width == map_.width && static_cast<u64>(height) * 2 < map_.height;
+    if (width == map_.width && !deep_height_crop &&
+        std::all_of(map_.layers.begin(), map_.layers.end(),
+                    [old_count](const TileLayer& layer) { return layer.cells.size() == old_count; })) {
         undo_.push_back({HeightEdit{height, {}}, state_});
         SwapHeight(std::get<HeightEdit>(undo_.back().edit));
         redo_.clear();
@@ -484,7 +488,13 @@ bool TilemapEditDocument::Resize(u32 width, u32 height) {
         replacement.layers.reserve(map_.layers.size());
         const u32 overlap_width = std::min(width, map_.width);
         const u32 overlap_height = std::min(height, map_.height);
+        const usize kept_count = static_cast<usize>(width) * height;
         for (const auto& old : map_.layers) {
+            if (deep_height_crop && kept_count <= old.cells.size()) {
+                const auto end = old.cells.begin() + static_cast<std::ptrdiff_t>(kept_count);
+                replacement.layers.push_back({old.name, std::vector<i32>(old.cells.begin(), end), old.collides});
+                continue;
+            }
             const usize index = replacement.AddLayer(old.name);
             auto& next = replacement.layers[index];
             next.collides = old.collides;
