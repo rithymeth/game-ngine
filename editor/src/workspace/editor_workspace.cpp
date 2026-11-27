@@ -2745,28 +2745,39 @@ void EditorWorkspace::DrawCommandPalette() {
     // NoFocusOnAppearing: the palette usually appears because the menu bar's search box was clicked or Ctrl+K was
     // pressed, and a window taking focus as it appears would take the keyboard away from that box (ImGui clears the
     // active input when another window is focused), so the first characters typed would go nowhere.
-    if (ImGui::Begin("Command Palette", &open, ImGuiWindowFlags_NoFocusOnAppearing)) {
+    const bool visible = ImGui::Begin("Command Palette", &open, ImGuiWindowFlags_NoFocusOnAppearing);
+    if (!visible && !menu_submit) {
+        ImGui::End();
+        command_palette_open = open;
+        return;
+    }
+
+    bool submitted = menu_submit;
+    if (visible) {
         ImGui::SetNextItemWidth(-1.0f);
         if (impl_->palette_focus) {
             ImGui::SetKeyboardFocusHere();
             impl_->palette_focus = false;
         }
-        const bool submitted = ImGui::InputTextWithHint("##palette_query", "Search tools", &impl_->palette_query,
-                                                        ImGuiInputTextFlags_EnterReturnsTrue);
-        // Search once, after the input field has updated the query for this frame.
-        const assets::AssetDatabase* palette_assets = impl_->asset_database;
-        ContentBrowserPanel* browser = impl_->content_browser.get();
-        if (browser != nullptr && palette_assets == nullptr) palette_assets = browser->Database();
-        CommandPalette palette(*this, palette_assets, impl_->palette_query);
-        if (browser != nullptr) {
-            // Use the live browser to focus the chosen asset's folder.
-            palette.SetAssetOpener([browser](const std::string& path) {
-                browser->OpenFolder(std::filesystem::path(path).parent_path().generic_string());
-            });
-        } else {
-            palette.SetAssetOpener(impl_->asset_opener);
-        }
-        if ((submitted || menu_submit) && palette.ActivateFirst(*this)) open = false;
+        if (ImGui::InputTextWithHint("##palette_query", "Search tools", &impl_->palette_query,
+                                     ImGuiInputTextFlags_EnterReturnsTrue)) submitted = true;
+    }
+
+    // Search only once, after any input update. The menu bar can submit even when the palette body is not visible.
+    const assets::AssetDatabase* palette_assets = impl_->asset_database;
+    ContentBrowserPanel* browser = impl_->content_browser.get();
+    if (browser != nullptr && palette_assets == nullptr) palette_assets = browser->Database();
+    CommandPalette palette(*this, palette_assets, impl_->palette_query);
+    if (browser != nullptr) {
+        // Use the live browser to focus the chosen asset's folder.
+        palette.SetAssetOpener([browser](const std::string& path) {
+            browser->OpenFolder(std::filesystem::path(path).parent_path().generic_string());
+        });
+    } else {
+        palette.SetAssetOpener(impl_->asset_opener);
+    }
+    if (submitted && palette.ActivateFirst(*this)) open = false;
+    if (visible) {
         for (std::size_t i = 0; i < palette.Results().size(); ++i) {
             const PaletteEntry& entry = palette.Results()[i];
             std::string label;

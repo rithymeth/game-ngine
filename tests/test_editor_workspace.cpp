@@ -484,23 +484,34 @@ AETHER_TEST(EditorWorkspace_OpeningThePalettePutsTheKeyboardInTheSearchBox) {
 }
 
 AETHER_TEST(EditorWorkspace_EnterActivatesTheFirstPaletteResult) {
-    for (const bool use_menu_bar : {false, true}) {
+    struct Scenario {
+        bool use_menu_bar;
+        bool collapsed;
+        const char* query;
+        bool match;
+    };
+    for (const Scenario scenario : {Scenario{false, false, "terrain", true},
+                                    Scenario{true, false, "terrain", true},
+                                    Scenario{true, true, "terrain", true},
+                                    Scenario{true, true, "no matching palette entry", false}}) {
         HeadlessImGui imgui;
         EditorWorkspace ws;
         ImGuiIO& io = ImGui::GetIO();
         const i64 terrain = ws.FindTool("Terrain");
         CHECK(terrain >= 0 && ws.Selected() != static_cast<usize>(terrain));
+        bool collapse = false;
         const auto frame = [&] {
             imgui.Frame([&] {
                 if (ImGui::BeginMainMenuBar()) {
                     ws.DrawCommandSearch(280);
                     ImGui::EndMainMenuBar();
                 }
+                if (collapse) ImGui::SetWindowCollapsed("Command Palette", true, ImGuiCond_Always);
                 ws.DrawWindows();
             });
         };
         frame();
-        if (use_menu_bar) {
+        if (scenario.use_menu_bar) {
             const auto box = ws.LastCommandSearch();
             io.AddMousePosEvent((box.min_x + box.max_x) / 2, (box.min_y + box.max_y) / 2);
             frame();
@@ -513,13 +524,19 @@ AETHER_TEST(EditorWorkspace_EnterActivatesTheFirstPaletteResult) {
             frame();
             frame();
         }
-        io.AddInputCharactersUTF8("terrain");
+        io.AddInputCharactersUTF8(scenario.query);
         frame();
-        CHECK(ws.command_palette_open && ws.PaletteQuery() == "terrain");
+        CHECK(ws.command_palette_open && ws.PaletteQuery() == scenario.query);
+        collapse = scenario.collapsed;
         io.AddKeyEvent(ImGuiKey_Enter, true);
         frame();
-        CHECK(ws.Selected() == static_cast<usize>(terrain));
-        CHECK(!ws.command_palette_open);
+        if (scenario.match) {
+            CHECK(ws.Selected() == static_cast<usize>(terrain));
+            CHECK(!ws.command_palette_open);
+        } else {
+            CHECK(ws.Selected() != static_cast<usize>(terrain));
+            CHECK(ws.command_palette_open && ws.PaletteQuery() == scenario.query);
+        }
     }
 }
 
@@ -549,6 +566,11 @@ AETHER_TEST(EditorWorkspace_PaletteFiltersOnlyOncePerFrame) {
     label_reads = 0;
     for (int i = 0; i < 60; ++i) frame();
     CHECK(label_reads == 60);
+
+    ImGui::SetWindowCollapsed("Command Palette", true, ImGuiCond_Always);
+    label_reads = 0;
+    frame();
+    CHECK(label_reads == 0);
 }
 
 // The concept's first row names the project and its save state beside the mark, and puts the user's initials in a
