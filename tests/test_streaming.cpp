@@ -120,6 +120,51 @@ AETHER_TEST(Streaming_Partition) {
     CHECK(other.GetComponent<IdComponent>(copy)->guid == level.world.GetComponent<IdComponent>(level.crate1)->guid);
 }
 
+AETHER_TEST(Streaming_PartitionKeepsTheWholeSourceRigResident) {
+    RegisterStreamingComponents();
+    World authored;
+    const EntityGuid rig = NewEntityGuid(), mount = NewEntityGuid(), camera = NewEntityGuid();
+    authored.CreateEntity(IdComponent{rig}, At(130, 0));
+    authored.CreateEntity(IdComponent{mount}, At(4, 0), Parent{rig});
+    authored.CreateEntity(IdComponent{camera}, At(2, 32), Parent{mount}, StreamingSource{0.0f, false});
+    authored.CreateEntity(IdComponent{NewEntityGuid()}, At(145, 32));
+    authored.CreateEntity(IdComponent{NewEntityGuid()}, At(10, 32));
+
+    PartitionSettings settings;
+    settings.cell_size = 64.0f;
+    const PartitionResult partition = PartitionWorld(authored, settings);
+    CHECK(partition.index.persistent_count == 3);
+    const CellInfo* nearby = partition.index.Find({2, 0});
+    CHECK(nearby != nullptr && nearby->entity_count == 1); // unrelated prop only
+    CHECK(partition.cells.size() == 2);
+
+    World game;
+    CHECK(LoadSceneFromMemory(game, partition.persistent));
+    GuidIndex guids;
+    guids.Rebuild(game);
+    const Entity loaded_camera = guids.Find(game, camera);
+    const Entity loaded_mount = guids.Find(game, mount);
+    const Entity loaded_rig = guids.Find(game, rig);
+    CHECK(!loaded_camera.IsNull() && !loaded_mount.IsNull() && !loaded_rig.IsNull());
+    if (loaded_camera.IsNull() || loaded_mount.IsNull() || loaded_rig.IsNull()) return;
+    CHECK(GetParent(game, guids, loaded_camera) == loaded_mount && GetParent(game, guids, loaded_mount) == loaded_rig);
+    auto* source = game.GetComponent<StreamingSource>(loaded_camera);
+    CHECK(source != nullptr && !source->enabled);
+    if (source == nullptr) return;
+    WorldStreamer streamer(game, partition.index, [&](const CellCoord& coord, std::vector<u8>& bytes) {
+        const auto found = partition.cells.find(coord);
+        if (found == partition.cells.end()) return false;
+        bytes = found->second;
+        return true;
+    }, &guids);
+    streamer.Update();
+    CHECK(streamer.LoadedCells().empty());
+    source->enabled = true; // a resident camera can be activated later
+    streamer.Update();
+    CHECK(streamer.LoadedCells() == std::vector<CellCoord>{CellCoord{2, 0}});
+    CHECK(HasEntityAt(game, 145.0f));
+}
+
 AETHER_TEST(Streaming_StreamsAroundSources) {
     Level level;
     PartitionSettings s;

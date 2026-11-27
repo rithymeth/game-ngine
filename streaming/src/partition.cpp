@@ -11,6 +11,7 @@
 #include <fstream>
 #include <sstream>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace aether {
 
@@ -158,6 +159,13 @@ PartitionResult PartitionWorld(const World& world, const PartitionSettings& sett
         return e;
     };
 
+    // A streaming source must exist before any cells can load. Keep its
+    // whole hierarchy resident, even when the source starts disabled.
+    std::unordered_set<Entity> source_roots;
+    for (Entity e : entities) {
+        if (world.HasComponent<StreamingSource>(e)) source_roots.insert(root_of(e));
+    }
+
     std::map<CellCoord, World> cell_worlds;
     std::map<CellCoord, CellInfo> infos;
     World persistent;
@@ -165,7 +173,7 @@ PartitionResult PartitionWorld(const World& world, const PartitionSettings& sett
         const Entity root = root_of(e);
         const Transform* t = world.GetComponent<Transform>(root);
         const AlwaysLoaded* always = world.GetComponent<AlwaysLoaded>(root);
-        const bool stays = t == nullptr || (always != nullptr && always->enabled) || world.GetComponent<StreamingSource>(root) != nullptr;
+        const bool stays = t == nullptr || (always != nullptr && always->enabled) || source_roots.contains(root);
         if (stays) {
             CopyEntity(world, e, persistent);
             ++result.index.persistent_count;
