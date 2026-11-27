@@ -280,25 +280,31 @@ static std::vector<SpriteBatch> BuildSpriteBatchesImpl(const World& world, const
     });
 
     std::vector<SpriteBatch> batches;
-    for (Item& item : items) {
-        if (batches.empty() || batches.back().texture != item.texture) {
-            batches.emplace_back();
-            batches.back().texture = item.texture;
+    for (auto it = items.begin(); it != items.end();) {
+        auto run_end = it + 1;
+        usize vertex_count = it->vertices.size();
+        while (run_end != items.end() && run_end->texture == it->texture) {
+            vertex_count += run_end->vertices.size();
+            ++run_end;
         }
-        SpriteBatch& batch = batches.back();
-        const u32 base = static_cast<u32>(batch.vertices.size());
-        const usize quads = item.vertices.size() / 4;
-        if (batch.vertices.empty()) {
-            // A tilemap layer can already own thousands of vertices. Reuse
-            // that buffer for the first item instead of allocating a copy.
-            batch.vertices = std::move(item.vertices);
-            batch.indices.reserve(quads * 6);
-        } else {
-            batch.vertices.insert(batch.vertices.end(), item.vertices.begin(), item.vertices.end());
-        }
-        for (u32 q = 0; q < quads; ++q) {
-            const u32 v = base + q * 4;
-            for (u32 i : {0u, 1u, 2u, 0u, 2u, 3u}) batch.indices.push_back(v + i);
+        auto& batch = batches.emplace_back();
+        batch.texture = it->texture;
+        // Keep the first item's buffer when it already fits, but avoid
+        // repeated growth and copying when several layers share this texture.
+        batch.vertices = std::move(it->vertices);
+        batch.vertices.reserve(vertex_count);
+        batch.indices.reserve(vertex_count / 4 * 6);
+        const auto append_indices = [&](u32 base, usize quads) {
+            for (u32 q = 0; q < quads; ++q) {
+                const u32 v = base + q * 4;
+                for (u32 i : {0u, 1u, 2u, 0u, 2u, 3u}) batch.indices.push_back(v + i);
+            }
+        };
+        append_indices(0, batch.vertices.size() / 4);
+        for (++it; it != run_end; ++it) {
+            const u32 base = static_cast<u32>(batch.vertices.size());
+            batch.vertices.insert(batch.vertices.end(), it->vertices.begin(), it->vertices.end());
+            append_indices(base, it->vertices.size() / 4);
         }
     }
     return batches;

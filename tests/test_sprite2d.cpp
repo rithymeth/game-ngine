@@ -724,12 +724,14 @@ AETHER_TEST(Sprite2D_BatchesAreSortedAndMerged) {
     add(atlas_a, "missing", Vec3(4, 0, 0), 0, 0); // no such frame: skipped
     const std::vector<SpriteBatch> batches = BuildSpriteBatches(world, resolvers);
     // Order: A (x=2), B (x=1), then A, A merged (x=0, x=3).
-    CHECK(batches.size() == 3);
+    if (batches.size() != 3) { CHECK(false); return; }
     CHECK(batches[0].texture == tex_a && batches[0].QuadCount() == 1 && Near(batches[0].vertices[0].x, 2.0f - 0.5f));
     CHECK(batches[1].texture == tex_b && batches[1].QuadCount() == 1);
     CHECK(batches[2].texture == tex_a && batches[2].QuadCount() == 2);
-    CHECK(batches[2].vertices.size() == 8 && batches[2].indices.size() == 12);
-    CHECK(batches[2].indices[0] == 0 && batches[2].indices[5] == 3 && batches[2].indices[6] == 4);
+    CHECK(batches[2].vertices.size() == 8);
+    const std::vector<u32> single_quad{0, 1, 2, 0, 2, 3};
+    CHECK(batches[0].indices == single_quad && batches[1].indices == single_quad);
+    CHECK(batches[2].indices == (std::vector<u32>{0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7}));
 }
 
 AETHER_TEST(Sprite2D_QuadGeometryPivotFlipAndRotation) {
