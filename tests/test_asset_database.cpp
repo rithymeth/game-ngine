@@ -322,6 +322,40 @@ AETHER_TEST(AssetDatabase_ReportsUnknownTyped2DDependencies) {
     for (const auto& issue : issues) AETHER_CHECK(issue.kind == AssetIssueKind::BrokenDependency);
 }
 
+AETHER_TEST(AssetDatabase_TilemapScanKeepsOnlyEffectiveJsonReferences) {
+    const auto root = FreshContent("aether_test_tilemap_dependency_scan");
+    Write(root / "Nested.png", "texture source");
+    Write(root / "Stale.png", "texture source");
+    AssetDatabase db(root);
+    db.Scan();
+    const auto* nested = db.FindByPath("Nested.png");
+    const auto* stale = db.FindByPath("Stale.png");
+    if (!nested || !stale) { AETHER_CHECK(false); return; }
+    const AssetGuid nested_guid = nested->guid, stale_guid = stale->guid;
+    const AssetGuid tileset = NewAssetGuid(), overwritten = NewAssetGuid();
+    const auto map = [](const AssetGuid& guid) { return R"({"$type":"Tilemap","tileset":")" + ToString(guid) + '"'; };
+    Write(root / "World.atilemap", map(tileset) +
+          R"(,"layers":[{"cells":[-1,4,1.5,[[7,8],{"name":"Nested.png","old":"Stale.png","old":0}]]}]})");
+    Write(root / "Duplicate.atilemap", map(overwritten) + R"(,"tileset":null})");
+    Write(root / "Malformed.atilemap", map(tileset) + R"(,"items":["Nested.png",")" +
+          ToString(stale_guid) + R"(",1]} trailing)");
+    db.Scan();
+
+    const auto dependencies = [&](const char* path) {
+        const auto* record = db.FindByPath(path);
+        AETHER_CHECK(record != nullptr);
+        return record ? record->dependencies : std::vector<AssetGuid>{};
+    };
+    const auto world_deps = dependencies("World.atilemap");
+    AETHER_CHECK(std::set<AssetGuid>(world_deps.begin(), world_deps.end()) ==
+                 (std::set<AssetGuid>{nested_guid, tileset}));
+    AETHER_CHECK(dependencies("Duplicate.atilemap").empty());
+    // The old raw known-GUID pass still works on malformed JSON. Explicit
+    // missing links and textual asset paths require a valid parsed document.
+    AETHER_CHECK(dependencies("Malformed.atilemap") == std::vector<AssetGuid>{stale_guid});
+    stdfs::remove_all(root);
+}
+
 AETHER_TEST(AssetDatabase_Reports2DReferencesToMissingSourcesWithMetadata) {
     const auto root = FreshContent("aether_test_missing_referenced_sheet");
     using nlohmann::json;

@@ -475,6 +475,74 @@ std::vector<AssetGuid> FindGuidStrings(const std::vector<u8>& bytes) {
     return found;
 }
 
+// Reference discovery only examines strings and object fields. Tilemaps can
+// have millions of numeric array entries; parse and validate them, but do not
+// materialize those entries in the dependency scan's JSON tree.
+class TilemapDependencySax final : public Json::json_sax_t {
+public:
+    Json root;
+
+    bool null() override { return SkipScalar(); }
+    bool boolean(bool) override { return SkipScalar(); }
+    bool number_integer(Json::number_integer_t) override { return SkipScalar(); }
+    bool number_unsigned(Json::number_unsigned_t) override { return SkipScalar(); }
+    bool number_float(Json::number_float_t, const std::string&) override { return SkipScalar(); }
+    bool binary(Json::binary_t&) override { return SkipScalar(); }
+    bool string(std::string& value) override {
+        Append(std::move(value));
+        return true;
+    }
+    bool start_object(std::size_t) override { return Push(Json::object()); }
+    bool start_array(std::size_t) override { return Push(Json::array()); }
+    bool end_object() override { return Pop(); }
+    bool end_array() override { return Pop(); }
+    bool key(std::string& name) override {
+        next_field_ = &(*parents_.back())[name];
+        return true;
+    }
+    bool parse_error(std::size_t, const std::string&, const nlohmann::detail::exception&) override {
+        return false;
+    }
+
+private:
+    bool SkipScalar() {
+        // Keep a placeholder in objects: the last duplicate key must still
+        // replace an earlier string, even when its new value is not a string.
+        if (!parents_.empty() && parents_.back()->is_object()) Append(nullptr);
+        return true;
+    }
+    Json* Append(Json value) {
+        if (parents_.empty()) {
+            root = std::move(value);
+            return &root;
+        }
+        Json& parent = *parents_.back();
+        if (parent.is_array()) {
+            parent.push_back(std::move(value));
+            return &parent.back();
+        }
+        *next_field_ = std::move(value);
+        return next_field_;
+    }
+    bool Push(Json value) {
+        parents_.push_back(Append(std::move(value)));
+        return true;
+    }
+    bool Pop() {
+        parents_.pop_back();
+        return true;
+    }
+
+    std::vector<Json*> parents_;
+    Json* next_field_ = nullptr;
+};
+
+Json ParseTilemapDependencies(const std::vector<u8>& bytes) {
+    TilemapDependencySax sax;
+    if (!Json::sax_parse(bytes.begin(), bytes.end(), &sax)) return Json(Json::value_t::discarded);
+    return std::move(sax.root);
+}
+
 } // namespace
 
 void AssetDatabase::RebuildDependencies() {
@@ -549,7 +617,8 @@ void AssetDatabase::RebuildDependencies() {
         // to lose them unless the folder happened to be on the always-cook list.
         // The source formats that carry them are JSON, so a binary scene simply
         // fails to parse here and keeps the old behaviour.
-        const nlohmann::json document = nlohmann::json::parse(bytes.begin(), bytes.end(), nullptr, false);
+        const Json document = record.importer == "Tilemap" ? ParseTilemapDependencies(bytes)
+                             : Json::parse(bytes.begin(), bytes.end(), nullptr, false);
         if (!document.is_discarded()) {
             // These explicit 2D fields name assets even when their GUIDs are no
             // longer indexed. Keep the missing edge so validation and strict
