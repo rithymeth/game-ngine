@@ -27,6 +27,7 @@ public:
     explicit TilemapPanel(TilemapEditDocument& document, bool native_command = kNativeCommand)
         : doc_(document), native_command_(native_command) {}
     void Draw();
+    void ResetForNewMap();
     bool FindNextInvalidPaint();
     bool FocusCell(usize layer, i32 x, i32 y);
     void LoadTexturePreview(const assets::AssetDatabase& database);
@@ -38,6 +39,7 @@ public:
     bool solo_layer_art = false; // edit view only; diagnostics still cover all layers
 
 private:
+    void ResetView();
     void DrawPalette();
     bool DrawTileArt(ImDrawList* draw, ImVec2 a, ImVec2 b, i32 tile) const;
     void DrawTools();

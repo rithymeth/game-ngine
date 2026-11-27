@@ -218,6 +218,19 @@ bool TilemapPanel::DrawTileArt(ImDrawList* draw, ImVec2 a, ImVec2 b, i32 tile) c
     return true;
 }
 
+void TilemapPanel::ResetView() {
+    zoom = kDefaultZoom;
+    pan_x_ = pan_y_ = kDefaultPan;
+    pending_focus_.reset();
+}
+
+void TilemapPanel::ResetForNewMap() {
+    ResetView();
+    selected_autotile_ = 0;
+    rect_active_ = dragging_ = false;
+    last_brush_sample_.reset();
+}
+
 void TilemapPanel::Draw() {
     if (!pending_sheet_.pixels.empty()) {
         show_sheet_ = sheet_.Set(pending_sheet_.width, pending_sheet_.height, pending_sheet_.pixels);
@@ -370,11 +383,7 @@ void TilemapPanel::DrawTools() {
     ImGui::SetNextItemWidth(100);
     ImGui::SliderFloat("Zoom", &zoom, 6.0f, 64.0f, "%.0f px");
     ImGui::SameLine();
-    if (ImGui::SmallButton("Reset view")) {
-        zoom = kDefaultZoom;
-        pan_x_ = pan_y_ = kDefaultPan;
-        pending_focus_.reset();
-    }
+    if (ImGui::SmallButton("Reset view")) ResetView();
     ImGui::SetItemTooltip("Return to the lower-left corner at the default zoom.");
     ImGui::SameLine();
     const std::string file = doc_.TilemapFile().empty() ? std::string() : doc_.TilemapFile().filename().string() + "  ";

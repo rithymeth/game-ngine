@@ -690,6 +690,97 @@ AETHER_TEST(Openers_TilemapsAndTilesetsOpenTheirEditor) {
     stdfs::remove_all(project, ec);
 }
 
+AETHER_TEST(Openers_DifferentTilemapResetsCanvasAndRuleSelection) {
+    using namespace sprite2d;
+    ProjectPaths paths;
+    const auto project = FreshProject("tilemap_switch_view", paths);
+    std::string error;
+    Tileset tiles;
+    tiles.texture_width = tiles.texture_height = 16;
+    std::array<i32, 16> variants{};
+    tiles.AddAutotile("First rule", variants);
+    tiles.AddAutotile("Second rule", variants);
+    if (!SaveTileset(paths.content / "First.atileset", tiles, &error)) { CHECK(false); return; }
+    tiles.autotiles[0].name = "New first";
+    tiles.autotiles[1].name = "New second";
+    if (!SaveTileset(paths.content / "Second.atileset", tiles, &error)) { CHECK(false); return; }
+    {
+        assets::AssetDatabase scan(paths.content);
+        scan.Scan();
+        const auto* first = scan.FindByPath("First.atileset");
+        const auto* second = scan.FindByPath("Second.atileset");
+        if (!first || !second) { CHECK(false); return; }
+        TilemapData map;
+        map.Resize(12, 8);
+        map.AddLayer("Ground");
+        map.tileset = first->guid;
+        if (!SaveTilemap(paths.content / "First.atilemap", map, &error)) { CHECK(false); return; }
+        map.Resize(3, 2);
+        map.tileset = second->guid;
+        if (!SaveTilemap(paths.content / "Second.atilemap", map, &error)) { CHECK(false); return; }
+    }
+    HeadlessImGui ui;
+    EditorWorkspace ws(paths.file);
+    if (!ws.OpenAsset("First.atilemap", &error)) { CHECK(false); return; }
+    auto& doc = ws.Tilemap();
+    ImVec2 lower_left;
+    ImGuiWindow* palette = nullptr;
+    const auto draw = [&] {
+        const auto* parent = ImGui::GetCurrentWindowRead();
+        ImGui::PushID(static_cast<int>(ws.Selected()));
+        const ImGuiID palette_id = ImGui::GetID("##left");
+        ImGui::PopID();
+        ws.DrawTool(ws.Selected());
+        for (ImGuiWindow* child : parent->DC.ChildWindows)
+            if (child->ChildId == palette_id) palette = child;
+        const auto padding = ImGui::GetStyle().WindowPadding;
+        lower_left = {ImGui::GetItemRectMin().x + padding.x + 8, ImGui::GetItemRectMax().y - padding.y - 8};
+    };
+    auto& io = ImGui::GetIO();
+    const auto move = [&](ImVec2 p) { io.AddMousePosEvent(p.x, p.y); ui.Frame(draw); };
+    const auto button = [&](ImGuiMouseButton which, bool down) { io.AddMouseButtonEvent(which, down); ui.Frame(draw); };
+    const auto click = [&] { button(ImGuiMouseButton_Left, true); button(ImGuiMouseButton_Left, false); };
+    ui.Frame(draw);
+    if (!palette) { CHECK(false); return; }
+    const ImGuiID second_rule = ImHashStr("##autotile", 0, palette->GetID(1001));
+    const auto clip = palette->InnerClipRect;
+    for (f32 y = clip.Min.y + 2; y < clip.Max.y; y += 4) {
+        move({clip.Min.x + 18, y});
+        if (ImGui::GetHoveredID() != second_rule) continue;
+        click();
+        break;
+    }
+    CHECK(doc.brush == AutotileCell(1));
+    const ImVec2 original_start{lower_left.x + 12, lower_left.y - 12};
+    move(original_start);
+    io.AddMouseWheelEvent(0, 2);
+    ui.Frame(draw);
+    button(ImGuiMouseButton_Middle, true);
+    move({original_start.x + 340, original_start.y - 120});
+    button(ImGuiMouseButton_Middle, false);
+
+    CHECK(!ws.OpenAsset("Missing.atilemap", &error));
+    CHECK(ws.OpenAsset("First.atilemap", &error));
+    move(original_start);
+    click();
+    CHECK(!doc.dirty() && !doc.CanUndo()); // same view is still panned away
+
+    if (!ws.OpenAsset("Second.atilemap", &error)) { CHECK(false); return; }
+    const auto capture = project / "switch-view.txt";
+    ui.Frame([&] { ImGui::LogToFile(0, capture.string().c_str()); draw(); ImGui::LogFinish(); });
+    std::ifstream in(capture);
+    const std::string log(std::istreambuf_iterator<char>(in), {});
+    in.close();
+    CHECK(log.find("Editing masks: New first") != std::string::npos);
+    CHECK(log.find("Editing masks: New second") == std::string::npos);
+    move({lower_left.x + 36, lower_left.y - 36});
+    click();
+    CHECK(doc.Map().Get(0, 1, 1) == 0 && doc.CanUndo());
+    std::error_code ec;
+    stdfs::remove_all(project, ec);
+}
+
+
 AETHER_TEST(Openers_EveryRegisteredTypeWithAnOpenerOpensHeadless) {
     ProjectPaths paths;
     const stdfs::path project = FreshProject("registered", paths);
