@@ -95,6 +95,13 @@ void TilemapEditDocument::RecordLayerProperties(usize layer) {
     Changed();
 }
 
+void TilemapEditDocument::RecordTileset() {
+    EndStroke();
+    undo_.push_back({tileset_, state_});
+    redo_.clear();
+    Changed();
+}
+
 void TilemapEditDocument::BeginStroke() {
     if (in_stroke_) return;
     in_stroke_ = true;
@@ -271,6 +278,8 @@ bool TilemapEditDocument::Travel(std::vector<HistoryEntry>& from, std::vector<Hi
         RotateLayers(move->from, move->to);
         std::swap(move->from, move->to);
         std::swap(active_layer, move->selection);
+    } else if (auto* tileset = std::get_if<Tileset>(&step.edit)) {
+        std::swap(tileset_, *tileset);
     } else {
         for (auto& [key, value] : std::get<CellEdits>(step.edit))
             std::swap(map_.layers[key.first].cells[key.second], value);
@@ -368,18 +377,18 @@ bool TilemapEditDocument::Resize(u32 width, u32 height) {
 
 void TilemapEditDocument::SetSolid(i32 tile, bool solid) {
     if (tile < 0 || tileset_.IsSolid(tile) == solid) return;
-    Record();
+    RecordTileset();
     tileset_.SetSolid(tile, solid);
 }
 
 usize TilemapEditDocument::AddAutotile(const std::string& name) {
-    Record();
+    RecordTileset();
     return tileset_.AddAutotile(name, Autotile().tiles);
 }
 
 bool TilemapEditDocument::SetAutotileTile(usize autotile, u8 mask, i32 tile) {
     if (autotile >= tileset_.autotiles.size() || mask >= 16 || tileset_.autotiles[autotile].tiles[mask] == tile) return false;
-    Record();
+    RecordTileset();
     tileset_.autotiles[autotile].tiles[mask] = tile;
     return true;
 }
@@ -389,7 +398,7 @@ bool TilemapEditDocument::FillEmptyAutotileMasks(usize autotile, i32 tile) {
         static_cast<u32>(tile) >= tileset_.TileCount()) return false;
     auto& variants = tileset_.autotiles[autotile].tiles;
     if (std::find(variants.begin(), variants.end(), kEmpty) == variants.end()) return false;
-    Record();
+    RecordTileset();
     std::replace(variants.begin(), variants.end(), kEmpty, tile);
     return true;
 }

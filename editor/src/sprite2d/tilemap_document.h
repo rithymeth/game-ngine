@@ -98,12 +98,13 @@ private:
         usize selection;
     };
     struct HistoryEntry {
-        std::variant<Snapshot, CellEdits, LayerProperties, LayerMove> edit;
+        std::variant<Snapshot, CellEdits, LayerProperties, LayerMove, sprite2d::Tileset> edit;
         u64 state;
     };
     bool Travel(std::vector<HistoryEntry>& from, std::vector<HistoryEntry>& to);
     void Record(bool track_selection = false);
     void RecordLayerProperties(usize layer);
+    void RecordTileset();
     void RotateLayers(usize from, usize to);
     void Changed();
     void ClampActive();

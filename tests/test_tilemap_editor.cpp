@@ -346,6 +346,29 @@ AETHER_TEST(TilemapEditor_AutotileBrushPaintsByNeighbours) {
     CHECK(doc.GetTileset().autotiles[0].tiles[15] == 55);
 }
 
+AETHER_TEST(TilemapEditor_TilesetHistoryKeepsPaintedTileStorage) {
+    TilemapEditDocument doc = Doc();
+    doc.BeginStroke();
+    doc.brush = 7;
+    doc.Apply(0, 0);
+    // End the stroke before recording the independent tileset edit.
+    const usize rule = doc.AddAutotile("Grass");
+    CHECK(doc.SetAutotileTile(rule, kNorth, 3));
+    CHECK(doc.FillEmptyAutotileMasks(rule, 2));
+    doc.SetSolid(7, true);
+    const auto* cells = doc.Map().layers[0].cells.data();
+    CHECK(doc.GetTileset().IsSolid(7));
+    CHECK(doc.Undo() && !doc.GetTileset().IsSolid(7));
+    CHECK(doc.Undo() && rule < doc.GetTileset().autotiles.size() && doc.GetTileset().autotiles[rule].tiles[0] == kEmpty);
+    CHECK(doc.Undo() && rule < doc.GetTileset().autotiles.size() && doc.GetTileset().autotiles[rule].tiles[kNorth] == kEmpty);
+    CHECK(doc.Undo() && doc.GetTileset().autotiles.empty());
+    CHECK(doc.Map().Get(0, 0, 0) == 7 && doc.Map().layers[0].cells.data() == cells);
+    CHECK(doc.Undo() && !doc.dirty() && doc.Map().Get(0, 0, 0) == kEmpty);
+    CHECK(doc.Redo() && doc.Redo() && doc.Redo() && doc.Redo() && doc.Redo());
+    CHECK(doc.GetTileset().IsSolid(7) && doc.Map().Get(0, 0, 0) == 7);
+    CHECK(doc.Map().layers[0].cells.data() == cells);
+}
+
 AETHER_TEST(TilemapEditor_LayersSolidsAndResize) {
     TilemapEditDocument doc = Doc();
     CHECK(doc.Map().layers.size() == 1 && !doc.RemoveLayer(0)); // the last layer stays
