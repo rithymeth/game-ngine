@@ -340,18 +340,30 @@ AETHER_TEST(SequenceEditor_PanelDrawsAndSelectsKeysHeadless) {
 AETHER_TEST(SequenceEditor_ClickSelectsAnOffGridKeyWithoutMovingIt) {
     HeadlessImGui ui;
     Level level;
-    SequenceDocument doc;
-    const usize t = doc.AddTrack(TrackType::Event, "Markers");
+    SequenceDocument initial;
+    const usize t = initial.AddTrack(TrackType::Event, "Markers");
     constexpr f32 original_time = 1.012f;
-    CHECK(doc.AddEvent(t, original_time, "Cue") == 0);
+    CHECK(initial.AddEvent(t, original_time, "Cue") == 0);
+    SequenceDocument doc(initial.Sequence());
     const KeyRef key{t, KeyRef::Lane::Event, 0, 0};
     const u64 revision = doc.Revision();
     SequencerPanel panel(doc, level.world, level.guids);
-    const auto draw = [&] { panel.Draw(); };
+    bool cover = false, cover_clicked = false;
+    ImVec2 center{};
+    const auto draw = [&] {
+        panel.Draw();
+        if (!cover) return;
+        ImGui::SetNextWindowPos(ImVec2(center.x - 24.0f, center.y - 24.0f));
+        ImGui::SetNextWindowSize(ImVec2(72.0f, 60.0f));
+        if (ImGui::Begin("Covering tool", nullptr, ImGuiWindowFlags_NoDecoration)) {
+            ImGui::InvisibleButton("##covers-key", ImGui::GetContentRegionAvail());
+            cover_clicked |= ImGui::IsItemActivated();
+        }
+        ImGui::End();
+    };
     ui.Frame(draw);
     ui.Frame(draw);
     // Find the diamond in the draw data, independent of fonts and window padding.
-    ImVec2 center{};
     int vertices = 0;
     for (const ImDrawList* list : ImGui::GetDrawData()->CmdLists) {
         for (const ImDrawVert& v : list->VtxBuffer) {
@@ -366,6 +378,23 @@ AETHER_TEST(SequenceEditor_ClickSelectsAnOffGridKeyWithoutMovingIt) {
     center.x /= static_cast<f32>(vertices);
     center.y /= static_cast<f32>(vertices);
     ImGuiIO& io = ImGui::GetIO();
+    io.AddMousePosEvent(center.x, center.y);
+    cover = true;
+    ui.Frame(draw);
+    ui.Frame(draw); // let ImGui pick the covering window as hovered
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+    ui.Frame(draw);
+    io.AddMousePosEvent(center.x + 40.0f, center.y);
+    ui.Frame(draw);
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+    ui.Frame(draw);
+    CHECK(cover_clicked);
+    CHECK(!panel.Selected() && doc.Revision() == revision && Near(doc.KeyTime(key), original_time));
+    CHECK(!doc.dirty() && !doc.CanUndo() && !doc.CanRedo());
+    if (doc.Revision() != revision) return;
+
+    cover = false;
+    ui.Frame(draw); // retire the covering window before testing direct input
     io.AddMousePosEvent(center.x, center.y);
     ui.Frame(draw);
     io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
@@ -383,13 +412,13 @@ AETHER_TEST(SequenceEditor_ClickSelectsAnOffGridKeyWithoutMovingIt) {
     io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
     ui.Frame(draw);
     for (f32 offset : {40.0f, 60.0f}) {
-        io.AddMousePosEvent(center.x + offset, center.y);
+        io.AddMousePosEvent(center.x + offset, 850.0f); // a captured drag can leave the panel
         ui.Frame(draw);
     }
     io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
     ui.Frame(draw);
     CHECK(Near(doc.KeyTime(key), 1.5f));
-    CHECK(doc.Undo() && Near(doc.KeyTime(key), original_time));
+    CHECK(doc.Undo() && Near(doc.KeyTime(key), original_time) && !doc.CanUndo());
 }
 
 AETHER_TEST(SequenceEditor_HistoryDoesNotSelectAFormerKeyIndex) {

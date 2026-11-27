@@ -211,6 +211,8 @@ void SequencerPanel::DrawTimeline() {
     // Rows.
     f32 y = origin.y + kRulerHeight + 4.0f;
     bool key_clicked = false;
+    // Only start edits inside the hovered timeline. An existing drag may leave it.
+    const bool key_press = ImGui::IsWindowHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left);
     const ImVec2 mouse = ImGui::GetIO().MousePos;
     for (usize ti = 0; ti < s.tracks.size(); ++ti) {
         const Track& t = s.tracks[ti];
@@ -241,7 +243,8 @@ void SequencerPanel::DrawTimeline() {
                 const bool is_selected = selected_ && *selected_ == ref;
                 const ImU32 color = is_selected ? IM_COL32(255, 200, 60, 255) : (t.locked ? IM_COL32(120, 120, 120, 255) : IM_COL32(120, 190, 255, 255));
                 draw->AddQuadFilled(ImVec2(x, cy - 6), ImVec2(x + 6, cy), ImVec2(x, cy + 6), ImVec2(x - 6, cy), color);
-                if (!key_clicked && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && std::fabs(mouse.x - x) <= 7.0f && std::fabs(mouse.y - cy) <= 8.0f) {
+                if (key_press && !key_clicked && ImGui::IsMouseHoveringRect(ImVec2(x - 7.0f, cy - 8.0f),
+                                                                          ImVec2(x + 7.0f, cy + 8.0f))) {
                     selected_ = ref;
                     dragging_key_ = true;
                     key_clicked = true;
