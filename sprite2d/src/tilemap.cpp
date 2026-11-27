@@ -25,6 +25,15 @@ bool ReadUnsigned(const nlohmann::json& value, u32& out, u32 maximum = std::nume
     return true;
 }
 
+bool ReadSigned(const nlohmann::json& value, i32& out) {
+    if (!value.is_number_integer() ||
+        (value.is_number_unsigned() && value.get<u64>() > static_cast<u64>(std::numeric_limits<i32>::max()))) return false;
+    const i64 n = value.get<i64>();
+    if (n < std::numeric_limits<i32>::min() || n > std::numeric_limits<i32>::max()) return false;
+    out = static_cast<i32>(n);
+    return true;
+}
+
 std::string LayerCellCountError(const TileLayer& layer, usize expected) {
     return "layer '" + layer.name + "' has " + std::to_string(layer.cells.size()) + " cells, not " +
            std::to_string(expected);
@@ -158,7 +167,8 @@ bool TilesetFromJsonImpl(const nlohmann::json& data, Tileset& out, std::string* 
     if (const auto spacing = data.find("spacing"); spacing != data.end() && !ReadUnsigned(*spacing, t.spacing))
         return fail("'spacing' needs a non-negative whole number in range");
     for (const nlohmann::json& s : data.value("solid", nlohmann::json::array())) {
-        const i32 tile = s.get<i32>();
+        i32 tile = 0;
+        if (!ReadSigned(s, tile)) return fail("solid tile indices need whole numbers in range");
         if (tile >= (1 << 20)) return fail("a solid tile index is too large");
         t.SetSolid(tile, true);
     }
@@ -168,7 +178,10 @@ bool TilesetFromJsonImpl(const nlohmann::json& data, Tileset& out, std::string* 
         if (!a.contains("tiles") || !a["tiles"].is_array() || a["tiles"].size() != 16) {
             return fail("autotile '" + at.name + "' needs 16 tiles");
         }
-        for (usize i = 0; i < 16; ++i) at.tiles[i] = a["tiles"][i].get<i32>();
+        for (usize i = 0; i < at.tiles.size(); ++i) {
+            if (!ReadSigned(a["tiles"][i], at.tiles[i]))
+                return fail("autotile '" + at.name + "' mask " + std::to_string(i) + " needs a whole tile number in range");
+        }
         t.autotiles.push_back(std::move(at));
     }
     out = std::move(t);
@@ -328,13 +341,10 @@ public:
         } else if (in_layers_ && depth == 3 && event == Event::array_end) {
             in_cells_ = false;
         } else if (in_cells_ && depth == 4) {
-            if (event != Event::value || !value.is_number_integer()) throw Legacy{};
-            if (value.is_number_unsigned() && value.get<u64>() > static_cast<u64>(std::numeric_limits<i32>::max()))
-                throw Legacy{};
-            const i64 cell = value.get<i64>();
-            if (cell < std::numeric_limits<i32>::min() || cell > std::numeric_limits<i32>::max()) throw Legacy{};
+            i32 cell = 0;
+            if (event != Event::value || !ReadSigned(value, cell)) throw Legacy{};
             if (layers.back().size() >= kMaxTilemapCells) throw Limit{};
-            layers.back().push_back(static_cast<i32>(cell));
+            layers.back().push_back(cell);
             return false; // Do not add the numeric node to the DOM.
         }
         return true;

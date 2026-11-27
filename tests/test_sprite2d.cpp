@@ -310,6 +310,45 @@ AETHER_TEST(Sprite2D_TilesetRejectsNarrowedGeometryWithoutChangingTheOutput) {
     CHECK(out.margin == std::numeric_limits<u32>::max());
 }
 
+AETHER_TEST(Sprite2D_TilesetRejectsTruncatedTileIds) {
+    using Json = nlohmann::json;
+    Tileset out;
+    out.SetSolid(5, true);
+    const auto before = TilesetToJson(out);
+    Json valid{{"$type", "Tileset"}, {"solid", Json::array({5})}};
+    Json masks = Json::array();
+    for (int i = 0; i < 16; ++i) masks.push_back(kEmpty);
+    masks[0] = 3;
+    valid["autotiles"] = Json::array({{{"name", "Cliff"}, {"tiles", masks}}});
+
+    const auto file = std::filesystem::temp_directory_path() / "aether_sprite2d" / "bad-tile-ids.atileset";
+    std::filesystem::create_directories(file.parent_path());
+    const auto refuse = [&](const Json& bad, std::string_view diagnostic) {
+        std::string error;
+        CHECK(!TilesetFromJson(bad, out, &error));
+        CHECK(error.find(diagnostic) != std::string::npos && TilesetToJson(out) == before);
+        {
+            std::ofstream stream(file, std::ios::binary | std::ios::trunc);
+            stream << bad.dump();
+            stream.close();
+            CHECK(stream.good());
+        }
+        error.clear();
+        CHECK(!LoadTileset(file, out, &error));
+        CHECK(error.find(diagnostic) != std::string::npos && TilesetToJson(out) == before);
+    };
+    for (const auto& bad : {Json(4294967301ull), Json(5.9), Json("5"), Json(-2147483649ll)}) {
+        Json solid = valid;
+        solid["solid"][0] = bad;
+        refuse(solid, "solid tile indices");
+        Json rule = valid;
+        rule["autotiles"][0]["tiles"][7] = bad;
+        refuse(rule, "autotile 'Cliff' mask 7");
+    }
+    CHECK(TilesetFromJson(valid, out) && out.IsSolid(5));
+    CHECK(out.autotiles.size() == 1 && out.autotiles[0].tiles[0] == 3 && out.autotiles[0].tiles[7] == kEmpty);
+}
+
 AETHER_TEST(Sprite2D_TilemapEditingAndAutotiles) {
     TilemapData map;
     map.tileset = Guid();
