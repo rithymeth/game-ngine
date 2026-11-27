@@ -599,6 +599,38 @@ AETHER_TEST(Editor_CommandPaletteFiltersAndSelectsTools) {
     CHECK(ImGui::GetDrawData()->TotalVtxCount > closed);
 }
 
+AETHER_TEST(Editor_CommandPaletteClosesAfterChoosingATool) {
+    HeadlessImGui imgui;
+    EditorWorkspace ws;
+    CHECK(ws.ToolCount() > 1);
+    if (ws.ToolCount() <= 1) return;
+    ws.Select(1);
+    ws.command_palette_open = true;
+    ImVec2 first_result;
+    const auto frame = [&] {
+        imgui.Frame([&] {
+            const ImVec2 pos(40, 50);
+            const ImGuiStyle& style = ImGui::GetStyle();
+            // The first tool is below the title bar and search field.
+            first_result = ImVec2(pos.x + style.WindowPadding.x + 12,
+                                 pos.y + ImGui::GetFrameHeight() + style.WindowPadding.y +
+                                     ImGui::GetFrameHeightWithSpacing() + ImGui::GetTextLineHeight() * 0.5f);
+            ImGui::SetNextWindowPos(pos);
+            ws.DrawCommandPalette();
+        });
+    };
+    frame();
+    ImGuiIO& io = ImGui::GetIO();
+    io.AddMousePosEvent(first_result.x, first_result.y);
+    frame();
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+    frame();
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+    frame();
+    CHECK(ws.Selected() == 0);
+    CHECK(!ws.command_palette_open);
+}
+
 // Phase 43.5: the asset half of the palette. It lists matching assets and hands the chosen
 // path to the host's opener -- what "opening" an asset means is the host's decision, so the
 // palette reports rather than acts.

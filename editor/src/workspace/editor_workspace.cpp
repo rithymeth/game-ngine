@@ -2785,10 +2785,7 @@ void EditorWorkspace::DrawCommandPalette() {
             }
             ImGui::PushID(static_cast<int>(i));
             ImGui::BeginDisabled(!enabled);
-            if (ImGui::Selectable(label.c_str())) {
-                palette.Activate(*this, i);
-                command_palette_open = false;
-            }
+            if (ImGui::Selectable(label.c_str()) && palette.Activate(*this, i)) open = false;
             ImGui::EndDisabled();
             if (!chord.empty()) {
                 ImGui::SameLine();
