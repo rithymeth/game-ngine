@@ -14,6 +14,7 @@ public:
     explicit BlendSpaceEditor(BlendSpaceDocument& document) : doc_(document) {}
 
     void Draw();
+    void ResetForLoadedSpace();
 
     // The clips offered when adding a sample.
     void SetClipNames(std::vector<std::string> names) { clip_names_ = std::move(names); }
@@ -26,6 +27,7 @@ public:
     const BlendSpaceCanvas& Canvas() const { return canvas_; }
 
 private:
+    void ClearSampleInteraction();
     void DrawGrid();
     void DrawSampleList();
     BlendSpaceDocument& doc_;

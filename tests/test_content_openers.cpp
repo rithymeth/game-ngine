@@ -436,6 +436,61 @@ AETHER_TEST(Openers_UILayoutReplacementClearsThePreviousWidgetSelection) {
     CHECK(locate(button_fill) && !locate(selection_outline));
 }
 
+AETHER_TEST(Openers_BlendSpaceReplacementClearsTheOldSampleSelection) {
+    HeadlessImGui ui;
+    ProjectPaths paths;
+    FreshProject("blend_selection", paths);
+    EditorWorkspace ws(paths.file);
+    anim::BlendSpace space;
+    space.samples = {{"First", 0.35f, 0.0f}};
+    Write(paths.content / "Animation/First.ablend", anim::BlendSpaceToJson(space).dump(2));
+    space.samples[0].clip = "Second";
+    Write(paths.content / "Animation/Second.ablend", anim::BlendSpaceToJson(space).dump(2));
+    Write(paths.content / "Animation/Broken.ablend", "not a blend space");
+
+    CHECK(ws.OpenAsset("Animation/First.ablend"));
+    const i64 tool = ws.FindTool("Animation");
+    CHECK(tool >= 0);
+    if (tool < 0) return;
+    const auto draw = [&] { ws.DrawTool(static_cast<usize>(tool)); };
+    ui.Frame(draw);
+    ui.Frame(draw);
+    const auto sample = [](ImU32 color, ImVec2* center = nullptr) {
+        ImVec2 sum{};
+        int count = 0;
+        for (const ImDrawList* list : ImGui::GetDrawData()->CmdLists) {
+            for (const ImDrawVert& vertex : list->VtxBuffer) {
+                if (vertex.col != color) continue;
+                sum.x += vertex.pos.x;
+                sum.y += vertex.pos.y;
+                ++count;
+            }
+        }
+        if (center && count > 0) *center = ImVec2(sum.x / count, sum.y / count);
+        return count > 0;
+    };
+    constexpr ImU32 normal = IM_COL32(200, 200, 200, 255);
+    constexpr ImU32 selected = IM_COL32(255, 200, 60, 255);
+    ImVec2 center{};
+    const bool found = sample(normal, &center);
+    CHECK(found);
+    if (!found) return;
+    ImGuiIO& io = ImGui::GetIO();
+    io.AddMousePosEvent(center.x, center.y);
+    ui.Frame(draw);
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+    ui.Frame(draw);
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+    ui.Frame(draw);
+    CHECK(sample(selected));
+    CHECK(!ws.OpenAsset("Animation/Broken.ablend"));
+    ui.Frame(draw);
+    CHECK(sample(selected));
+    CHECK(ws.OpenAsset("Animation/Second.ablend"));
+    ui.Frame(draw);
+    CHECK(sample(normal) && !sample(selected));
+}
+
 AETHER_TEST(Openers_ContentBrowserCreatesAndSelectsAtlasWithoutReplacingOne) {
     ProjectPaths paths;
     FreshProject("create_sprite_atlas", paths);

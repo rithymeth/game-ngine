@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numeric>
 
 namespace aether::editor {
 
@@ -22,16 +23,25 @@ f32 Snap(f32 v, f32 lo, f32 hi, u32 divisions) {
 
 std::vector<anim::BlendWeight> BlendSpaceEditor::PreviewWeights() const { return anim::ComputeWeights(doc_.Get(), preview_x, preview_y); }
 
+void BlendSpaceEditor::ClearSampleInteraction() {
+    selected_ = dragging_ = -1;
+    dragging_preview_ = drag_moved_ = false;
+}
+
+void BlendSpaceEditor::ResetForLoadedSpace() {
+    ClearSampleInteraction();
+    const BlendSpace& s = doc_.Get();
+    const bool usable = doc_.HasUsableAxes();
+    preview_x = usable ? std::midpoint(s.x.min, s.x.max) : 0.0f;
+    preview_y = usable && s.dimensions == 2 ? std::midpoint(s.y.min, s.y.max) : 0.0f;
+}
+
 void BlendSpaceEditor::Draw() {
     ImGui::PushID(this);
-    const auto clear_sample_state = [&] {
-        // Sample indices are not identities across history snapshots.
-        selected_ = dragging_ = -1;
-        dragging_preview_ = drag_moved_ = false;
-    };
-    if (ImGui::Button("Undo") && doc_.Undo()) clear_sample_state();
+    // Sample indices are not identities across history snapshots.
+    if (ImGui::Button("Undo") && doc_.Undo()) ClearSampleInteraction();
     ImGui::SameLine();
-    if (ImGui::Button("Redo") && doc_.Redo()) clear_sample_state();
+    if (ImGui::Button("Redo") && doc_.Redo()) ClearSampleInteraction();
     ImGui::SameLine();
     int div = static_cast<int>(grid_divisions);
     ImGui::SetNextItemWidth(100);

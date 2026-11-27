@@ -1346,7 +1346,11 @@ struct EditorWorkspace::Impl {
         if (ext == ".abp") return load(blueprint_doc, "Blueprint", "blueprint");
         if (ext == ".amat") return load(material_doc, "Material", "material");
         if (ext == ".aanim") return load(anim_doc, "Animation", "animation graph");
-        if (ext == ".ablend") return load(blend_doc, "Animation", "blend space");
+        if (ext == ".ablend") {
+            if (!load(blend_doc, "Animation", "blend space")) return false;
+            blend_editor->ResetForLoadedSpace();
+            return true;
+        }
         if (ext == ".acue") {
             if (!load(cue_doc, "Sound Cue", "sound cue")) return false;
             cue_editor->ResetForLoadedCue();
