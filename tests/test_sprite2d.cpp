@@ -1702,6 +1702,37 @@ AETHER_TEST(Physics2D_CircleOverlapKeepsTriggersMasksAndLiveColliderEdits) {
     CHECK(physics.OverlapCircle({0, 0}, 1.0f, 1u).empty());
 }
 
+AETHER_TEST(Physics2D_OverlapShapesUseLiveCollidersAndKeepStableOrder) {
+    World world;
+    const auto trigger = world.CreateEntity(Transform{Vec3(0.25f, 0, 0), Quaternion::Identity()});
+    const auto box = Box(world, Vec3(0, 0.25f, 0), {0.5f, 0.5f}, BodyType2D::Static);
+    Collider2D reserved;
+    reserved.layer = 2u;
+    const auto other_layer = world.CreateEntity(Transform{}, reserved);
+    world.CreateEntity(Transform{});
+    world.CreateEntity(Collider2D{});
+
+    Collider2D circle;
+    circle.shape = Shape2D::Circle;
+    circle.radius = 0.5f;
+    circle.trigger = true;
+    world.AddComponent<Collider2D>(trigger, circle);
+    Physics2D physics(world);
+    const auto check_all = [&](u32 mask, const std::vector<Entity>& expected) {
+        CHECK(physics.OverlapPoint({0, 0}, mask) == expected);
+        CHECK(physics.OverlapBox({0, 0}, {0.5f, 0.25f}, mask) == expected);
+        CHECK(physics.OverlapOrientedBox({0, 0}, {0.5f, 0.25f}, 0.35f, mask) == expected);
+        CHECK(physics.OverlapCapsule({-0.5f, 0}, {0.5f, 0}, 0.25f, mask) == expected);
+    };
+    check_all(1u, {trigger, box});
+    check_all(2u, {other_layer});
+    check_all(0u, {});
+    world.GetComponent<Transform>(trigger)->position.x = 8.0f;
+    check_all(1u, {box});
+    world.RemoveComponent<Transform>(box);
+    check_all(1u, {});
+}
+
 AETHER_TEST(Physics2D_LastClearedSolidFlagMatchesReloadedTilemap) {
     World world;
     Tileset tiles;
