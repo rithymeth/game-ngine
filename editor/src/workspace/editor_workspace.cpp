@@ -354,6 +354,7 @@ struct EditorWorkspace::Impl {
     MenuChip avatar;                          // the menu bar's avatar, as last drawn
     std::string user_initials;                // empty until asked for, so the environment is read once
     bool palette_focus = false;               // the palette's own box has not taken the keyboard yet this open
+    bool palette_submit = false;              // Enter in the menu bar search, consumed by the palette
 
     // Scripting.
     std::unique_ptr<BlueprintDocument> blueprint_doc;
@@ -2620,9 +2621,10 @@ void EditorWorkspace::DrawCommandSearch(f32 width) {
     impl_->command_search = CommandSearchBox{};
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f);
     ImGui::SetNextItemWidth(width);
-    const bool edited =
-        ImGui::InputTextWithHint("##command_search", "Search commands, assets...  Ctrl K", &impl_->palette_query);
-    if (ImGui::IsItemActivated() || edited) command_palette_open = true;
+    const bool submitted = ImGui::InputTextWithHint("##command_search", "Search commands, assets...  Ctrl K",
+                                                    &impl_->palette_query, ImGuiInputTextFlags_EnterReturnsTrue);
+    if (submitted) impl_->palette_submit = true;
+    if (ImGui::IsItemActivated() || ImGui::IsItemEdited() || submitted) command_palette_open = true;
     if (ImGui::IsItemHovered() && !ImGui::IsItemActive()) ImGui::SetTooltip("Search the tools, commands and assets (Ctrl+K)");
     impl_->command_search.visible = true;
     impl_->command_search.min_x = ImGui::GetItemRectMin().x;
@@ -2731,6 +2733,8 @@ void EditorWorkspace::DrawUserAvatar() {
 }
 
 void EditorWorkspace::DrawCommandPalette() {
+    const bool menu_submit = impl_->palette_submit;
+    impl_->palette_submit = false;
     if (!command_palette_open) {
         impl_->palette_query.clear(); // the menu bar's box shows nothing while the palette is closed
         impl_->palette_focus = false;
@@ -2765,9 +2769,12 @@ void EditorWorkspace::DrawCommandPalette() {
             ImGui::SetKeyboardFocusHere();
             impl_->palette_focus = false;
         }
-        if (ImGui::InputTextWithHint("##palette_query", "Search tools", &impl_->palette_query)) {
+        const bool submitted = ImGui::InputTextWithHint("##palette_query", "Search tools", &impl_->palette_query,
+                                                        ImGuiInputTextFlags_EnterReturnsTrue);
+        if (ImGui::IsItemEdited()) {
             palette.SetQuery(impl_->palette_query);
         }
+        if ((submitted || menu_submit) && palette.ActivateFirst(*this)) open = false;
         for (std::size_t i = 0; i < palette.Results().size(); ++i) {
             const PaletteEntry& entry = palette.Results()[i];
             std::string label;

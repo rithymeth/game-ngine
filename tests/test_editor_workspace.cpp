@@ -483,6 +483,46 @@ AETHER_TEST(EditorWorkspace_OpeningThePalettePutsTheKeyboardInTheSearchBox) {
     CHECK(ws.command_palette_open && ws.PaletteQuery() == "save");
 }
 
+AETHER_TEST(EditorWorkspace_EnterActivatesTheFirstPaletteResult) {
+    for (const bool use_menu_bar : {false, true}) {
+        HeadlessImGui imgui;
+        EditorWorkspace ws;
+        ImGuiIO& io = ImGui::GetIO();
+        const i64 terrain = ws.FindTool("Terrain");
+        CHECK(terrain >= 0 && ws.Selected() != static_cast<usize>(terrain));
+        const auto frame = [&] {
+            imgui.Frame([&] {
+                if (ImGui::BeginMainMenuBar()) {
+                    ws.DrawCommandSearch(280);
+                    ImGui::EndMainMenuBar();
+                }
+                ws.DrawWindows();
+            });
+        };
+        frame();
+        if (use_menu_bar) {
+            const auto box = ws.LastCommandSearch();
+            io.AddMousePosEvent((box.min_x + box.max_x) / 2, (box.min_y + box.max_y) / 2);
+            frame();
+            io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+            frame();
+            io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+            frame();
+        } else {
+            ws.OpenCommandPalette();
+            frame();
+            frame();
+        }
+        io.AddInputCharactersUTF8("terrain");
+        frame();
+        CHECK(ws.command_palette_open && ws.PaletteQuery() == "terrain");
+        io.AddKeyEvent(ImGuiKey_Enter, true);
+        frame();
+        CHECK(ws.Selected() == static_cast<usize>(terrain));
+        CHECK(!ws.command_palette_open);
+    }
+}
+
 // The concept's first row names the project and its save state beside the mark, and puts the user's initials in a
 // circle at the far right. The chip reads the active document, so the first unsaved edit changes its words.
 AETHER_TEST(EditorWorkspace_TheMenuBarNamesTheProjectAndItsSaveState) {
