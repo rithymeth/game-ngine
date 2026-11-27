@@ -4,6 +4,7 @@
 #include "aether/platform/filesystem.h"
 
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <limits>
 
@@ -83,13 +84,16 @@ bool ReadJsonFile(const std::filesystem::path& file, nlohmann::json& out, std::s
     return true;
 }
 
-bool WriteJsonFile(const std::filesystem::path& file, const nlohmann::json& data, std::string* error) {
-    const std::string text = data.dump(2);
+bool WriteJsonText(const std::filesystem::path& file, const std::string& text, std::string* error) {
     if (!fs::WriteFileAtomic(file.string(), text.data(), text.size())) {
         if (error) *error = "Couldn't write " + file.string();
         return false;
     }
     return true;
+}
+
+bool WriteJsonFile(const std::filesystem::path& file, const nlohmann::json& data, std::string* error) {
+    return WriteJsonText(file, data.dump(2), error);
 }
 
 } // namespace
@@ -278,7 +282,38 @@ bool LoadTilemap(const std::filesystem::path& file, TilemapData& out, std::strin
     return ReadJsonFile(file, data, error) && TilemapFromJson(data, out, error);
 }
 bool SaveTilemap(const std::filesystem::path& file, const TilemapData& m, std::string* error) {
-    return WriteJsonFile(file, TilemapToJson(m), error);
+    // The cells dominate large maps. Emit them directly instead of constructing
+    // a boxed JSON value per tile before the atomic write. Keep the v1 schema
+    // and JSON string escaping, with short lines for source-control diffs.
+    std::string text = "{\n  \"$type\": \"Tilemap\",\n  \"$version\": ";
+    text += std::to_string(kTilemapFormatVersion);
+    text += ",\n  \"tileset\": ";
+    text += nlohmann::json(assets::ToString(m.tileset)).dump();
+    text += ",\n  \"size\": [" + std::to_string(m.width) + ", " + std::to_string(m.height) + "],\n  \"layers\": [";
+    constexpr usize cells_per_line = 32;
+    bool first_layer = true;
+    for (const TileLayer& layer : m.layers) {
+        if (!first_layer) text += ',';
+        first_layer = false;
+        text += "\n    {\n      \"name\": ";
+        text += nlohmann::json(layer.name).dump();
+        text += layer.collides ? ",\n      \"collides\": true" : ",\n      \"collides\": false";
+        text += ",\n      \"cells\": [";
+        for (usize i = 0; i < layer.cells.size(); ++i) {
+            if (i != 0) text += ',';
+            if (i % cells_per_line == 0) text += "\n        ";
+            // Up to 10 decimal digits plus the sign for a signed 32-bit cell.
+            char digits[12];
+            const auto result = std::to_chars(digits, digits + sizeof(digits), layer.cells[i]);
+            text.append(digits, result.ptr);
+        }
+        if (!layer.cells.empty()) text += "\n      ";
+        text += "]\n    }";
+    }
+    if (!m.layers.empty()) text += "\n  ";
+    text += "]\n}";
+
+    return WriteJsonText(file, text, error);
 }
 
 u8 NeighbourMask(const TilemapData& map, usize layer, i32 x, i32 y) {

@@ -14,6 +14,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <limits>
 #include <map>
 #include <set>
@@ -385,6 +386,38 @@ AETHER_TEST(Sprite2D_TilemapJsonRoundTripAndErrors) {
     TilemapData again;
     CHECK(LoadTilemap(file, again, &error) && again.Get(0, 2, 1) == 9);
     CHECK(!LoadTilemap(file.parent_path() / "missing.atilemap", again, &error));
+}
+
+AETHER_TEST(Sprite2D_CompactTilemapSaveMatchesJsonSchema) {
+    TilemapData map;
+    map.tileset = Guid();
+    map.Resize(17, 4);
+    map.AddLayer("Stone \"quay\"\n\t\\");
+    map.AddLayer("Water");
+    map.layers[1].collides = false;
+    map.Fill(1, 0, 0, 16, 3, 5);
+    CHECK(map.Set(0, 0, 0, std::numeric_limits<i32>::min()));
+    CHECK(map.Set(0, 16, 3, std::numeric_limits<i32>::max()));
+    CHECK(map.Set(1, 14, 1, AutotileCell(3)));
+    const auto file = std::filesystem::temp_directory_path() / "aether_sprite2d" / "compact.atilemap";
+    std::string error;
+    const auto check_file = [&] {
+        CHECK(SaveTilemap(file, map, &error));
+        std::ifstream stream(file, std::ios::binary);
+        CHECK(stream.is_open());
+        if (!stream) return;
+        const auto raw = nlohmann::json::parse(stream, nullptr, false);
+        CHECK(raw == TilemapToJson(map));
+        stream.close();
+        TilemapData loaded;
+        CHECK(LoadTilemap(file, loaded, &error));
+        CHECK(TilemapToJson(loaded) == raw);
+    };
+    check_file();
+    map.Resize(0, 0); // Empty layers and replacement of an existing file.
+    check_file();
+    map.layers.clear();
+    check_file();
 }
 
 AETHER_TEST(Sprite2D_BatchesAreSortedAndMerged) {
