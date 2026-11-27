@@ -739,7 +739,7 @@ AETHER_TEST(TilemapEditor_ChoosingAnAutotileLeavesEraseMode) {
     ui.Frame(draw);
     if (!palette) { CHECK(false); return; }
     const u64 revision = doc.Revision();
-    const ImGuiID ground_id = ImHashStr("Ground", 0, palette->GetID(1000));
+    const ImGuiID ground_id = ImHashStr("##autotile", 0, palette->GetID(1000));
     CHECK(click_palette_item(ground_id));
     CHECK(doc.tool == TileTool::Paint && doc.brush == AutotileCell(ground));
     CHECK(doc.Revision() == revision); // selecting a rule is not an edit
@@ -754,6 +754,58 @@ AETHER_TEST(TilemapEditor_ChoosingAnAutotileLeavesEraseMode) {
     CHECK(doc.GetTileset().autotiles.size() == 2);
     CHECK(doc.tool == TileTool::Paint && doc.brush == AutotileCell(1));
     CHECK(doc.Undo() && doc.GetTileset().autotiles.size() == 1);
+}
+
+AETHER_TEST(TilemapEditor_AutotileNamesRenderLiterallyAndSelectTheRightRule) {
+    const auto exercise_palette = [](const char* first, const char* second, bool select) {
+        HeadlessImGui ui;
+        auto doc = Doc();
+        const usize first_rule = doc.AddAutotile(first);
+        const usize second_rule = doc.AddAutotile(second);
+        doc.brush = kEmpty; // keep the separate rule editor out of the comparison
+        const u64 revision = doc.Revision();
+        TilemapPanel panel(doc);
+        ImGuiWindow* palette = nullptr;
+        const auto draw = [&] {
+            const ImGuiID palette_id = ImGui::GetID("##left");
+            const ImGuiWindow* parent = ImGui::GetCurrentWindowRead();
+            panel.Draw();
+            for (ImGuiWindow* child : parent->DC.ChildWindows)
+                if (child->ChildId == palette_id) palette = child;
+        };
+        ui.Frame(draw);
+        const int vertices = ImGui::GetDrawData()->TotalVtxCount;
+        if (!select) return vertices;
+        if (!palette) { CHECK(false); return vertices; }
+
+        auto& io = ImGui::GetIO();
+        const auto click_rule = [&](usize index) {
+            // Use the stable widget ID to locate the real selectable row.
+            const ImGuiID id = ImHashStr("##autotile", 0, palette->GetID(static_cast<int>(1000 + index)));
+            const ImRect clip = palette->InnerClipRect;
+            for (f32 y = clip.Min.y + 2.0f; y < clip.Max.y; y += 4.0f) {
+                io.AddMousePosEvent(clip.Min.x + 19.0f, y);
+                ui.Frame(draw);
+                if (ImGui::GetHoveredID() != id) continue;
+                io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+                ui.Frame(draw);
+                io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+                ui.Frame(draw);
+                return true;
+            }
+            return false;
+        };
+        CHECK(click_rule(second_rule) && doc.brush == AutotileCell(second_rule));
+        CHECK(click_rule(first_rule) && doc.brush == AutotileCell(first_rule));
+        CHECK(doc.Revision() == revision && doc.Map().Get(0, 0, 0) == kEmpty);
+        return vertices;
+    };
+
+    const int prefixes = exercise_palette("Water", "Water", false);
+    // Only the suffix characters change. If ImGui treats them as widget IDs
+    // rather than authored text, they submit no glyphs at all.
+    const int with_markers = exercise_palette("Water##Deep", "Water###Shallow", true);
+    CHECK(with_markers > prefixes);
 }
 
 AETHER_TEST(TilemapEditor_WheelZoomKeepsTheHoveredCellUnderTheCursor) {

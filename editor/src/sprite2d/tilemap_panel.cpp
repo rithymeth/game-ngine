@@ -475,10 +475,15 @@ void TilemapPanel::DrawPalette() {
     for (usize i = 0; i < ts.autotiles.size(); ++i) {
         ImGui::PushID(static_cast<int>(1000 + i));
         const bool active = doc_.brush == AutotileCell(i);
-        if (ImGui::Selectable(ts.autotiles[i].name.c_str(), active)) {
+        const char* name = ts.autotiles[i].name.c_str();
+        const ImVec2 name_position = ImGui::GetCursorScreenPos();
+        const f32 row_height = std::max(ImGui::GetTextLineHeight(), ImGui::CalcTextSize(name).y);
+        if (ImGui::Selectable("##autotile", active, 0, ImVec2(0.0f, row_height))) {
             pick_brush(AutotileCell(i));
             selected_autotile_ = static_cast<int>(i);
         }
+        // Authored names are display text, not ImGui labels (which interpret ##).
+        if (ImGui::IsItemVisible()) dl->AddText(name_position, ImGui::GetColorU32(ImGuiCol_Text), name);
         ImGui::PopID();
     }
     if (ImGui::SmallButton("Add autotile")) {
