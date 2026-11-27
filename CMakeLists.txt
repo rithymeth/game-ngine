@@ -755,6 +755,12 @@ if(AETHER_BUILD_TESTS AND Python3_Interpreter_FOUND AND NOT ANDROID AND NOT IOS)
     add_test(NAME jump_proof_tools
         COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_SOURCE_DIR}/tools/ci/test_jump_proof_compare.py)
     set_tests_properties(jump_proof_tools PROPERTIES TIMEOUT 30)
+    add_test(NAME jump_envelope_tools
+        COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_SOURCE_DIR}/tools/ci/test_jump_envelope.py)
+    set_tests_properties(jump_envelope_tools PROPERTIES TIMEOUT 90)
+    add_test(NAME jump_envelope_map_tools
+        COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_SOURCE_DIR}/tools/ci/test_jump_envelope_map.py)
+    set_tests_properties(jump_envelope_map_tools PROPERTIES TIMEOUT 30)
     add_test(NAME sprite_grid_package
         COMMAND ${CMAKE_COMMAND} -E env --unset=AETHER_PAK_KEY
         ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/ci/test_sprite_grid.py
