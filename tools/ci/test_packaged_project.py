@@ -41,7 +41,7 @@ def run(tool, *args, cwd, capture=False, env=None):
     return (result.stdout or "") + (result.stderr or "")
 
 
-def verify_jump_envelope(baseline, changed, route, press_frame, root, cwd):
+def verify_jump_envelope(baseline, changed, route, press_frame, root, cwd, *, lost_offset=0):
     """Verify A/B reporting and reproduce the reported loss in both players."""
     envelope = Path(__file__).resolve().parents[1] / "jump_envelope.py"
     output = root / "Jump Envelope evidence.json"
@@ -53,8 +53,10 @@ def verify_jump_envelope(baseline, changed, route, press_frame, root, cwd):
         raise RuntimeError(f"timing gate did not publish the expected loss: {result.stdout}{result.stderr}")
     report = json.loads(output.read_text(encoding="utf-8"))
     evidence = report["evidence"]
-    if (report["gate"]["passed"] is not False or 0 not in report["lost_pass_offsets"]
-            or report["skipped_offsets"] or evidence["nearest_lost_replay"]["offset"] != 0
+    if (report["gate"]["passed"] is not False or lost_offset not in report["lost_pass_offsets"]
+            or 0 not in report["baseline"]["pass_offsets"]
+            or (0 in report["candidate"]["pass_offsets"]) != (lost_offset != 0)
+            or report["skipped_offsets"] or evidence["nearest_lost_replay"]["offset"] != lost_offset
             or evidence["baseline_sha256"]["Paks/Game.apak"] == evidence["candidate_sha256"]["Paks/Game.apak"]):
         raise RuntimeError("timing evidence did not identify the controlled package loss")
     replay = root / "Jump Envelope lost replay.json"
@@ -68,7 +70,7 @@ def verify_jump_envelope(baseline, changed, route, press_frame, root, cwd):
                     for line in result.stdout.splitlines() if line.startswith("Jump Proof: ")]
         if result.returncode != exit_code or verdicts != [expected]:
             raise RuntimeError(f"exported replay disagreed with {label} build: {result.stderr}")
-    print("Jump Envelope: verified the A/B loss and reproduced it in both packaged players", flush=True)
+    print(f"Jump Envelope: verified and reproduced the A/B loss at offset {lost_offset}", flush=True)
 
 
 def main():
@@ -440,6 +442,18 @@ def main():
                                                       "fixed_hz": captured["fixed_hz"],
                                                       "events": [*spec["events"], analog]}), encoding="utf-8")
                 verify_jump_envelope(game, changed / executable, envelope_route, 225, root, empty_cwd)
+
+                # One frame later, both packages pass the original timing.
+                # The earlier timing still has to be reported as a loss.
+                margin = root / "Jump Envelope margin"
+                margin.mkdir()
+                recentered = margin / "Route.json"
+                recentered_spec = json.loads(envelope_route.read_text(encoding="utf-8"))
+                for event in recentered_spec["events"]:
+                    if event["key"] == "Space":
+                        event["frame"] += 1
+                recentered.write_text(json.dumps(recentered_spec), encoding="utf-8")
+                verify_jump_envelope(game, changed / executable, recentered, 226, margin, empty_cwd, lost_offset=-1)
 
             compare = Path(__file__).resolve().parents[1] / "jump_proof_compare.py"
 

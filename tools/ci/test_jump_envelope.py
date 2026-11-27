@@ -181,6 +181,11 @@ class JumpEnvelope(unittest.TestCase):
         # replays the exported input on each of these stand-in players.
         verify_jump_envelope(old, changed, self.route, 4, self.root, self.root)
 
+    def test_smoke_adapter_checks_margin_loss_when_both_original_timings_pass(self):
+        old = self.stage("old-margin", "before", b"asset-before")
+        changed = self.stage("new-margin", "after", b"asset-after")
+        verify_jump_envelope(old, changed, self.route, 4, self.root, self.root, lost_offset=-1)
+
     def test_evidence_requires_packaged_files(self):
         result = self.invoke("before", "--capture-evidence")
         self.assertEqual(result.returncode, 2, result.stderr)

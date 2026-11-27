@@ -121,12 +121,13 @@ python3 tools/ci/test_packaged_project.py /path/to/aether-tools --template platf
 
 For a headless build, substitute the script's --headless-build-tools option
 and its six executable paths. The smoke creates its own 2D project and two
-temporary packages, applies the existing single-tile regression, and checks
-that the report identifies the lost original timing, ties it to different
-cooked archives, and reproduces the loss by replaying the exported route
-directly on both players. It tests the known tile regression, not a native
-case where the original timing still passes in both builds. The new option
-does not change the default smoke invocation or turn on a workflow.
+temporary packages and applies the existing single-tile regression. It checks
+two timings: frame 225, which passes only on the baseline, and frame 226,
+which passes on both packages but loses the one-frame-earlier baseline
+timing. In both cases the report must identify the loss, tie it to different
+cooked archives, and reproduce it by replaying the exported route directly
+on both players. This option does not change the default smoke or turn on
+a workflow.
 
 ## Evidence and next gate
 
