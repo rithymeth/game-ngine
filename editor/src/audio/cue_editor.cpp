@@ -1,6 +1,7 @@
 #include "audio/cue_editor.h"
 
 #include <imgui.h>
+#include <imgui_internal.h> // BeginPopupEx and IsPopupOpen by ID when the editor changes host window
 #include <misc/cpp/imgui_stdlib.h>
 
 #include <algorithm>
@@ -484,9 +485,21 @@ void SoundCueEditor::DrawDiagnostics() {
 }
 
 void SoundCueEditor::DrawPalette() {
-    if (!palette_open_) return;
+    if (!palette_open_) {
+        // The popup can outlive its cue. Use the original ID even if the tool has popped out into a different window.
+        constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar |
+                                           ImGuiWindowFlags_NoSavedSettings;
+        if (palette_popup_id_ != 0 && ImGui::IsPopupOpen(palette_popup_id_, ImGuiPopupFlags_None) &&
+            ImGui::BeginPopupEx(palette_popup_id_, flags)) {
+            ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+        }
+        palette_popup_id_ = 0;
+        return;
+    }
     if (palette_popup_) {
         ImGui::SetNextWindowPos(ImVec2(view_.CanvasToScreenX(palette_x_), view_.CanvasToScreenY(palette_y_)), ImGuiCond_Always);
+        palette_popup_id_ = ImGui::GetID("##cue_palette");
         ImGui::OpenPopup("##cue_palette");
         palette_popup_ = false;
     }

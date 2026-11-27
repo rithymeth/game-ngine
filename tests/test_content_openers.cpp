@@ -343,9 +343,30 @@ AETHER_TEST(Openers_SoundCueReplacementDoesNotSelectTheSameNodeId) {
     CHECK(!ws.OpenAsset("Audio/Broken.acue"));
     ui.Frame(inspect);
     CHECK(rendered.find("Wave node 1") != std::string::npos);
+
+    const auto palette_open = [] {
+        return ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+    };
+    const auto open_palette = [&] {
+        // Empty canvas, below both the wave and its Output node.
+        io.AddMousePosEvent(center.x / vertices, center.y / vertices + 180.0f);
+        ui.Frame(draw);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Right, true);
+        ui.Frame(draw);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Right, false);
+        ui.Frame(draw);
+        CHECK(palette_open());
+    };
+    open_palette();
+    CHECK(!ws.OpenAsset("Audio/Broken.acue"));
+    ui.Frame(draw);
+    CHECK(palette_open()); // A refused open must not dismiss the current cue's palette.
+
     CHECK(ws.OpenAsset("Audio/Second.acue"));
     ui.Frame(inspect);
     CHECK(rendered.find("Second cue") != std::string::npos && rendered.find("Wave node 1") == std::string::npos);
+    CHECK(!palette_open()); // The old graph popup must not intercept the new cue's input.
+    open_palette();        // The replacement graph still opens its own palette.
 }
 
 AETHER_TEST(Openers_ContentBrowserCreatesAndSelectsAtlasWithoutReplacingOne) {
