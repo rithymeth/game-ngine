@@ -276,6 +276,31 @@ AETHER_TEST(LocSync_MissingPoSourceDoesNotWriteTheProjectTable) {
     CHECK(Slurp(options.strings_file) == before && !stdfs::exists(options.po_out));
 }
 
+AETHER_TEST(LocSync_InvalidContentRootDoesNotWriteOutputs) {
+    const stdfs::path root = Dir("bad_content_root");
+    SyncOptions options;
+    options.content_dir = root / "missing" / "Content";
+    options.strings_file = options.content_dir / "Localization/strings.astrings";
+    options.languages = {"fr"};
+    options.po_out = root / "outgoing";
+    const SyncReport missing = SyncProject(options);
+    CHECK(!missing.ok && !missing.messages.empty());
+    CHECK(!stdfs::exists(root / "missing") && !stdfs::exists(options.po_out));
+
+    options.content_dir = root / "not_a_folder";
+    Write(options.content_dir, "plain text");
+    options.strings_file = root / "outside.astrings";
+    const SyncReport wrong_type = SyncProject(options);
+    CHECK(!wrong_type.ok && !wrong_type.messages.empty());
+    CHECK(!stdfs::exists(options.strings_file));
+
+    // A real but empty Content directory is a valid project.
+    options.content_dir = root / "empty";
+    stdfs::create_directories(options.content_dir);
+    const SyncReport empty = SyncProject(options);
+    CHECK(empty.ok && empty.gathered.entries.empty() && stdfs::exists(options.strings_file));
+}
+
 AETHER_TEST(LocSync_GathersMergesAndWritesFiles) {
     const stdfs::path root = Dir("sync");
     const stdfs::path content = root / "Content";

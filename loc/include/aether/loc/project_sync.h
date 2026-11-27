@@ -32,7 +32,7 @@ struct SyncReport {
 // returned .po files, merges the keys into the string table (new keys with
 // their source text; no translation touched; unused keys reported), writes
 // the table back as CSV and the .po files out. Existing outputs with identical
-// bytes are left untouched.
+// bytes are left untouched. A missing or invalid Content directory is an error.
 SyncReport SyncProject(const SyncOptions& options);
 
 } // namespace aether::loc

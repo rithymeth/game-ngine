@@ -35,11 +35,16 @@ SyncReport SyncProject(const SyncOptions& o) {
         r.messages.push_back("The source language is empty");
         return r;
     }
+    std::error_code ec;
+    if (!stdfs::is_directory(o.content_dir, ec)) {
+        const std::string path = o.content_dir.empty() ? "(empty path)" : o.content_dir.string();
+        r.messages.push_back("Couldn't open Content directory " + path + (ec ? ": " + ec.message() : ": not a directory"));
+        return r;
+    }
     r.gathered = GatherContent(o.content_dir);
     for (const std::string& w : r.gathered.warnings) r.messages.push_back(w);
 
     StringTable table;
-    std::error_code ec;
     if (!o.strings_file.empty() && stdfs::exists(o.strings_file, ec)) {
         std::string csv;
         std::vector<std::string> errors;
