@@ -1,6 +1,8 @@
 #include "audio/cue_document.h"
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <fstream>
 #include <sstream>
 
@@ -9,6 +11,49 @@ namespace aether::editor {
 using audio::CueNode;
 using audio::CueNodeType;
 using audio::SoundCue;
+
+namespace {
+
+namespace fs = std::filesystem;
+
+// Reserve a unique staging directory next to the destination. A reused
+// temp filename could collide with another editor saving in the same folder.
+class CueSaveStage {
+public:
+    explicit CueSaveStage(const fs::path& target) {
+        const fs::path parent = target.has_parent_path() ? target.parent_path() : fs::path(".");
+        static std::atomic<unsigned long long> serial{0};
+        const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+        for (int attempt = 0; attempt < 32; ++attempt) {
+            const fs::path candidate = parent / (".aether-cue-save-" + std::to_string(now) + "-" +
+                std::to_string(serial.fetch_add(1, std::memory_order_relaxed)));
+            std::error_code ec;
+            if (fs::create_directory(candidate, ec)) {
+                directory_ = candidate;
+                return;
+            }
+            if (ec && ec != std::errc::file_exists) return;
+        }
+    }
+
+    CueSaveStage(const CueSaveStage&) = delete;
+    CueSaveStage& operator=(const CueSaveStage&) = delete;
+
+    ~CueSaveStage() {
+        if (directory_.empty()) return;
+        std::error_code ec;
+        fs::remove(File(), ec);
+        fs::remove(directory_, ec);
+    }
+
+    bool Ready() const { return !directory_.empty(); }
+    fs::path File() const { return directory_ / "cue.acue"; }
+
+private:
+    fs::path directory_;
+};
+
+} // namespace
 
 SoundCueDocument::SoundCueDocument(SoundCue cue, std::filesystem::path path) : cue_(std::move(cue)), path_(std::move(path)) {}
 
@@ -43,11 +88,17 @@ bool SoundCueDocument::SaveAs(const std::filesystem::path& path, std::string* er
         if (error != nullptr) *error = "couldn't write " + path.string();
         return false;
     };
-    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    const CueSaveStage stage(path);
+    if (!stage.Ready()) return fail();
+    const auto staged_file = stage.File();
+    std::ofstream f(staged_file, std::ios::binary | std::ios::trunc);
     if (!f) return fail();
     f << audio::SaveCue(cue_);
     f.close(); // The final buffered write can fail on close.
     if (!f) return fail();
+    std::error_code ec;
+    fs::rename(staged_file, path, ec);
+    if (ec) return fail();
     path_ = path;
     dirty_ = false;
     return true;

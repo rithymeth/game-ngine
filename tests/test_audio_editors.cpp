@@ -9,8 +9,15 @@
 
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <functional>
+#include <iterator>
 #include <thread>
+
+#if defined(__linux__)
+#include <signal.h>
+#include <sys/resource.h>
+#endif
 
 using namespace aether;
 using namespace aether::audio;
@@ -225,6 +232,55 @@ AETHER_TEST(AudioEditor_CueSaveAsFailureKeepsTheExistingSaveTarget) {
     AETHER_CHECK(reloaded.Load(original) && SaveCue(reloaded.Get()) == SaveCue(doc.Get()));
     fs::remove_all(dir);
 }
+
+#if defined(__linux__)
+AETHER_TEST(AudioEditor_CueWriteFailureLeavesTheLastGoodFileIntact) {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / "aether_cue_write_failure";
+    fs::create_directories(dir);
+    const fs::path original = dir / "Original.acue";
+    SoundCueDocument doc;
+    doc.AddNode(CueNodeType::Wave, 0, 0, "first");
+    AETHER_CHECK(doc.SaveAs(original));
+    const auto bytes = [&] {
+        std::ifstream in(original, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(in), {});
+    };
+    const std::string previous = bytes();
+    AETHER_CHECK(!previous.empty());
+    doc.AddNode(CueNodeType::Wave, 0, 100, "second");
+    const auto undo_label = doc.UndoLabel();
+
+    // A zero soft limit makes the buffered write fail after successfully opening the file.
+    struct rlimit previous_limit{};
+    struct sigaction previous_signal{}, ignore{};
+    ignore.sa_handler = SIG_IGN;
+    sigemptyset(&ignore.sa_mask);
+    const bool read_limit = getrlimit(RLIMIT_FSIZE, &previous_limit) == 0;
+    AETHER_CHECK(read_limit);
+    if (!read_limit) return;
+    const bool changed_signal = sigaction(SIGXFSZ, &ignore, &previous_signal) == 0;
+    AETHER_CHECK(changed_signal);
+    if (!changed_signal) return;
+    const struct rlimit blocked{0, previous_limit.rlim_max};
+    const bool limited = setrlimit(RLIMIT_FSIZE, &blocked) == 0;
+    std::string error;
+    const bool saved = limited && doc.Save(&error);
+    const bool restored = !limited || setrlimit(RLIMIT_FSIZE, &previous_limit) == 0;
+    const bool signal_restored = sigaction(SIGXFSZ, &previous_signal, nullptr) == 0;
+    AETHER_CHECK(limited && restored && signal_restored);
+    AETHER_CHECK(!saved && !error.empty());
+    AETHER_CHECK(bytes() == previous);
+    AETHER_CHECK(doc.Dirty() && doc.Path() == original && doc.UndoLabel() == undo_label);
+    AETHER_CHECK(std::distance(fs::directory_iterator(dir), fs::directory_iterator{}) == 1);
+    AETHER_CHECK(doc.Save() && !doc.Dirty());
+
+    SoundCueDocument reloaded;
+    AETHER_CHECK(reloaded.Load(original) && SaveCue(reloaded.Get()) == SaveCue(doc.Get()));
+    AETHER_CHECK(std::distance(fs::directory_iterator(dir), fs::directory_iterator{}) == 1);
+    fs::remove_all(dir);
+}
+#endif
 
 AETHER_TEST(AudioEditor_CueGraphViewAndEdits) {
     SoundCueDocument doc;
