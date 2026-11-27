@@ -95,7 +95,7 @@ private:
     std::filesystem::path tilemap_file_;
     std::filesystem::path tileset_file_;
     bool in_stroke_ = false;
-    Snapshot stroke_start_{};
+    std::optional<Snapshot> stroke_start_;
     usize stroke_changed_cells_ = 0;
     std::vector<Snapshot> undo_, redo_;
     u64 revision_ = 1;

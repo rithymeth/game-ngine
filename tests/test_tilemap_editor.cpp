@@ -142,6 +142,30 @@ AETHER_TEST(TilemapEditor_LiveStrokeIsDirtyOnlyWhileCellsDiffer) {
     CHECK(!doc.dirty() && doc.Revision() == revision && !doc.CanUndo());
 }
 
+AETHER_TEST(TilemapEditor_StrokeWithLeadingNoOpsUndoesItsFirstRealEdit) {
+    auto doc = Doc();
+    const auto revision = doc.Revision();
+    doc.BeginStroke();
+    doc.tool = TileTool::Erase;
+    doc.Apply(0, 0); // already empty
+    doc.active_layer = 99;
+    doc.tool = TileTool::Paint;
+    doc.brush = 4;
+    doc.Apply(0, 0); // invalid layer
+    doc.active_layer = 0;
+    doc.Apply(-1, 0);
+    CHECK(!doc.dirty() && !doc.CanUndo() && doc.Revision() == revision);
+
+    doc.Apply(1, 2); // first real change, after the no-op samples
+    doc.Apply(1, 3);
+    doc.tool = TileTool::Erase;
+    doc.Apply(1, 2); // leave one change in the stroke
+    doc.EndStroke();
+    CHECK(doc.dirty() && doc.Map().Get(0, 1, 2) == kEmpty && doc.Map().Get(0, 1, 3) == 4);
+    CHECK(doc.Undo() && !doc.dirty() && !doc.CanUndo() && doc.Map().Get(0, 1, 3) == kEmpty);
+    CHECK(doc.Redo() && doc.Map().Get(0, 1, 3) == 4);
+}
+
 AETHER_TEST(TilemapEditor_RectangleFillAndPick) {
     TilemapEditDocument doc = Doc();
     doc.brush = 7;

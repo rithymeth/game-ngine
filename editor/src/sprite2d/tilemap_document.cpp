@@ -89,26 +89,36 @@ void TilemapEditDocument::Record(bool track_selection) {
 void TilemapEditDocument::BeginStroke() {
     if (in_stroke_) return;
     in_stroke_ = true;
-    stroke_start_ = {map_, tileset_, state_};
 }
 
 void TilemapEditDocument::EndStroke() {
     if (!in_stroke_) return;
     in_stroke_ = false;
-    if (stroke_changed_cells_ == 0) return;
-    stroke_changed_cells_ = 0;
-    undo_.push_back(std::move(stroke_start_));
-    redo_.clear();
-    Changed();
+    if (stroke_changed_cells_ != 0) {
+        stroke_changed_cells_ = 0;
+        undo_.push_back(std::move(*stroke_start_));
+        redo_.clear();
+        Changed();
+    }
+    stroke_start_.reset();
 }
 
 bool TilemapEditDocument::PaintCell(i32 x, i32 y, i32 value) {
-    const i32 previous = map_.Get(active_layer, x, y);
-    if (previous == value || !map_.Set(active_layer, x, y, value)) return false;
+    if (active_layer >= map_.layers.size() || !map_.InBounds(x, y)) return false;
+    const u64 index = static_cast<u64>(y) * map_.width + static_cast<u32>(x);
+    auto& cells = map_.layers[active_layer].cells;
+    if (index >= cells.size()) return false;
+    auto& cell = cells[static_cast<usize>(index)];
+    if (cell == value) return false;
+    const i32 previous = cell;
+    // Take the undo snapshot just before the first real write. An eraser
+    // on empty cells or a brush on matching paint never copies the map.
+    if (!stroke_start_) stroke_start_ = Snapshot{map_, tileset_, state_};
+    cell = value;
 
     // Track only cells that still differ from the start of the stroke. Structural
     // edits end the stroke first, so the snapshot addresses the same cells.
-    const i32 original = stroke_start_.map.Get(active_layer, x, y);
+    const i32 original = stroke_start_->map.Get(active_layer, x, y);
     if (previous == original) ++stroke_changed_cells_;
     else if (value == original) --stroke_changed_cells_;
     return true;
@@ -350,6 +360,7 @@ bool TilemapEditDocument::Load(const std::filesystem::path& tilemap_file, const 
     undo_.clear();
     redo_.clear();
     in_stroke_ = false;
+    stroke_start_.reset();
     stroke_changed_cells_ = 0;
     active_layer = 0;
     tool = TileTool::Paint;
