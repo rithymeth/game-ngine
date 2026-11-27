@@ -392,6 +392,55 @@ AETHER_TEST(SequenceEditor_ClickSelectsAnOffGridKeyWithoutMovingIt) {
     CHECK(doc.Undo() && Near(doc.KeyTime(key), original_time));
 }
 
+AETHER_TEST(SequenceEditor_HistoryDoesNotSelectAFormerKeyIndex) {
+    HeadlessImGui ui;
+    Level level;
+    SequenceDocument doc;
+    const usize t = doc.AddTrack(TrackType::Event, "Markers");
+    doc.AddEvent(t, 1.0f, "A");
+    doc.AddEvent(t, 2.0f, "B");
+    const KeyRef first{t, KeyRef::Lane::Event, 0, 0};
+    const KeyRef second{t, KeyRef::Lane::Event, 0, 1};
+    SequencerPanel panel(doc, level.world, level.guids);
+    // Reorder B just as a timeline drag does, then select its new index.
+    CHECK(doc.MoveKey(second, 0.5f) == 0);
+    panel.SelectKey(first);
+
+    ImVec2 undo{}, redo{};
+    const auto draw = [&] {
+        const ImVec2 origin = ImGui::GetCursorScreenPos();
+        const ImGuiStyle& style = ImGui::GetStyle();
+        const float undo_width = ImGui::CalcTextSize("Undo").x + 2.0f * style.FramePadding.x;
+        const float redo_width = ImGui::CalcTextSize("Redo").x + 2.0f * style.FramePadding.x;
+        const float y = origin.y + ImGui::GetFrameHeight() * 0.5f;
+        undo = ImVec2(origin.x + undo_width * 0.5f, y);
+        redo = ImVec2(origin.x + undo_width + style.ItemSpacing.x + redo_width * 0.5f, y);
+        panel.Draw();
+    };
+    ui.Frame(draw);
+    ui.Frame(draw);
+    ImGuiIO& io = ImGui::GetIO();
+    const auto click = [&](ImVec2 point) {
+        io.AddMousePosEvent(point.x, point.y);
+        ui.Frame(draw);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+        ui.Frame(draw);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+        ui.Frame(draw);
+    };
+
+    click(undo);
+    const auto& restored = doc.Sequence().tracks[t].events;
+    CHECK(restored.size() == 2 && restored[0].name == "A" && restored[1].name == "B");
+    CHECK(!panel.Selected());
+
+    panel.SelectKey(second);
+    click(redo);
+    const auto& reapplied = doc.Sequence().tracks[t].events;
+    CHECK(reapplied.size() == 2 && reapplied[0].name == "B" && reapplied[1].name == "A");
+    CHECK(!panel.Selected());
+}
+
 AETHER_TEST(SequenceEditor_WorkspaceShowsTheSampleSequence) {
     HeadlessImGui ui;
     EditorWorkspace ws;

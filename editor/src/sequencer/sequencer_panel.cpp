@@ -132,12 +132,13 @@ void SequencerPanel::Draw() {
 }
 
 void SequencerPanel::DrawToolbar() {
+    // A restored snapshot can put a different key at the same selected index.
     ImGui::BeginDisabled(!doc_.CanUndo());
-    if (ImGui::Button("Undo")) doc_.Undo();
+    if (ImGui::Button("Undo") && doc_.Undo()) ClearSelection();
     ImGui::EndDisabled();
     ImGui::SameLine();
     ImGui::BeginDisabled(!doc_.CanRedo());
-    if (ImGui::Button("Redo")) doc_.Redo();
+    if (ImGui::Button("Redo") && doc_.Redo()) ClearSelection();
     ImGui::EndDisabled();
     ImGui::SameLine();
     if (ImGui::Button("Add Track")) ImGui::OpenPopup("##addtrack");
