@@ -39,6 +39,7 @@ int main(int argc,char** argv) {
                  <<" bridge="<<s.bridge<<" guardian="<<s.guardian_defeated
                  <<" guard_hp="<<s.guard_health<<" guard_pos="<<s.guardian.x<<","<<s.guardian.y
                  <<" attack_cd="<<s.attack_ticks<<" guard_mode="<<static_cast<int>(s.guard_mode)
+                 <<" caches="<<game.OpenedCacheCount()<<" harvested="<<game.HarvestedCount()
                  <<" beacon="<<s.beacon<<" night="<<s.night_turns
                  <<" fuel="<<s.fuel<<" phase="<<static_cast<int>(s.phase)<<"\n";
     }

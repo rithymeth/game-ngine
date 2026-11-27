@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdlib>
+#include <cmath>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -103,6 +104,16 @@ void Draw(SDL_Renderer* r,const Game& g,int w,int h, bool paused) {
         else if(i==3) Rect(r,x+6,y+6,16,15,185,187,172);
         else if(i==4) Rect(r,x+7,y+5,14,18,64,227,203);
         else Rect(r,x+7,y+7,14,14,211,139,102);
+    }
+    for(const auto& cache:Game::Caches()) {
+        const auto p=cache.at;
+        if(!g.Discovered(p.x,p.y)) continue;
+        const bool opened=g.ObjectAt(p.x,p.y)==Structure::OpenedCache;
+        const int x=sx(p.x),y=sy(p.y);
+        Rect(r,x+4,y+10,20,14,71,50,39);
+        Rect(r,x+5,y+7,18,11,opened?111:169,opened?91:119,opened?62:60);
+        Rect(r,x+5,y+(opened?17:11),18,3,215,174,91);
+        if(!opened) Rect(r,x+12,y+13,4,5,247,223,137);
     }
     for(int socket:{105,107}) if(g.Discovered(socket,64))
         Outline(r,sx(socket)+4,sy(64)+4,20,20,100,201,187);
@@ -216,6 +227,48 @@ void Draw(SDL_Renderer* r,const Game& g,int w,int h, bool paused) {
     }
     SDL_RenderPresent(r);
 }
+void DrawMap(SDL_Renderer* r,const Game& g) {
+    constexpr int tiles=kExpeditionSize, scale=4, span=tiles*scale;
+    constexpr int left=(kWidth-span)/2, top=(kHeight-span)/2;
+    const auto& s=g.State();
+    const int x0=std::clamp(s.player.x-tiles/2,0,kMapSize-tiles);
+    const int y0=std::clamp(s.player.y-tiles/2,0,kMapSize-tiles);
+    const auto sx=[&](int x){return left+(x-x0)*scale;};
+    const auto sy=[&](int y){return top+(y-y0)*scale;};
+    const auto in=[&](Point p){return p.x>=x0 && p.x<x0+tiles && p.y>=y0 && p.y<y0+tiles;};
+    Color(r,11,20,27); SDL_RenderClear(r);
+    Rect(r,left-12,top-12,span+24,span+24,36,51,53);
+    Rect(r,left,top,span,span,15,25,29);
+    for(int y=y0;y<y0+tiles;++y) for(int x=x0;x<x0+tiles;++x) {
+        if(!g.Discovered(x,y)) continue;
+        auto c=TerrainColor(g.Terrain(x,y));
+        switch(g.ObjectAt(x,y)) {
+            case Structure::Bridge: c={190,145,80}; break;
+            case Structure::Wall: c={144,107,69}; break;
+            case Structure::Campfire: c={247,148,65}; break;
+            case Structure::Relay: c={101,202,199}; break;
+            default: break;
+        }
+        Rect(r,sx(x),sy(y),scale,scale,c[0],c[1],c[2]);
+    }
+    const SDL_Rect clip{left,top,span,span};
+    SDL_RenderSetClipRect(r,&clip);
+    for(const auto& cache:Game::Caches()) {
+        const auto p=cache.at;
+        if(!in(p) || !g.Discovered(p.x,p.y)) continue;
+        const bool opened=g.ObjectAt(p.x,p.y)==Structure::OpenedCache;
+        Rect(r,sx(p.x)-2,sy(p.y)-2,8,8,opened?119:244,opened?124:192,opened?117:84);
+    }
+    const auto beacon=Game::Beacon();
+    if(in(beacon) && g.Discovered(beacon.x,beacon.y))
+        Rect(r,sx(beacon.x)-2,sy(beacon.y)-2,8,8,99,228,214);
+    if(!s.guardian_defeated && in(s.guardian) && g.Visible(s.guardian.x,s.guardian.y))
+        Rect(r,sx(s.guardian.x)-2,sy(s.guardian.y)-2,8,8,230,90,79);
+    Rect(r,sx(s.player.x)-3,sy(s.player.y)-3,10,10,244,238,211);
+    SDL_RenderSetClipRect(r,nullptr);
+    Outline(r,left-1,top-1,span+2,span+2,111,140,121);
+    SDL_RenderPresent(r);
+}
 const char* GuardName(GuardMode mode) {
     switch(mode) {
         case GuardMode::Idle: return "idle";
@@ -227,14 +280,24 @@ const char* GuardName(GuardMode mode) {
     }
     return "unknown";
 }
-std::string Title(const Game& g,bool paused) {
+std::string Title(const Game& g,bool paused,bool map_open) {
     const auto& s=g.State();
     std::string phase=s.phase==Phase::Won?"VICTORY - F5 to restart":s.phase==Phase::Lost?
-      "DEFEAT - F5 to restart":paused?"PAUSED - ESC to resume":
+      "DEFEAT - F5 to restart":map_open?"MAP - M or ESC to close; gold cache, grey looted, white player, cyan beacon":paused?"PAUSED - ESC to resume":
       !s.bridge?"Gather G; build B at river crossing":
       !s.guardian_defeated?"Find guardian; K attack, V evade marked strike":
       !s.beacon?"Place P/Q beside sockets; 2 rotate each east; E activate":
       !s.fire?"Build F campfire":"Stay near fire; R refuel, SPACE wait";
+    if(!map_open && !paused && s.phase==Phase::Playing) {
+        for(const auto& cache:Game::Caches()) {
+            const auto p=cache.at;
+            if(g.ObjectAt(p.x,p.y)==Structure::SupplyCache &&
+               std::abs(p.x-s.player.x)+std::abs(p.y-s.player.y)<=1) {
+                phase+=" | E open "+std::string(cache.name);
+                break;
+            }
+        }
+    }
     return "HEARTHLINE | "+phase+" | pos "+std::to_string(s.player.x)+","+
       std::to_string(s.player.y)+" | HP "+std::to_string(s.health)+
       " wood "+std::to_string(s.inventory.wood)+
@@ -243,6 +306,7 @@ std::string Title(const Game& g,bool paused) {
       " food "+std::to_string(s.inventory.food)+
       " night "+std::to_string(s.night_turns)+"/24"+
       " fuel "+std::to_string(s.fuel)+" explored "+std::to_string(g.DiscoveredCount())+
+      " caches "+std::to_string(g.OpenedCacheCount())+"/4 harvested "+std::to_string(g.HarvestedCount())+
       " | guard "+std::to_string(s.guardian.x)+","+std::to_string(s.guardian.y)+
       " guard HP "+std::to_string(s.guard_health)+" "+GuardName(s.guard_mode)+
       " attack cd "+std::to_string(s.attack_ticks)+" evade cd "+std::to_string(s.dodge_cooldown);
@@ -255,7 +319,7 @@ struct App {
     SDL_Renderer* renderer=nullptr;
     Game game{1};
     unsigned seed=1;
-    bool running=true, paused=false, smoke=false, ready=false;
+    bool running=true, paused=false, map_open=false, smoke=false, ready=false;
     std::string last_status;
     int frames=0;
     Uint32 last_frame_ms=0, combat_accumulator=0;
@@ -282,11 +346,18 @@ struct App {
         SDL_Quit();
     }
     void Key(SDL_Keycode k, SDL_Keymod mods) {
-        if(k==SDLK_ESCAPE){paused=!paused;combat_accumulator=0;return;}
-        if((k==SDLK_n && (mods&KMOD_CTRL)) || k==SDLK_F5){
-            game=Game(seed);paused=false;combat_accumulator=0;return;
+        if(k==SDLK_ESCAPE){
+            if(map_open) map_open=false;
+            else paused=!paused;
+            combat_accumulator=0; return;
         }
-        if(paused || game.State().phase!=Phase::Playing) return;
+        if(k==SDLK_m && game.State().phase==Phase::Playing) {
+            map_open=!map_open; combat_accumulator=0; return;
+        }
+        if((k==SDLK_n && (mods&KMOD_CTRL)) || k==SDLK_F5){
+            game=Game(seed);paused=false;map_open=false;combat_accumulator=0;return;
+        }
+        if(paused || map_open || game.State().phase!=Phase::Playing) return;
         if(k==SDLK_UP || k==SDLK_w) (void)game.Move(0,-1);
         else if(k==SDLK_DOWN || k==SDLK_s) (void)game.Move(0,1);
         else if(k==SDLK_LEFT || k==SDLK_a) (void)game.Move(-1,0);
@@ -313,7 +384,7 @@ struct App {
         const Uint32 now=SDL_GetTicks();
         const Uint32 elapsed=std::min<Uint32>(now-last_frame_ms,250);
         last_frame_ms=now;
-        if(!paused && game.State().phase==Phase::Playing) {
+        if(!paused && !map_open && game.State().phase==Phase::Playing) {
             combat_accumulator+=elapsed;
             while(combat_accumulator>=kCombatTickMs) {
                 game.TickCombat();
@@ -331,7 +402,7 @@ struct App {
             }
         }
         if(!running) return;
-        const std::string status=Title(game,paused);
+        const std::string status=Title(game,paused,map_open);
         if(status!=last_status) {
             last_status=status;
             SDL_SetWindowTitle(window,status.c_str());
@@ -340,7 +411,8 @@ struct App {
                    status.c_str());
 #endif
         }
-        Draw(renderer,game,kWidth,kHeight,paused);
+        if(map_open) DrawMap(renderer,game);
+        else Draw(renderer,game,kWidth,kHeight,paused);
 #if defined(__EMSCRIPTEN__)
         if(!ready) {
             ready=true;
@@ -378,8 +450,8 @@ int main(int argc,char** argv) {
         else if(arg=="--help") {
             std::cout<<"HEARTHLINE graphical prototype\n"
                 <<"Arrows/WASD move | G gather | B bridge | K attack | V dodge\n"
-                <<"P/Q place relay | E activate | F campfire | R refuel | H heal\n"
-                <<"1 toggle wall east | 2 rotate nearest relay | SPACE wait | ESC pause | F5 restart | --smoke\n";
+                <<"P/Q place relay | E interact | F campfire | R refuel | H heal\n"
+                <<"1 toggle wall east | 2 rotate nearest relay | SPACE wait | M map | ESC pause | F5 restart | --smoke\n";
             return 0;
         }
     }

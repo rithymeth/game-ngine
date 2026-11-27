@@ -25,17 +25,24 @@ Collect resources around the opening camp, build the bridge at x=62, cross the r
 | Key | Action |
 | --- | --- |
 | Arrow keys / WASD | Move one tile |
-| G | Gather nearby resource |
+| G | Gather nearby pickup or harvest adjacent tree/rock |
 | B | Build bridge at crossing |
 | K / V | Attack / timed evasion (300 ms) |
 | Space | Wait one survival turn |
 | P / Q | Place relay at fixed first / second puzzle socket |
-| E | Activate solved beacon |
+| E | Open adjacent supply cache or activate solved beacon |
 | F / R | Build campfire / refuel |
 | H | Heal using food |
 | 1 / 2 | Toggle wall to east (after beacon; refundable) / rotate nearest adjacent relay |
-| Escape | Pause |
+| M | Toggle explored-area map (pauses combat and gameplay) |
+| Escape | Pause or close map |
 | Ctrl+N or F5 after win/loss | Restart |
+
+## Wilderness and landmarks
+
+The entire 512 x 512 world has harvestable trees and rocks. Stand next to a resource and press G; gathering an opening-camp pickup has priority, otherwise one adjacent tree or rock is cleared into grass and yields two units of wood or stone. Cleared terrain remains walkable.
+
+Four optional supply caches sit along side trails: the Forester's stash, Quarry supply chest, Lost expedition pack and Ruined watchpost. Their paths are guaranteed regardless of seed; each chest can be opened once with E, from its tile or an adjacent tile. Rewards supplement the main route's wood, stone and food without changing the required energy components. The status shows cache and harvested counts. Open M for a 128 x 128 tile map window centered on the player (clamped to world boundaries). Only discovered terrain and landmarks are visible. Gold marks unopened caches, grey marks looted caches, white marks the player, cyan marks the beacon, and red marks a visible guardian. Closing the map restores the prior pause state.
 
 The window title gives the current objective and exact inventory quantities; the HUD shows health, inventory bars, night progress, and fuel. Terrain, trees, rocks and the ranger use original procedural pixel art. Gathered resources disappear, walls are drawn, directional relay indicators show rotation, and explored tiles fade outside a 12-tile sight radius. The fixed logical canvas keeps the HUD readable on resize.
 
@@ -53,7 +60,7 @@ The browser game is a **single-file HTML** export at `build/hearthline-web/index
 
 The page includes a responsive canvas, current objectives/inventory text, touchscreen action and movement buttons, and fullscreen control. Keyboard focus is attached to the canvas. The browser build runs an Emscripten animation-frame callback rather than the native blocking event loop.
 
-GitHub Actions builds and uploads `hearthline-web` as a downloadable workflow artifact (when CI succeeds). A passing WebAssembly compile check does **not** substitute for testing gameplay interactively across actual browsers and mobile devices.
+GitHub Actions is disabled by the repository owner. Build and test the browser game locally; the legacy workflow is not used or dispatched. A passing WebAssembly compile check does **not** substitute for testing gameplay interactively across actual browsers and mobile devices.
 
 
 ## Publish the browser game
@@ -73,6 +80,6 @@ The deployment workflow is deliberately **manual** until Pages is configured, to
 
 - Deterministic **512 x 512** tile terrain with a designated **128 x 128** expedition area. Three dense byte-sized runtime grids hold terrain, constructed objects and persistent discovery (786,432 cells total, 768 KiB of cell data). These are not yet Aether tilemap assets.
 - Shared gameplay simulation in `src/game.cpp`; the SDL2 host in `src/visual_main.cpp` draws only visible tiles around the player and sends keyboard actions to the same core.
-- 64 seeded regression expeditions exercise combat timing, idle death, timed and mistimed dodges, cooldowns, healing, retreat, discovery, bridge placement, relay rotation, and survival. The browser test script also covers keyboard/touch input and complete expedition progression; run it locally with Playwright. GitHub Actions is disabled by repository owner; this milestone does not enable or dispatch it.
+- 64 seeded regression expeditions and 64 exploration scenarios exercise all four cache routes, one-time loot, natural resource depletion, combat timing, idle death, timed and mistimed dodges, cooldowns, healing, retreat, discovery, bridge placement, relay rotation, and survival. The browser test script also covers keyboard/touch input and complete expedition progression; run it locally with Playwright. GitHub Actions is disabled by repository owner; this milestone does not enable or dispatch it.
 - This is a native SDL2 graphical prototype with an experimental Emscripten browser export; it is not yet an Aether sprite-batch renderer or a tested commercial-quality experience.
 - Guardian attack markers, health bars, slash, evasion and damage feedback use procedural animations. Movement is still tile-stepped; there are no imported sprite sheets, sounds, save/load, world streaming, generalized relay solver, or benchmarked 60 FPS guarantee.

@@ -30,6 +30,65 @@ void Windup(Game& g) {
     CHECK(g.State().guard_mode==GuardMode::Windup);
     CHECK(g.State().guard_ticks==kGuardWindupTicks);
 }
+void TestExploration(unsigned seed) {
+    Game g(seed);
+    // Authored starting path and side caches are traversable on every seed.
+    const auto& caches=Game::Caches();
+    const auto first=caches[0].at;
+    CHECK(g.ObjectAt(first.x,first.y)==Structure::SupplyCache);
+    CHECK(!g.Discovered(first.x,first.y));
+    CHECK(!g.Act(Action::Interact));
+    auto claim=[&](const SupplyCache& cache) {
+        To(g,cache.at.x,64);
+        To(g,cache.at.x,cache.at.y);
+        CHECK(g.Discovered(cache.at.x,cache.at.y));
+        CHECK(g.ObjectAt(cache.at.x,cache.at.y)==Structure::SupplyCache);
+        const auto before=g.State().inventory;
+        CHECK(g.Act(Action::Interact));
+        CHECK(g.ObjectAt(cache.at.x,cache.at.y)==Structure::OpenedCache);
+        CHECK(g.State().inventory.wood==before.wood+cache.loot.wood);
+        CHECK(g.State().inventory.stone==before.stone+cache.loot.stone);
+        CHECK(g.State().inventory.food==before.food+cache.loot.food);
+        CHECK(!g.Act(Action::Interact));
+        To(g,cache.at.x,64);
+    };
+    claim(caches[0]); claim(caches[1]);
+    To(g,61,64); CHECK(g.Act(Action::BuildBridge));
+    claim(caches[2]);
+    // Explicitly defeat the guardian before reaching the final cache.
+    To(g,82,64); Windup(g);
+    for(int i=0;i<3;++i) { CHECK(g.Act(Action::Attack)); Tick(g,kAttackCooldownTicks); }
+    CHECK(g.State().guardian_defeated);
+    claim(caches[3]);
+    CHECK(g.OpenedCacheCount()==4);
+    CHECK(g.State().inventory.wood==7);
+    CHECK(g.State().inventory.stone==7);
+    CHECK(g.State().inventory.food==6);
+
+    // Find a reachable natural resource just off the safe road, away from
+    // starter pickups. A gather changes that exact tile and adds material.
+    Game wild(seed);
+    bool tested=false;
+    for(int x=30;x<61 && !tested;++x) {
+        To(wild,x,64);
+        for(int dy:{-1,1}) {
+            const int y=64+2*dy;
+            const auto tile=wild.Terrain(x,y+dy);
+            if(tile!=Tile::Tree && tile!=Tile::Rock) continue;
+            To(wild,x,y);
+            const auto before=wild.State().inventory;
+            CHECK(wild.Act(Action::Gather));
+            CHECK(wild.HarvestedCount()==1);
+            CHECK(wild.Terrain(x,y+dy)==Tile::Grass);
+            CHECK(wild.Walkable(x,y+dy));
+            CHECK(wild.State().inventory.wood==before.wood+(tile==Tile::Tree?2:0));
+            CHECK(wild.State().inventory.stone==before.stone+(tile==Tile::Rock?2:0));
+            To(wild,x,64);
+            tested=true; break;
+        }
+    }
+    CHECK(tested);
+}
 void Test(unsigned seed) {
     Game g(seed);
     CHECK(g.State().player.x==20);
@@ -140,7 +199,7 @@ void Test(unsigned seed) {
     CHECK(g.Complete());
 }
 int main(){
-    for(unsigned seed=1;seed<=64;++seed) Test(seed);
+    for(unsigned seed=1;seed<=64;++seed) { Test(seed); TestExploration(seed); }
     Game g(7);
     CHECK(g.Terrain(62,64)==Tile::Water);
     CHECK(g.Discovered(20,64));
@@ -153,5 +212,5 @@ int main(){
     CHECK(!g.Walkable(-1,64));
     CHECK(!g.Act(Action::BuildBridge));
     CHECK(!g.Act(Action::PlaceRelay,{105,64}));
-    std::cout<<"Hearthline 64 seeded expeditions and combat scenarios passed\n";
+    std::cout<<"Hearthline 64 seeded expeditions, combat and exploration scenarios passed\n";
 }

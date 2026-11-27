@@ -20,10 +20,11 @@ constexpr int kGuardRecoveryTicks = 12;
 enum class Tile : std::uint8_t { Grass, Tree, Rock, Water, Ruin, Floor };
 enum class Phase { Playing, Won, Lost };
 enum class GuardMode { Idle, Chase, Windup, Recovery, Return, Defeated };
-enum class Structure : std::uint8_t { None, Bridge, Wall, Campfire, Relay };
+enum class Structure : std::uint8_t { None, Bridge, Wall, Campfire, Relay, SupplyCache, OpenedCache };
 enum class Action { Gather, BuildBridge, BuildWall, BuildCampfire, PlaceRelay, RotateRelay, Attack, Dodge, Heal, Refuel, Interact, Wait };
 struct Point { int x = 0, y = 0; };
 struct Inventory { int wood = 0, stone = 0, energy = 0, food = 0; };
+struct SupplyCache { Point at{}; Inventory loot{}; const char* name = ""; };
 struct Input { int dx = 0, dy = 0; bool move = false; };
 struct Relay { Point at{}; int direction = 0; };
 struct Snapshot {
@@ -46,6 +47,9 @@ public:
     [[nodiscard]] bool Visible(int x, int y) const;
     [[nodiscard]] bool ResourceAvailable(int index) const;
     [[nodiscard]] bool RotateNearbyRelay();
+    [[nodiscard]] static const std::array<SupplyCache,4>& Caches();
+    [[nodiscard]] int OpenedCacheCount() const { return opened_caches_; }
+    [[nodiscard]] int HarvestedCount() const { return harvested_count_; }
     [[nodiscard]] int DiscoveredCount() const { return discovered_count_; }
     [[nodiscard]] static Point FireSite() { return {106,65}; }
     [[nodiscard]] bool Walkable(int x, int y) const;
@@ -65,6 +69,8 @@ public:
 private:
     void AdvanceTurn();
     void Reveal();
+    bool HarvestNearby();
+    bool OpenNearbyCache();
     void Damage();
     bool CombatAttack();
     bool CombatDodge();
@@ -77,6 +83,7 @@ private:
     std::vector<Structure> objects_;
     std::vector<std::uint8_t> discovered_;
     int discovered_count_ = 0;
+    int opened_caches_ = 0, harvested_count_ = 0;
     std::vector<Relay> relays_;
     Snapshot state_{};
     std::array<bool, 6> gathered_{};

@@ -33,9 +33,31 @@ async function check(name, viewport, hasTouch) {
     await button(1073741886);
     await contains('pos 20,64');
     await contains('wood 0');
+    await button(109);
+    await contains('MAP - M');
+    await button(100);
+    assert.match(await status.textContent(),/pos 20,64/);
+    await page.locator('#canvas').screenshot({path:'/tmp/hearthline-map-'+name+'.png'});
+    await button(109);
+    await page.waitForFunction(()=>!document.querySelector('#status')?.textContent?.includes('MAP - M'));
     if(!hasTouch) {
       await page.locator('#canvas').focus();
       const press=async(key,count=1)=>{for(let i=0;i<count;i++) await page.keyboard.press(key);};
+      // Explore a side trail and claim the same cache exactly once.
+      await press('d',17);
+      await press('w',6);
+      await contains('pos 37,58');
+      await contains("E open Forester's stash");
+      await press('e');
+      await contains('caches 1/4');
+      await contains('wood 4');
+      await press('e');
+      await contains('caches 1/4');
+      assert.match(await status.textContent(),/wood 4/);
+      await button(1073741886);
+      await contains('pos 20,64');
+      await contains('caches 0/4');
+      await page.locator('#canvas').focus();
       for(let i=0;i<6;i++) {
         if(i) await press('d');
         await press('g');
