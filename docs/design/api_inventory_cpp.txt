@@ -6738,6 +6738,7 @@
   private:bool LoadCell(const CellCoord&cell)
   public:using CellLoader=std::function<bool(const CellCoord&cell,std::vector<u8>&bytes)>
   static CellLoader FileLoader(std::filesystem::path dir)
+  std::optional<Vec3>SourceLocalPosition(Entity source)const
   std::vector<CellCoord>LoadedCells()const
   using CellHook=std::function<void(const CellCoord&cell,bool loaded)>
   using Executor=std::function<void(std::function<void()>)>

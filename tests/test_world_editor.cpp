@@ -1,4 +1,6 @@
 #include "aether/scene/components.h"
+#include "aether/scene/hierarchy.h"
+#include "aether/scene/serialization.h"
 #include "test_framework.h"
 #include "world/world_panels.h"
 
@@ -338,6 +340,50 @@ AETHER_TEST(WorldEditor_PartitionMarkerKeepsLocalPrecisionAtLargeOrigins) {
         CHECK(std::fabs(center.x - (map_min.x + 36.0f)) < 1.0f);
         CHECK(std::fabs(center.y - (map_min.y + 18.0f)) < 1.0f);
         CHECK(panel.CellAt(center.x, center.y) == CellCoord{1, 0});
+    });
+}
+
+AETHER_TEST(WorldEditor_ParentedPartitionMarkerMatchesRuntimeCell) {
+    HeadlessImGui ui;
+    RegisterStreamingComponents();
+    World game;
+    const EntityGuid rig{1, 1}, mount{1, 2};
+    game.CreateEntity(IdComponent{rig}, Transform{Vec3(99, 0, 0), Quaternion::Identity()});
+    game.CreateEntity(IdComponent{mount}, Parent{rig}, Transform{Vec3(12, 0, 0), Quaternion::Identity()});
+    game.CreateEntity(Parent{mount}, Transform{Vec3(5, 0, 32), Quaternion::Identity()}, StreamingSource{0.0f, true});
+    GuidIndex guids;
+    guids.Rebuild(game);
+
+    constexpr f32 far = 1073741824.0f;
+    WorldIndex index;
+    index.settings.origin = Vec3(far, 0, -far);
+    index.settings.cell_size = 64.0f;
+    for (i32 x = 0; x < 3; ++x) index.cells.push_back({{x, 0}, 0, {}, {}});
+    const World empty;
+    const auto scene = SaveSceneToMemory(empty);
+    WorldStreamer streamer(game, std::move(index), [&](const CellCoord&, std::vector<u8>& bytes) {
+        bytes = scene;
+        return true;
+    }, &guids);
+    streamer.SetOriginOffset({far, 0, -far});
+    streamer.Update();
+    CHECK(streamer.LoadedCells() == std::vector<CellCoord>{{1, 0}});
+
+    WorldPartitionPanel panel(streamer, &game);
+    ui.Frame([&] {
+        panel.Draw();
+        ImVec2 low(1e6f, 1e6f), high(-1e6f, -1e6f);
+        usize vertices = 0;
+        for (const ImDrawVert& vertex : ImGui::GetWindowDrawList()->VtxBuffer) {
+            if (vertex.col != IM_COL32(80, 200, 255, 255)) continue;
+            low.x = std::min(low.x, vertex.pos.x);
+            low.y = std::min(low.y, vertex.pos.y);
+            high.x = std::max(high.x, vertex.pos.x);
+            high.y = std::max(high.y, vertex.pos.y);
+            ++vertices;
+        }
+        CHECK(vertices > 0);
+        CHECK(panel.CellAt((low.x + high.x) * 0.5f, (low.y + high.y) * 0.5f) == CellCoord{1, 0});
     });
 }
 

@@ -250,12 +250,13 @@ void WorldPartitionPanel::Draw() {
                 for (usize i = 0; i < a.ChunkEntityCount(ch); ++i) {
                     const Entity e = a.EntityArray(ch)[i];
                     const StreamingSource* src = world_->GetComponent<StreamingSource>(e);
-                    const Transform* t = world_->GetComponent<Transform>(e);
-                    if (src == nullptr || t == nullptr) continue;
+                    if (src == nullptr) continue;
+                    const auto position = streamer_.SourceLocalPosition(e);
+                    if (!position) continue;
                     // Subtract the distant partition origin before
                     // narrowing to pixels, or the local offset can vanish.
-                    const f64 wx = (off.x - index.settings.origin.x) + t->position.x;
-                    const f64 wz = (off.z - index.settings.origin.z) + t->position.z;
+                    const f64 wx = (off.x - index.settings.origin.x) + position->x;
+                    const f64 wz = (off.z - index.settings.origin.z) + position->z;
                     const ImVec2 c(
                         static_cast<f32>(map_x_ + (wx / index.settings.cell_size - x0) * s),
                         static_cast<f32>(map_y_ + (wz / index.settings.cell_size - z0) * s));
