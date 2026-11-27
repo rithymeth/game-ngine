@@ -33,6 +33,16 @@ constexpr f32 kPixelsPerSecond = 240.0f;
 constexpr const char* kTypePayload = "AETHER_UI_TYPE";
 constexpr const char* kPathPayload = "AETHER_UI_PATH";
 
+using WidgetNameIndex = std::map<std::string_view, const Widget*>;
+
+void IndexWidgetNames(const Widget& w, WidgetNameIndex& names) {
+    if (!w.name.empty()) {
+        const auto [entry, inserted] = names.emplace(w.name, &w);
+        if (!inserted) entry->second = nullptr; // ambiguous names cannot identify a widget
+    }
+    for (usize i = 0; i < w.ChildCount(); ++i) IndexWidgetNames(*w.Child(i), names);
+}
+
 // The layout's metrics without glyph boxes: the canvas draws text with ImGui over the quads.
 class MetricsFont final : public ui::Font {
 public:
@@ -142,6 +152,39 @@ void UIDesigner::Select(const WidgetPath& path, bool add) {
 std::optional<WidgetPath> UIDesigner::Primary() const {
     if (selection_.empty() || doc_.At(selection_.back()) == nullptr) return std::nullopt;
     return selection_.back();
+}
+
+void UIDesigner::NavigateHistory(bool redo) {
+    if (!(redo ? doc_.CanRedo() : doc_.CanUndo())) return;
+    std::vector<std::string> selected_names;
+    if (!selection_.empty()) {
+        WidgetNameIndex before;
+        IndexWidgetNames(doc_.Root(), before);
+        for (const WidgetPath& path : selection_) {
+            if (path.empty()) {
+                selected_names.emplace_back(); // the root has no sibling
+            } else if (const Widget* widget = doc_.At(path)) {
+                const auto entry = before.find(widget->name);
+                if (entry != before.end() && entry->second == widget) selected_names.push_back(widget->name);
+            }
+        }
+    }
+    if (!(redo ? doc_.Redo() : doc_.Undo())) return;
+
+    // A restored tree may have another widget at the old child index.
+    selection_.clear();
+    if (!selected_names.empty()) {
+        WidgetNameIndex after;
+        IndexWidgetNames(doc_.Root(), after);
+        for (const std::string& name : selected_names) {
+            if (name.empty()) selection_.emplace_back();
+            else if (const auto entry = after.find(name); entry != after.end()) {
+                if (const auto path = doc_.PathOf(entry->second)) selection_.push_back(*path);
+            }
+        }
+    }
+    drag_ = Drag::None;
+    drag_rects_.clear();
 }
 
 void UIDesigner::SetResolution(usize preset) {
@@ -409,11 +452,11 @@ void UIDesigner::DrawToolbar() {
     if (ImGui::Button("Save")) SaveNow();
     ImGui::SameLine();
     ImGui::BeginDisabled(!doc_.CanUndo());
-    if (ImGui::Button("Undo")) doc_.Undo();
+    if (ImGui::Button("Undo")) NavigateHistory(false);
     ImGui::EndDisabled();
     ImGui::SameLine();
     ImGui::BeginDisabled(!doc_.CanRedo());
-    if (ImGui::Button("Redo")) doc_.Redo();
+    if (ImGui::Button("Redo")) NavigateHistory(true);
     ImGui::EndDisabled();
     ImGui::SameLine();
     ImGui::SetNextItemWidth(230);
@@ -909,8 +952,8 @@ void UIDesigner::HandleKeys() {
     ImGuiIO& io = ImGui::GetIO();
     if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) || io.WantTextInput) return;
     const bool ctrl = io.KeyCtrl;
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Z, false)) io.KeyShift ? (void)doc_.Redo() : (void)doc_.Undo();
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Y, false)) doc_.Redo();
+    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Z, false)) NavigateHistory(io.KeyShift);
+    else if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Y, false)) NavigateHistory(true);
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_S, false)) SaveNow();
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_D, false)) DuplicateSelection();
     if (ImGui::IsKeyPressed(ImGuiKey_Delete, false)) DeleteSelection();

@@ -91,6 +91,7 @@ public:
 private:
     enum class Drag : u8 { None, Move, Resize, Pan, Key, Scrub };
     void Refresh(); // rebuild the preview when the document or the playhead changed
+    void NavigateHistory(bool redo);
     void DrawToolbar();
     void DrawPalette();
     void DrawHierarchy();

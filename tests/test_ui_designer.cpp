@@ -279,6 +279,54 @@ AETHER_TEST(UIDesigner_LayoutWriteFailureKeepsSavedFilesAndPendingEdits) {
 }
 #endif
 
+AETHER_TEST(UIDesigner_HistoryKeepsTheSameWidgetSelectedAfterReordering) {
+    HeadlessImGui imgui;
+    UILayoutDocument doc;
+    const auto first = doc.AddWidget("Button", {});
+    const auto second = doc.AddWidget("Text", {});
+    CHECK(first == WidgetPath{0} && second == WidgetPath{1});
+    if (!first || !second) return;
+    CHECK(doc.Rename(*first, "First") && doc.Rename(*second, "Second"));
+    doc.MarkSaved();
+    const auto moved = doc.Move(*first, {}, 2);
+    CHECK(moved == WidgetPath{1});
+    if (!moved) return;
+    UIDesigner designer(doc);
+    designer.Select(*moved);
+
+    ImVec2 undo{};
+    const auto draw = [&] {
+        const ImVec2 at = ImGui::GetCursorScreenPos();
+        const auto& style = ImGui::GetStyle();
+        undo = ImVec2(at.x + ImGui::CalcTextSize("Save").x + 2 * style.FramePadding.x +
+                          style.ItemSpacing.x + ImGui::CalcTextSize("Undo").x * 0.5f + style.FramePadding.x,
+                      at.y + ImGui::GetFrameHeight() * 0.5f);
+        designer.Draw();
+    };
+    imgui.Frame(draw);
+    imgui.Frame(draw);
+    ImGuiIO& io = ImGui::GetIO();
+    io.AddMousePosEvent(undo.x, undo.y);
+    imgui.Frame(draw);
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+    imgui.Frame(draw);
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+    imgui.Frame(draw);
+    CHECK(doc.PathOf("First") == WidgetPath{0});
+    CHECK(designer.Primary() == WidgetPath{0});
+
+    // Exercise the keyboard route too, starting with the intended widget.
+    designer.Select({0});
+    io.AddKeyEvent(ImGuiMod_Ctrl, true);
+    io.AddKeyEvent(ImGuiKey_Y, true);
+    imgui.Frame(draw);
+    io.AddKeyEvent(ImGuiKey_Y, false);
+    io.AddKeyEvent(ImGuiMod_Ctrl, false);
+    imgui.Frame(draw);
+    CHECK(doc.PathOf("First") == WidgetPath{1});
+    CHECK(designer.Primary() == WidgetPath{1});
+}
+
 AETHER_TEST(UIDesigner_Canvas) {
     HeadlessImGui imgui;
     UILayoutDocument doc;
