@@ -58,6 +58,16 @@ std::vector<std::string> FallbackChain(std::string_view language, std::string_vi
         const usize cut = tag.rfind('-');
         if (cut == std::string::npos) break;
         tag.resize(cut);
+        // RFC 4647 §3.4: an extension singleton does not stand on its own
+        // after its last value is removed. This includes a leading private-use x.
+        while (!tag.empty()) {
+            const usize separator = tag.rfind('-');
+            const usize start = separator == std::string::npos ? 0 : separator + 1;
+            if (tag.size() - start != 1) break;
+            const char c = Lower(tag[start]);
+            if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))) break;
+            tag.resize(separator == std::string::npos ? 0 : separator);
+        }
     }
     add(NormalizeLanguage(default_language));
     return chain;

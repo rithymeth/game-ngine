@@ -239,6 +239,12 @@ AETHER_TEST(LocAssets_CandidatesFollowTheFallbackChain) {
     CHECK((LocalizedCandidates("a.dir/readme", "fr") == std::vector<std::string>{"a.dir/readme.fr", "a.dir/readme"}));
 }
 
+AETHER_TEST(LocAssets_ExtendedLocaleDoesNotProbeDanglingExtensionPath) {
+    CHECK((loc::LocalizedCandidates("Textures/logo.png", "km-KH-u-nu-latn") ==
+           std::vector<std::string>{"Textures/logo.km-KH-u-NU-Latn.png", "Textures/logo.km-KH-u-NU.png",
+                                    "Textures/logo.km-KH.png", "Textures/logo.km.png", "Textures/logo.png"}));
+}
+
 AETHER_TEST(LocAssets_VariantsAreRecognizedAndOrphansFound) {
     std::string base, language;
     CHECK(loc::SplitVariant("Textures/logo.fr.png", &base, &language) && base == "Textures/logo.png" && language == "fr");
