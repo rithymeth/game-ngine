@@ -306,22 +306,26 @@ void WorldStreamer::UpdateAsync(const std::vector<std::pair<f32, CellCoord>>& wa
         std::lock_guard lock(shared_->mutex);
         ready.swap(shared_->ready);
     }
-    usize applied = 0, entities = 0;
+    usize attempted = 0, entities = 0;
     std::vector<std::pair<CellCoord, Shared::Result>> later;
     for (const auto& [n, cell] : wanted) {
         auto it = ready.find(cell);
         if (it == ready.end()) continue;
         const bool over_entities = max_entities_per_update != 0 && entities >= max_entities_per_update;
-        const bool over_time = apply_budget_ms > 0.0 && applied > 0 &&
+        const bool over_time = apply_budget_ms > 0.0 && attempted > 0 &&
             std::chrono::duration<f64, std::milli>(std::chrono::steady_clock::now() - start).count() >= apply_budget_ms;
-        if (applied >= max_loads_per_update || over_entities || over_time) {
+        if (attempted >= max_loads_per_update || over_entities || over_time) {
             later.emplace_back(cell, std::move(it->second));
-        } else if (!it->second.ok) {
-            failed_[cell] = CellState::Failed;
-            problems_.push_back("cell " + CellName(cell) + " couldn't be read");
-        } else if (ApplyCell(cell, it->second.bytes)) {
-            entities += events_.back().entities;
-            ++applied;
+        } else {
+            // Like synchronous loads, failures use a slot: decoding a bad
+            // scene and recording its diagnostic still take update time.
+            ++attempted;
+            if (!it->second.ok) {
+                failed_[cell] = CellState::Failed;
+                problems_.push_back("cell " + CellName(cell) + " couldn't be read");
+            } else if (ApplyCell(cell, it->second.bytes)) {
+                entities += events_.back().entities;
+            }
         }
         ready.erase(it);
     }

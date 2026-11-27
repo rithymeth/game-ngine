@@ -349,6 +349,48 @@ AETHER_TEST(Streaming_AsyncDropsCellsNoLongerWanted) {
     CHECK(streamer.InFlight() == 0);
 }
 
+AETHER_TEST(Streaming_AsyncFailuresStillUseTheLoadBudget) {
+    Level level;
+    PartitionSettings settings;
+    settings.cell_size = 64.0f;
+    const PartitionResult partition = PartitionWorld(level.world, settings);
+    constexpr CellCoord unreadable{0, 0}, malformed{1, 0}, valid{3, 0};
+    World game;
+    WorldStreamer streamer(game, partition.index, [&](const CellCoord& cell, std::vector<u8>& bytes) {
+        if (cell == unreadable) return false;
+        if (cell == malformed) {
+            bytes = {0, 1, 2}; // readable but not a scene
+            return true;
+        }
+        const auto found = partition.cells.find(cell);
+        if (found == partition.cells.end()) return false;
+        bytes = found->second;
+        return true;
+    });
+    ManualExecutor exec;
+    streamer.SetExecutor(exec.Get());
+    streamer.max_loads_per_update = 1;
+    streamer.Pin(unreadable);
+    streamer.Pin(malformed);
+    streamer.Pin(valid);
+    streamer.Update();
+    CHECK(exec.tasks.size() == 3);
+    exec.RunAll();
+
+    streamer.Update();
+    CHECK(streamer.State(unreadable) == CellState::Failed);
+    CHECK(streamer.State(malformed) == CellState::Unloaded && streamer.State(valid) == CellState::Unloaded);
+    CHECK(streamer.Problems().size() == 1 && streamer.InFlight() == 2 && streamer.PendingLoads() == 2);
+
+    streamer.Update();
+    CHECK(streamer.State(malformed) == CellState::Failed && streamer.State(valid) == CellState::Unloaded);
+    CHECK(streamer.Problems().size() == 2 && streamer.InFlight() == 1 && streamer.PendingLoads() == 1);
+
+    streamer.Update();
+    CHECK(streamer.State(valid) == CellState::Loaded && HasEntityAt(game, 200.0f));
+    CHECK(streamer.Problems().size() == 2 && streamer.InFlight() == 0 && streamer.PendingLoads() == 0);
+}
+
 AETHER_TEST(Streaming_AsyncEntityBudgetSpreadsApplies) {
     Level level;
     PartitionSettings s;
