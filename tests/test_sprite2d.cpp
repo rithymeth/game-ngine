@@ -1428,6 +1428,33 @@ AETHER_TEST(Physics2D_WideTileRaysKeepBothCornerHitsAndStableTies) {
     CHECK(reverse[2].tile_x == 0 && reverse[2].tile_y == 1);
 }
 
+AETHER_TEST(Physics2D_WideBoxCastsRespectTheBoxExtents) {
+    World world;
+    Tileset tiles;
+    tiles.SetSolid(7, true);
+    TilemapData map;
+    map.Resize(96, 96);
+    map.AddLayer("Floor");
+    map.Set(0, 4, 2, 7); // Off the center line, but touched by the wide box.
+    map.Set(0, 70, 70, 7);
+    Resolvers2D resolvers;
+    resolvers.tilemaps = [&](const assets::AssetGuid&) { return &map; };
+    resolvers.tilesets = [&](const assets::AssetGuid&) { return &tiles; };
+    TilemapRenderer renderer;
+    renderer.pixels_per_unit = 16.0f;
+    world.CreateEntity(Transform{Vec3(0, 0, 0), Quaternion::Identity()}, renderer);
+    Physics2D physics(world, resolvers);
+
+    RayHit2D hit;
+    CHECK(physics.BoxCast({0.5f, 0.5f}, {1.25f, 0.25f}, {1, 1}, 130.0f, hit));
+    CHECK(hit.tile && hit.tile_x == 4 && hit.tile_y == 2);
+    CHECK(hit.normal.x == -1.0f && Near(hit.point.x, 4.0f) && Near(hit.point.y, 2.75f));
+    CHECK(physics.BoxCast({0.5f, 0.5f}, {}, {1, 1}, 130.0f, hit));
+    CHECK(hit.tile_x == 70 && hit.tile_y == 70);
+    CHECK(physics.BoxCast({95.5f, 95.5f}, {0.25f, 1.25f}, {-1, -1}, 136.0f, hit));
+    CHECK(hit.tile_x == 70 && hit.tile_y == 70);
+}
+
 AETHER_TEST(Physics2D_CastsHitClosedTileEdges) {
     World world;
     Tileset tiles;

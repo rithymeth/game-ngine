@@ -77,18 +77,18 @@ bool ShouldClipTileRayRows(TileRange columns, TileRange rows, Vec2 direction) {
 }
 
 TileRange ClipTileRayRow(TileRange columns, f32 row_y, Vec2 origin, Vec2 direction,
-                         f32 map_x, Vec2 cell_size, f32 max_distance) {
+                         f32 map_x, Vec2 cell_size, f32 max_distance, Vec2 half = {}) {
     // Use the same float edge construction and divisions as SlabRay, so
     // the broad phase neither drops rounded corner hits nor changes ties.
-    const f32 y0 = (row_y - origin.y) / direction.y;
-    const f32 y1 = (row_y + cell_size.y - origin.y) / direction.y;
+    const f32 y0 = (row_y - half.y - origin.y) / direction.y;
+    const f32 y1 = (row_y + cell_size.y + half.y - origin.y) / direction.y;
     const f32 enter = std::max(0.0f, std::min(y0, y1));
     const f32 exit = std::min(max_distance, std::max(y0, y1));
     if (enter > exit) return {};
 
     const auto edge_time = [&](i32 x, bool high) {
         const f32 low = map_x + static_cast<f32>(x) * cell_size.x;
-        const f32 edge = high ? low + cell_size.x : low;
+        const f32 edge = high ? low + cell_size.x + half.x : low - half.x;
         return (edge - origin.x) / direction.x;
     };
     const auto boundary = [](i32 lo, i32 hi, const auto& before) {
@@ -1028,11 +1028,14 @@ bool Physics2D::BoxCast(Vec2 origin, Vec2 half, Vec2 dir, f32 max_distance, RayH
                                                    std::max(origin.y, end.y) + half.y,
                                                    map_origin.y, cell_height, map->height);
             if (!x_range.Valid() || !y_range.Valid()) return;
+            const bool refine = ShouldClipTileRayRows(x_range, y_range, dir);
             for (i32 y = y_range.first; y <= y_range.last; ++y) {
-                for (i32 x = x_range.first; x <= x_range.last; ++x) {
+                const f32 row_y = map_origin.y + static_cast<f32>(y) * cell_height;
+                const TileRange row = refine ? ClipTileRayRow(x_range, row_y, origin, dir, map_origin.x, cell_size, best, half)
+                                             : x_range;
+                for (i32 x = row.first; x <= row.last; ++x) {
                     if (!IsSolidAt(*map, *tileset, x, y)) continue;
-                    const Vec2 lo{map_origin.x + static_cast<f32>(x) * cell_width,
-                                  map_origin.y + static_cast<f32>(y) * cell_height};
+                    const Vec2 lo{map_origin.x + static_cast<f32>(x) * cell_width, row_y};
                     const Vec2 hi{lo.x + cell_width, lo.y + cell_height};
                     f32 t = 0.0f;
                     Vec2 normal{}, point{};
