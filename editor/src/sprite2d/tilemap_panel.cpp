@@ -31,6 +31,15 @@ bool IsInvalidPaint(i32 cell, u32 grid_count, usize autotile_count) {
     return cell >= 0 && grid_count != 0 && static_cast<u32>(cell) >= grid_count;
 }
 
+std::optional<i32> FindInvalidSolidFlag(const Tileset& tiles, u32 count) {
+    if (count == 0 || count >= tiles.solid.size()) return std::nullopt;
+    const auto first = tiles.solid.begin() + static_cast<std::ptrdiff_t>(count);
+    const auto flag = std::find_if(first, tiles.solid.end(), [](u8 value) { return value != 0; });
+    const auto index = flag - tiles.solid.begin();
+    if (flag == tiles.solid.end() || index > std::numeric_limits<i32>::max()) return std::nullopt;
+    return static_cast<i32>(index);
+}
+
 const char* kToolNames[] = {"Paint", "Erase", "Rectangle", "Fill", "Pick", "Line"};
 
 } // namespace
@@ -261,6 +270,7 @@ bool TilemapPanel::FindNextInvalidPaint() {
     const u32 count = tiles.texture.IsNull() ? 0 : tiles.TileCount();
     if (invalid_search_revision_ != doc_.Revision()) invalid_paint_cell_.reset();
     invalid_search_revision_ = doc_.Revision();
+    invalid_solid_flag_ = FindInvalidSolidFlag(tiles, count);
     invalid_autotile_mask_.reset();
     scroll_to_invalid_mask_ = false;
     // Strict cooking checks every variant, even in rules not painted on this map.
@@ -421,14 +431,29 @@ void TilemapPanel::DrawTools() {
                 ImGui::Text("Invalid paint: %s (%zu, %zu), missing autotile rule %zu", name, x, y, AutotileIndex(hit.tile));
             else
                 ImGui::Text("Invalid paint: %s (%zu, %zu), tile %d", name, x, y, hit.tile);
-        } else if (!invalid_autotile_mask_) {
-            ImGui::TextDisabled("No invalid painted tiles or autotile masks.");
+        } else if (!invalid_autotile_mask_ && !invalid_solid_flag_) {
+            ImGui::TextDisabled("No invalid painted tiles, autotile masks, or collision flags.");
         }
         if (invalid_autotile_mask_) {
             const auto& hit = *invalid_autotile_mask_;
             const auto& name = doc_.GetTileset().autotiles[hit.rule].name;
             ImGui::TextWrapped("Invalid autotile: %s, mask %zu uses tile %d (grid has %u tiles).",
                                name.c_str(), hit.mask, hit.tile, hit.grid_count);
+        }
+        if (invalid_solid_flag_) {
+            const u32 count = doc_.GetTileset().TileCount();
+            ImGui::TextWrapped("Invalid collision flag: tile %d is outside the %u-tile grid.",
+                               *invalid_solid_flag_, count);
+            if (ImGui::SmallButton("Clear invalid collision flag")) {
+                const u64 before = doc_.Revision();
+                doc_.SetSolid(*invalid_solid_flag_, false);
+                // A flag edit alone leaves the painted-cell and mask results valid.
+                if (doc_.Revision() == before + 1) {
+                    invalid_search_revision_ = doc_.Revision();
+                    invalid_solid_flag_ = FindInvalidSolidFlag(doc_.GetTileset(), count);
+                }
+            }
+            ImGui::SetItemTooltip("Remove this flag without changing any painted cells.");
         }
     }
 }

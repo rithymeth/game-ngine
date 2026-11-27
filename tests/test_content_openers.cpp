@@ -34,6 +34,7 @@
 #include "content/content_browser_panel.h"
 #include "core/notifications.h"
 #include "sprite2d/tilemap_document.h"
+#include "sprite2d/tilemap_panel.h"
 #include "sprite2d/sprite_atlas_panel.h"
 #include "ui/extensions.h"
 #include "workspace/editor_workspace.h"
@@ -1364,8 +1365,59 @@ AETHER_TEST(Openers_AuthoredTilemapWorksInAnIndependentStrictShippingPackage) {
     }
     CHECK(!rejected.ok && rejected.error.find("Ground.atileset: solid tile index 4 is outside its 4-tile grid") != std::string::npos);
     CHECK(!stdfs::exists(options.output_dir / "Paks/Game.apak"));
+    // An unused collision flag alone is a Shipping error. Restore valid
+    // paint and repair the tileset through the Tilemap diagnostic button.
+    bad_set.SetSolid(6, true);
     if (!sprite2d::SaveTilemap(map_path, painted.Map(), &error) ||
-        !sprite2d::SaveTileset(set_path, painted.GetTileset(), &error)) { CHECK(false); return; }
+        !sprite2d::SaveTileset(set_path, bad_set, &error)) { CHECK(false); return; }
+    options.output_dir = paths.root.parent_path() / "Rejected Unused Flags";
+    const auto unused_flags = cook::Package(options);
+    CHECK(!unused_flags.ok && unused_flags.error.find(
+          "Ground.atileset: solid tile index 4 is outside its 4-tile grid") != std::string::npos);
+    CHECK(!stdfs::exists(options.output_dir / "Paks/Game.apak"));
+    if (!painted.Load(map_path, set_path, &error)) { CHECK(false); return; }
+    painted.brush = 3;
+    const auto valid_paint = sprite2d::TilemapToJson(painted.Map());
+    {
+        HeadlessImGui ui;
+        TilemapPanel panel(painted);
+        CHECK(!panel.FindNextInvalidPaint() && !painted.dirty()); // no canvas cell to focus
+        ImGuiID clear_id = 0;
+        const auto draw = [&] {
+            clear_id = ImGui::GetID("Clear invalid collision flag");
+            panel.Draw();
+        };
+        ui.Frame(draw);
+        auto& io = ImGui::GetIO();
+        const auto click_clear = [&] {
+            for (float y = 45; y < 220; y += 4) {
+                for (float x = 16; x < 420; x += 24) {
+                    io.AddMousePosEvent(x, y);
+                    ui.Frame(draw);
+                    if (ImGui::GetHoveredID() != clear_id) continue;
+                    io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+                    ui.Frame(draw);
+                    io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+                    ui.Frame(draw);
+                    return true;
+                }
+            }
+            return false;
+        };
+        if (!click_clear()) { CHECK(false); return; }
+        CHECK(!painted.GetTileset().IsSolid(4) && painted.GetTileset().IsSolid(6));
+        if (!click_clear()) { CHECK(false); return; } // next flag, without repeating the search
+        CHECK(!painted.GetTileset().IsSolid(6) && painted.GetTileset().IsSolid(3));
+        CHECK(painted.Undo() && !painted.GetTileset().IsSolid(4) && painted.GetTileset().IsSolid(6));
+        CHECK(painted.Undo() && !painted.dirty() && painted.GetTileset().IsSolid(4));
+        CHECK(painted.Redo() && painted.Redo() && painted.dirty());
+        CHECK(!painted.GetTileset().IsSolid(4) && !painted.GetTileset().IsSolid(6));
+        CHECK(painted.brush == 3 && sprite2d::TilemapToJson(painted.Map()) == valid_paint);
+    }
+    if (!painted.Save(&error)) { CHECK(false); return; }
+    options.output_dir = paths.root.parent_path() / "Repaired Collision Flags";
+    const auto repaired_flags = cook::Package(options);
+    CHECK(repaired_flags.ok && stdfs::exists(options.output_dir / "Paks/Game.apak"));
 
     // A missing autotile rule resolves to empty even on a solid layer.
     auto rule_map = painted.Map();

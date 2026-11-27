@@ -3297,6 +3297,29 @@ AETHER_TEST(TilemapEditor_FindsInvalidVariantsInUnusedAutotileRules) {
     CHECK(clean.find("No invalid painted tiles") != std::string::npos);
 }
 
+AETHER_TEST(TilemapEditor_CollisionDiagnosticsIgnoreNumberedTilesets) {
+    HeadlessImGui ui;
+    TilemapData map;
+    map.Resize(2, 2);
+    Tileset tiles;
+    tiles.texture_width = tiles.texture_height = 32;
+    tiles.SetSolid(4, true);
+    TilemapEditDocument doc(std::move(map), std::move(tiles));
+    TilemapPanel panel(doc);
+    CHECK(!panel.FindNextInvalidPaint());
+    const auto file = std::filesystem::temp_directory_path() / "tilemap-numbered-flag-diagnostics.txt";
+    ui.Frame([&] {
+        ImGui::LogToFile(0, file.string().c_str());
+        panel.Draw();
+        ImGui::LogFinish();
+    });
+    std::ifstream in(file);
+    const std::string log(std::istreambuf_iterator<char>{in}, {});
+    CHECK(log.find("No invalid painted tiles") != std::string::npos);
+    CHECK(log.find("Clear invalid collision flag") == std::string::npos);
+    CHECK(doc.GetTileset().IsSolid(4) && !doc.dirty());
+}
+
 AETHER_TEST(TilemapEditor_FindingAnInvalidMaskScrollsItIntoView) {
     HeadlessImGui ui;
     TilemapData map;
