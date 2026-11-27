@@ -110,6 +110,32 @@ class JumpEnvelope(unittest.TestCase):
                                  capture_output=True, timeout=5)
             self.assertEqual(run.returncode, expected, run.stderr)
 
+    def test_export_lost_timing_as_existing_tilemap_overlay(self):
+        before = self.stage("old-overlay", "before", b"asset-before")
+        after = self.stage("new-overlay", "after", b"asset-after")
+        result = self.invoke(before.relative_to(self.root), "--candidate", after,
+                             "--require-preserved-offsets", "--capture-evidence", "--include-tilemap-overlay")
+        self.assertEqual(result.returncode, 5, result.stderr)
+        receipt = self.root / "with-paths.json"
+        receipt.write_text(result.stdout, encoding="utf-8")
+        overlay_path = self.root / "overlay.json"
+        tool = TOOL.with_name("jump_envelope_map.py")
+        converted = subprocess.run([sys.executable, tool, receipt, "--tilemap-overlay", "--output", overlay_path],
+                                   capture_output=True, text=True, timeout=10)
+        self.assertEqual(converted.returncode, 0, converted.stderr)
+        overlay = json.loads(overlay_path.read_text(encoding="utf-8"))
+        self.assertEqual((overlay["frames"], overlay["first_difference_frame"]), (9, 3))
+        self.assertEqual((overlay["before_status"], overlay["after_status"]), ("pass", "missed"))
+        self.assertTrue(overlay["verdict_changed"])
+        self.assertEqual(len(overlay["before_path"]), len(overlay["after_path"]))
+        self.assertEqual(overlay["before_path"][:2], overlay["after_path"][:2])
+        self.assertNotEqual(overlay["before_path"][2], overlay["after_path"][2])
+
+    def test_overlay_is_not_available_without_evidence(self):
+        result = self.invoke("before", "--include-tilemap-overlay")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("requires --capture-evidence and --candidate", result.stderr)
+
     def test_verdict_can_change_without_a_position_split_over_tolerance(self):
         before = self.stage("old-edge", "before", b"asset-before")
         after = self.stage("new-edge", "tiny", b"asset-after")
