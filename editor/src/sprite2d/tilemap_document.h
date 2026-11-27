@@ -85,7 +85,6 @@ private:
     struct Snapshot {
         sprite2d::TilemapData map;
         sprite2d::Tileset tileset;
-        std::optional<usize> selection = std::nullopt;
     };
     using CellEdits = std::map<std::pair<usize, usize>, i32>; // (layer, cell) -> opposite value
     struct LayerProperties {
@@ -97,14 +96,21 @@ private:
         usize from, to;
         usize selection;
     };
+    struct LayerPresence {
+        usize index;
+        usize selection;
+        // Engaged only while the layer is absent from the live map.
+        std::optional<sprite2d::TileLayer> removed;
+    };
     struct HistoryEntry {
-        std::variant<Snapshot, CellEdits, LayerProperties, LayerMove, sprite2d::Tileset> edit;
+        std::variant<Snapshot, CellEdits, LayerProperties, LayerMove, sprite2d::Tileset, LayerPresence> edit;
         u64 state;
     };
     bool Travel(std::vector<HistoryEntry>& from, std::vector<HistoryEntry>& to);
-    void Record(bool track_selection = false);
+    void Record();
     void RecordLayerProperties(usize layer);
     void RecordTileset();
+    LayerPresence& RecordLayerPresence(usize index);
     void RotateLayers(usize from, usize to);
     void Changed();
     void ClampActive();

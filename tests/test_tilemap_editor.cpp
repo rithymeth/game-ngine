@@ -1223,6 +1223,39 @@ AETHER_TEST(TilemapEditor_ReordersLayersAndKeepsTheBrushOnTheSameLayer) {
     CHECK(TilemapToJson(saved) == TilemapToJson(doc.Map()));
 }
 
+AETHER_TEST(TilemapEditor_LayerPresenceHistoryReusesExistingTileStorage) {
+    TilemapData map;
+    map.Resize(4, 4);
+    map.AddLayer("Floor");
+    map.AddLayer("Decor");
+    map.layers[1].collides = false;
+    map.Set(0, 0, 0, 3);
+    map.Set(1, 0, 0, 5);
+    TilemapEditDocument doc(std::move(map), {});
+    const auto* floor = doc.Map().layers[0].cells.data();
+    const auto* decor = doc.Map().layers[1].cells.data();
+    CHECK(doc.AddLayer("Temporary") == 2 && doc.active_layer == 2);
+    CHECK(doc.Undo() && doc.Map().layers.size() == 2 && doc.active_layer == 0 && !doc.dirty());
+    if (doc.Map().layers.size() != 2) return;
+    CHECK(doc.Map().layers[0].cells.data() == floor && doc.Map().layers[1].cells.data() == decor);
+    CHECK(doc.Redo() && doc.Map().layers.size() == 3 && doc.active_layer == 2);
+
+    CHECK(doc.RemoveLayer(1) && doc.active_layer == 1);
+    CHECK(doc.DuplicateLayer(0) && doc.active_layer == 1);
+    if (doc.Map().layers.size() < 2) return;
+    CHECK(doc.Map().layers[1].cells.data() != floor && doc.Map().Get(1, 0, 0) == 3);
+    doc.brush = 7;
+    doc.Apply(0, 0);
+    CHECK(doc.Undo() && doc.Undo() && doc.Undo());
+    CHECK(doc.Map().layers.size() == 3 && doc.active_layer == 2);
+    if (doc.Map().layers.size() != 3) return;
+    CHECK(doc.Map().layers[0].cells.data() == floor && doc.Map().layers[1].cells.data() == decor);
+    CHECK(doc.Map().layers[1].name == "Decor" && !doc.Map().layers[1].collides && doc.Map().Get(1, 0, 0) == 5);
+    CHECK(doc.Redo() && doc.Redo() && doc.Redo());
+    CHECK(doc.Map().Get(1, 0, 0) == 7 && doc.Map().Get(0, 0, 0) == 3);
+    CHECK(doc.Map().layers[0].cells.data() == floor);
+}
+
 AETHER_TEST(TilemapEditor_ReorderHistoryDoesNotCopyTileStorage) {
     TilemapData map;
     map.Resize(4, 4);

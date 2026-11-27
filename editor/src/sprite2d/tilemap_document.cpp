@@ -80,9 +80,9 @@ void TilemapEditDocument::ClampActive() {
     if (active_layer >= map_.layers.size()) active_layer = map_.layers.empty() ? 0 : map_.layers.size() - 1;
 }
 
-void TilemapEditDocument::Record(bool track_selection) {
+void TilemapEditDocument::Record() {
     EndStroke();
-    undo_.push_back({Snapshot{map_, tileset_, track_selection ? std::optional<usize>{active_layer} : std::nullopt}, state_});
+    undo_.push_back({Snapshot{map_, tileset_}, state_});
     redo_.clear();
     Changed();
 }
@@ -100,6 +100,14 @@ void TilemapEditDocument::RecordTileset() {
     undo_.push_back({tileset_, state_});
     redo_.clear();
     Changed();
+}
+
+TilemapEditDocument::LayerPresence& TilemapEditDocument::RecordLayerPresence(usize index) {
+    EndStroke();
+    undo_.push_back({LayerPresence{index, active_layer, std::nullopt}, state_});
+    redo_.clear();
+    Changed();
+    return std::get<LayerPresence>(undo_.back().edit);
 }
 
 void TilemapEditDocument::BeginStroke() {
@@ -269,7 +277,6 @@ bool TilemapEditDocument::Travel(std::vector<HistoryEntry>& from, std::vector<Hi
     if (auto* snapshot = std::get_if<Snapshot>(&step.edit)) {
         std::swap(map_, snapshot->map);
         std::swap(tileset_, snapshot->tileset);
-        if (snapshot->selection) std::swap(active_layer, *snapshot->selection);
     } else if (auto* properties = std::get_if<LayerProperties>(&step.edit)) {
         auto& layer = map_.layers[properties->layer];
         std::swap(layer.name, properties->name);
@@ -280,6 +287,16 @@ bool TilemapEditDocument::Travel(std::vector<HistoryEntry>& from, std::vector<Hi
         std::swap(active_layer, move->selection);
     } else if (auto* tileset = std::get_if<Tileset>(&step.edit)) {
         std::swap(tileset_, *tileset);
+    } else if (auto* presence = std::get_if<LayerPresence>(&step.edit)) {
+        const auto where = map_.layers.begin() + static_cast<std::ptrdiff_t>(presence->index);
+        if (presence->removed) {
+            map_.layers.insert(where, std::move(*presence->removed));
+            presence->removed.reset();
+        } else {
+            presence->removed.emplace(std::move(*where));
+            map_.layers.erase(where);
+        }
+        std::swap(active_layer, presence->selection);
     } else {
         for (auto& [key, value] : std::get<CellEdits>(step.edit))
             std::swap(map_.layers[key.first].cells[key.second], value);
@@ -294,7 +311,7 @@ bool TilemapEditDocument::Undo() { return Travel(undo_, redo_); }
 bool TilemapEditDocument::Redo() { return Travel(redo_, undo_); }
 
 usize TilemapEditDocument::AddLayer(const std::string& name) {
-    Record(true);
+    RecordLayerPresence(map_.layers.size());
     const usize index = map_.AddLayer(name);
     active_layer = index;
     return index;
@@ -302,7 +319,8 @@ usize TilemapEditDocument::AddLayer(const std::string& name) {
 
 bool TilemapEditDocument::RemoveLayer(usize layer) {
     if (layer >= map_.layers.size() || map_.layers.size() == 1) return false; // a map keeps one layer
-    Record(true);
+    auto& edit = RecordLayerPresence(layer);
+    edit.removed.emplace(std::move(map_.layers[layer]));
     map_.layers.erase(map_.layers.begin() + static_cast<std::ptrdiff_t>(layer));
     if (layer < active_layer) --active_layer;
     ClampActive();
@@ -341,8 +359,8 @@ bool TilemapEditDocument::DuplicateLayer(usize layer) {
         copy.name = base;
         for (usize n = 2; names.count(copy.name) != 0; ++n) copy.name = base + " " + std::to_string(n);
     }
-    Record(true);
     const usize destination = layer + 1;
+    RecordLayerPresence(destination);
     map_.layers.insert(map_.layers.begin() + static_cast<std::ptrdiff_t>(destination), std::move(copy));
     active_layer = destination;
     return true;
