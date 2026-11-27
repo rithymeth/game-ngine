@@ -271,6 +271,28 @@ AETHER_TEST(EditorWorkspace_GlobalChordsComeFromTheTable) {
     CHECK(ws.command_palette_open);
 }
 
+AETHER_TEST(EditorWorkspace_ExtraSuperModifierDoesNotTriggerACommand) {
+    HeadlessImGui imgui;
+    EditorWorkspace ws;
+    ImGuiIO& io = ImGui::GetIO();
+    const auto draw = [&] { ws.DrawWindows(); };
+    imgui.Frame(draw);
+
+    io.AddKeyEvent(ImGuiMod_Ctrl, true);
+    io.AddKeyEvent(ImGuiMod_Super, true);
+    io.AddKeyEvent(ImGuiKey_K, true);
+    imgui.Frame(draw);
+    CHECK(io.KeyCtrl && io.KeySuper);
+    CHECK(!ws.command_palette_open);
+
+    io.AddKeyEvent(ImGuiKey_K, false);
+    io.AddKeyEvent(ImGuiMod_Super, false);
+    imgui.Frame(draw);
+    io.AddKeyEvent(ImGuiKey_K, true);
+    imgui.Frame(draw);
+    CHECK(ws.command_palette_open); // Ctrl+K still opens the palette after releasing Super.
+}
+
 // The Scene tool's own keys come from the table too, and only while it has the keyboard: Ctrl+Z here is
 // edit.undo, not a hardcoded check in the panel.
 AETHER_TEST(EditorWorkspace_SceneChordsRunThroughTheTable) {

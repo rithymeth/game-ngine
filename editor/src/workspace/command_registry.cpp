@@ -20,7 +20,8 @@ bool CommandChord::Matches(ImGuiKey pressed, bool ctrl_down, bool shift_down, bo
 }
 
 bool CommandChord::Pressed(const ImGuiIO& io) const {
-    return Matches(key, io.KeyCtrl, io.KeyShift, io.KeyAlt) && ImGui::IsKeyPressed(key, false);
+    // Chords do not bind Super, so it is always an extra modifier.
+    return !io.KeySuper && Matches(key, io.KeyCtrl, io.KeyShift, io.KeyAlt) && ImGui::IsKeyPressed(key, false);
 }
 
 bool CommandRegistry::Add(Command command) {
