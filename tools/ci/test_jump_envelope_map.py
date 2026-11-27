@@ -75,3 +75,7 @@ class JumpEnvelopeMapTests(unittest.TestCase):
         result = self.invoke("--output", dest)
         self.assertEqual(result.returncode, 2)
         self.assertEqual(dest.read_text(), "keep")
+
+
+if __name__ == "__main__":
+    unittest.main()
