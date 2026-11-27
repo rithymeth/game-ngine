@@ -41,6 +41,36 @@ def run(tool, *args, cwd, capture=False, env=None):
     return (result.stdout or "") + (result.stderr or "")
 
 
+def verify_jump_envelope(baseline, changed, route, press_frame, root, cwd):
+    """Verify A/B reporting and reproduce the reported loss in both players."""
+    envelope = Path(__file__).resolve().parents[1] / "jump_envelope.py"
+    output = root / "Jump Envelope evidence.json"
+    result = subprocess.run([sys.executable, envelope, "--player", baseline, "--candidate", changed,
+                             "--route", route, "--key", "Space", "--press-frame", str(press_frame),
+                             "--radius", "1", "--require-preserved-offsets", "--capture-evidence",
+                             "--output", output], cwd=cwd, capture_output=True, text=True, timeout=260)
+    if result.returncode != 5 or not output.is_file():
+        raise RuntimeError(f"timing gate did not publish the expected loss: {result.stdout}{result.stderr}")
+    report = json.loads(output.read_text(encoding="utf-8"))
+    evidence = report["evidence"]
+    if (report["gate"]["passed"] is not False or 0 not in report["lost_pass_offsets"]
+            or report["skipped_offsets"] or evidence["nearest_lost_replay"]["offset"] != 0
+            or evidence["baseline_sha256"]["Paks/Game.apak"] == evidence["candidate_sha256"]["Paks/Game.apak"]):
+        raise RuntimeError("timing evidence did not identify the controlled package loss")
+    replay = root / "Jump Envelope lost replay.json"
+    replay.write_text(json.dumps(evidence["nearest_lost_replay"]["route"]), encoding="utf-8")
+    for player, exit_code, label in ((baseline, 0, "Before"), (changed, 5, "After")):
+        result = subprocess.run([player, "--jump-proof", replay, "--jump-trace",
+                                 "--user-dir", root / ("Repro " + label)],
+                                cwd=cwd, capture_output=True, text=True, timeout=30)
+        expected = "pass" if exit_code == 0 else "missed"
+        verdicts = [json.loads(line.removeprefix("Jump Proof: "))["status"]
+                    for line in result.stdout.splitlines() if line.startswith("Jump Proof: ")]
+        if result.returncode != exit_code or verdicts != [expected]:
+            raise RuntimeError(f"exported replay disagreed with {label} build: {result.stderr}")
+    print("Jump Envelope: verified the A/B loss and reproduced it in both packaged players", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("tools_dir", nargs="?", type=Path, help="Directory containing the distributed tools and player")
@@ -48,7 +78,13 @@ def main():
                         help="Stage the six executables from a build with no window backend")
     parser.add_argument("--template", choices=("blank", *MOTION), default="blank")
     parser.add_argument("--editor-runner", type=Path, help="Also exercise the editor's packaging command layer")
+    parser.add_argument("--jump-envelope", action="store_true",
+                        help="Also verify the Jump Envelope experiment on the two packaged 2D builds")
     args = parser.parse_args()
+    if args.jump_envelope and args.template != "platformer_2d":
+        parser.error("--jump-envelope requires --template platformer_2d")
+    if args.jump_envelope and not (Path(__file__).resolve().parents[1] / "jump_envelope.py").is_file():
+        parser.error("--jump-envelope requires the Jump Envelope tools from the source checkout")
     if bool(args.tools_dir) == bool(args.headless_build_tools):
         parser.error("pass either tools_dir or --headless-build-tools")
     exe = ".exe" if os.name == "nt" else ""
@@ -395,6 +431,12 @@ def main():
             if (len(after) != 1 or after[0]["status"] != "missed" or after[0]["frames"] != 400
                     or after[0]["position"][0] >= 28.5):
                 raise RuntimeError(f"single tile change did not fail Jump Proof: {after}")
+
+            if args.jump_envelope:
+                envelope_route = root / "Jump Envelope route.json"
+                envelope_route.write_text(json.dumps({**spec, "scene": captured["scene"],
+                                                      "fixed_hz": captured["fixed_hz"]}), encoding="utf-8")
+                verify_jump_envelope(game, changed / executable, envelope_route, 225, root, empty_cwd)
 
             compare = Path(__file__).resolve().parents[1] / "jump_proof_compare.py"
 
