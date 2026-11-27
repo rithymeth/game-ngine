@@ -41,6 +41,7 @@ private:
     const StringTable* table_ = nullptr;
     std::string language_ = "en";
     std::string default_language_ = "en";
+    std::vector<std::string> chain_{"en"}; // rebuilt only when the language settings change
 };
 
 } // namespace aether::loc

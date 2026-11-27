@@ -199,6 +199,30 @@ AETHER_TEST(Loc_LocalizerResolvesThroughTheChain) {
     CHECK(bare.Resolve(LocText{"k", "src"}) == "src" && bare.Resolve(LocText{"k", ""}) == "k");
 }
 
+AETHER_TEST(Loc_FallbackLookupTracksLanguageAndDefaultChanges) {
+    StringTable table;
+    table.Set("en", "play", "Play");
+    table.Set("pt", "play", "Jogar");
+    table.Set("fr", "play", "Jouer");
+    table.Set("fr", "retry", "Réessayer");
+    const LocText play{"play", "Start"}, retry{"retry", "Retry"};
+    Localizer localizer;
+    localizer.SetTable(&table);
+    CHECK(localizer.Resolve(play) == "Play" && !localizer.IsTranslated(retry));
+    localizer.SetLanguage("pt_BR");
+    CHECK(localizer.Resolve(play) == "Jogar" && !localizer.IsTranslated(retry));
+    localizer.SetDefaultLanguage("FR");
+    CHECK((localizer.Chain() == std::vector<std::string>{"pt-BR", "pt", "fr"}));
+    CHECK(localizer.Resolve(play) == "Jogar" && localizer.IsTranslated(retry));
+    localizer.SetLanguage("");
+    CHECK(localizer.Language() == "fr" && localizer.Resolve(play) == "Jouer");
+    CHECK((localizer.Chain() == std::vector<std::string>{"fr"}));
+    localizer.SetLanguage("ja");
+    localizer.SetDefaultLanguage("");
+    CHECK(localizer.Resolve(play) == "Play" && !localizer.IsTranslated(retry));
+    CHECK((localizer.Chain() == std::vector<std::string>{"ja", "en"}));
+}
+
 AETHER_TEST(Loc_FallbackEntriesUseTheLanguageTheyWereWrittenIn) {
     StringTable table;
     table.Set("en", "coins", "{count} coin{count|s}");
