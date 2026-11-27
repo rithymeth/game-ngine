@@ -1,5 +1,8 @@
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
+#if defined(__EMSCRIPTEN__)
+#include <emscripten.h>
+#endif
 #include "game.h"
 
 #include <algorithm>
@@ -143,77 +146,122 @@ std::string Title(const Game& g,bool paused) {
 }
 }
 
+
+struct App {
+    SDL_Window* window=nullptr;
+    SDL_Renderer* renderer=nullptr;
+    Game game{1};
+    unsigned seed=1;
+    bool running=true, paused=false, smoke=false, ready=false;
+    int frames=0;
+
+    explicit App(unsigned world_seed,bool do_smoke):game(world_seed),seed(world_seed),smoke(do_smoke){}
+    bool Init() {
+        SDL_SetMainReady();
+        if(SDL_Init(SDL_INIT_VIDEO)!=0) {
+            std::cerr<<"SDL init failed: "<<SDL_GetError()<<"\n"; return false;
+        }
+        window=SDL_CreateWindow("HEARTHLINE",SDL_WINDOWPOS_CENTERED,
+             SDL_WINDOWPOS_CENTERED,kWidth,kHeight,SDL_WINDOW_RESIZABLE|SDL_WINDOW_SHOWN);
+        if(!window){std::cerr<<SDL_GetError()<<"\n";SDL_Quit();return false;}
+        renderer=SDL_CreateRenderer(window,-1,SDL_RENDERER_ACCELERATED|SDL_RENDERER_PRESENTVSYNC);
+        if(!renderer) renderer=SDL_CreateRenderer(window,-1,SDL_RENDERER_SOFTWARE);
+        if(!renderer) {std::cerr<<SDL_GetError()<<"\n";Close();return false;}
+        return true;
+    }
+    void Close() {
+        if(renderer){SDL_DestroyRenderer(renderer);renderer=nullptr;}
+        if(window){SDL_DestroyWindow(window);window=nullptr;}
+        SDL_Quit();
+    }
+    void Key(SDL_Keycode k, SDL_Keymod mods) {
+        if(k==SDLK_ESCAPE){paused=!paused;return;}
+        if((k==SDLK_n && (mods&KMOD_CTRL)) || k==SDLK_F5){
+            game=Game(seed);paused=false;return;
+        }
+        if(paused || game.State().phase!=Phase::Playing) return;
+        if(k==SDLK_UP || k==SDLK_w) (void)game.Move(0,-1);
+        else if(k==SDLK_DOWN || k==SDLK_s) (void)game.Move(0,1);
+        else if(k==SDLK_LEFT || k==SDLK_a) (void)game.Move(-1,0);
+        else if(k==SDLK_RIGHT || k==SDLK_d) (void)game.Move(1,0);
+        else if(k==SDLK_g) (void)game.Act(Action::Gather);
+        else if(k==SDLK_b) (void)game.Act(Action::BuildBridge);
+        else if(k==SDLK_k) (void)game.Act(Action::Attack);
+        else if(k==SDLK_v) (void)game.Act(Action::Dodge);
+        else if(k==SDLK_p) (void)game.Act(Action::PlaceRelay,{105,64});
+        else if(k==SDLK_q) (void)game.Act(Action::PlaceRelay,{107,64});
+        else if(k==SDLK_e) (void)game.Act(Action::Interact);
+        else if(k==SDLK_f) (void)game.Act(Action::BuildCampfire);
+        else if(k==SDLK_r) (void)game.Act(Action::Refuel);
+        else if(k==SDLK_h) (void)game.Act(Action::Heal);
+        else if(k==SDLK_1) {
+            const auto p=game.State().player;
+            (void)game.Act(Action::BuildWall,{p.x+1,p.y});
+        } else if(k==SDLK_2) {
+            const auto p=game.State().player;
+            (void)game.Act(Action::RotateRelay,{p.x+1,p.y});
+        }
+    }
+    void Tick() {
+        SDL_Event e;
+        while(SDL_PollEvent(&e)) {
+            if(e.type==SDL_QUIT) running=false;
+            if(e.type==SDL_KEYDOWN) Key(e.key.keysym.sym,static_cast<SDL_Keymod>(e.key.keysym.mod));
+        }
+        if(!running) return;
+        int w=0,h=0;
+        SDL_GetRendererOutputSize(renderer,&w,&h);
+        SDL_SetWindowTitle(window,Title(game,paused).c_str());
+        Draw(renderer,game,w,h,paused);
+#if defined(__EMSCRIPTEN__)
+        if(!ready) {
+            ready=true;
+            EM_ASM({
+                if(Module.onGameReady) Module.onGameReady();
+            });
+        }
+#endif
+        if(smoke && ++frames>=3) running=false;
+    }
+};
+#if defined(__EMSCRIPTEN__)
+void BrowserFrame(void* data) {
+    auto* app=static_cast<App*>(data);
+    app->Tick();
+    if(!app->running) {
+        emscripten_cancel_main_loop();
+        app->Close();
+    }
+}
+#endif
+
 int main(int argc,char** argv) {
     bool smoke=false;
     unsigned seed=1;
     for(int i=1;i<argc;++i) {
         const std::string arg=argv[i];
         if(arg=="--smoke") smoke=true;
-        else if(arg=="--seed" && i+1<argc) seed=static_cast<unsigned>(std::strtoul(argv[++i],nullptr,10));
+        else if(arg=="--seed" && i+1<argc)
+            seed=static_cast<unsigned>(std::strtoul(argv[++i],nullptr,10));
         else if(arg=="--help") {
             std::cout<<"HEARTHLINE graphical prototype\n"
                 <<"Arrows/WASD move | G gather | B bridge | K attack | V dodge\n"
                 <<"P/Q place relay | E activate | F campfire | R refuel | H heal\n"
-                <<"1 wall east | 2 rotate relay east | Esc pause | Ctrl+N restart | --smoke\n";
+                <<"1 wall east | 2 rotate relay east | ESC pause | F5 restart | --smoke\n";
             return 0;
         }
     }
-    SDL_SetMainReady();
-    if(SDL_Init(SDL_INIT_VIDEO)!=0) {
-        std::cerr<<"SDL init failed: "<<SDL_GetError()<<"\n"; return 1;
-    }
-    SDL_Window* window=SDL_CreateWindow("HEARTHLINE",SDL_WINDOWPOS_CENTERED,
-         SDL_WINDOWPOS_CENTERED,kWidth,kHeight,SDL_WINDOW_RESIZABLE|SDL_WINDOW_SHOWN);
-    if(!window){std::cerr<<SDL_GetError()<<"\n";SDL_Quit();return 1;}
-    SDL_Renderer* renderer=SDL_CreateRenderer(window,-1,SDL_RENDERER_ACCELERATED|SDL_RENDERER_PRESENTVSYNC);
-    if(!renderer) renderer=SDL_CreateRenderer(window,-1,SDL_RENDERER_SOFTWARE);
-    if(!renderer){std::cerr<<SDL_GetError()<<"\n"; SDL_DestroyWindow(window);SDL_Quit();return 1;}
-    Game game(seed);
-    bool running=true,paused=false;
-    const int maxFrames=smoke?3:-1;
-    int frames=0;
-    while(running) {
-        SDL_Event e;
-        while(SDL_PollEvent(&e)) {
-            if(e.type==SDL_QUIT) running=false;
-            if(e.type!=SDL_KEYDOWN || e.key.repeat) continue;
-            const SDL_Keycode k=e.key.keysym.sym;
-            if(k==SDLK_ESCAPE){paused=!paused;continue;}
-            if(k==SDLK_n && (e.key.keysym.mod&KMOD_CTRL)){
-                game=Game(seed); paused=false;continue;
-            }
-            if(paused || game.State().phase!=Phase::Playing) {
-                if(k==SDLK_F5){game=Game(seed);paused=false;}
-                continue;
-            }
-            if(k==SDLK_UP || k==SDLK_w) (void)game.Move(0,-1);
-            else if(k==SDLK_DOWN || k==SDLK_s) (void)game.Move(0,1);
-            else if(k==SDLK_LEFT || k==SDLK_a) (void)game.Move(-1,0);
-            else if(k==SDLK_RIGHT || k==SDLK_d) (void)game.Move(1,0);
-            else if(k==SDLK_g) (void)game.Act(Action::Gather);
-            else if(k==SDLK_b) (void)game.Act(Action::BuildBridge);
-            else if(k==SDLK_k) (void)game.Act(Action::Attack);
-            else if(k==SDLK_v) (void)game.Act(Action::Dodge);
-            else if(k==SDLK_p) (void)game.Act(Action::PlaceRelay,{105,64});
-            else if(k==SDLK_q) (void)game.Act(Action::PlaceRelay,{107,64});
-            else if(k==SDLK_e) (void)game.Act(Action::Interact);
-            else if(k==SDLK_f) (void)game.Act(Action::BuildCampfire);
-            else if(k==SDLK_r) (void)game.Act(Action::Refuel);
-            else if(k==SDLK_h) (void)game.Act(Action::Heal);
-            else if(k==SDLK_1) {
-                auto p=game.State().player; (void)game.Act(Action::BuildWall,{p.x+1,p.y});
-            } else if(k==SDLK_2) {
-                auto p=game.State().player; (void)game.Act(Action::RotateRelay,{p.x+1,p.y});
-            }
-        }
-        int w,h; SDL_GetRendererOutputSize(renderer,&w,&h);
-        SDL_SetWindowTitle(window,Title(game,paused).c_str());
-        Draw(renderer,game,w,h,paused);
-        if(smoke && ++frames>=maxFrames) running=false;
+    static App app(seed,smoke);
+    if(!app.Init()) return 1;
+#if defined(__EMSCRIPTEN__)
+    emscripten_set_main_loop_arg(BrowserFrame,&app,0,1);
+    // Emscripten owns the main loop until the page is closed.
+#else
+    while(app.running) {
+        app.Tick();
         SDL_Delay(16);
     }
-    SDL_DestroyRenderer(renderer);
-    SDL_DestroyWindow(window);
-    SDL_Quit();
+    app.Close();
+#endif
     return 0;
 }
