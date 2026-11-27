@@ -145,9 +145,24 @@ SaveResult SaveSystem::DeleteSlot(std::string_view slot) {
     const stdfs::path file = PathOf(slot);
     stdfs::path backup = file;
     backup += ".bak";
-    const bool a = stdfs::remove(file, ec);
-    const bool b = stdfs::remove(backup, ec);
-    if (!a && !b) return Fail(SaveError::NotFound, "no save in slot '" + std::string(slot) + "'");
+    // A directory is not a save, and must not cause the other file to be deleted.
+    for (const stdfs::path& path : {file, backup}) {
+        const stdfs::file_status status = stdfs::symlink_status(path, ec);
+        if (ec && ec != std::errc::no_such_file_or_directory) {
+            return Fail(SaveError::IoError, "cannot inspect '" + path.filename().string() + "': " + ec.message());
+        }
+        if (stdfs::is_directory(status)) {
+            return Fail(SaveError::IoError, "'" + path.filename().string() + "' is a directory");
+        }
+    }
+    bool deleted = false;
+    // If deleting the backup fails, do not also delete the primary.
+    for (const stdfs::path& path : {backup, file}) {
+        const bool removed = stdfs::remove(path, ec);
+        if (ec) return Fail(SaveError::IoError, "cannot delete '" + path.filename().string() + "': " + ec.message());
+        deleted = deleted || removed;
+    }
+    if (!deleted) return Fail(SaveError::NotFound, "no save in slot '" + std::string(slot) + "'");
     return Ok();
 }
 

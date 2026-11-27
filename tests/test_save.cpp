@@ -137,6 +137,28 @@ AETHER_TEST(Save_ListsExistsAndDeletesSlots) {
     CHECK(saves.Load("alpha", o).error == SaveError::NotFound);
 }
 
+AETHER_TEST(Save_DeleteSlotPreservesFilesWhenAPathIsADirectory) {
+    SaveSystem saves(Dir("BlockedDelete"));
+    const auto profile = Sample();
+    if (!saves.Save("primary", profile).ok) { CHECK(false); return; }
+    const auto primary = saves.Directory() / "primary.asav";
+    const auto blocked_backup = saves.Directory() / "primary.asav.bak";
+    const std::string original = ReadAll(primary);
+    stdfs::create_directory(blocked_backup);
+    WriteAll(blocked_backup / "keep.txt", "not a save");
+    CHECK(saves.DeleteSlot("primary").error == SaveError::IoError);
+    CHECK(stdfs::is_regular_file(primary) && ReadAll(primary) == original);
+    CHECK(stdfs::is_regular_file(blocked_backup / "keep.txt"));
+
+    const auto blocked_primary = saves.Directory() / "backup.asav";
+    const auto backup = saves.Directory() / "backup.asav.bak";
+    stdfs::create_directory(blocked_primary); // an empty directory is not a save either
+    WriteAll(backup, original);
+    CHECK(saves.DeleteSlot("backup").error == SaveError::IoError);
+    CHECK(stdfs::is_directory(blocked_primary));
+    CHECK(stdfs::is_regular_file(backup) && ReadAll(backup) == original);
+}
+
 AETHER_TEST(Save_SlotListKeepsGoodSavesWhenOtherHeadersAreDamaged) {
     SaveSystem saves(Dir("DamagedList"));
     const auto profile = Sample();
