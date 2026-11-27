@@ -20,7 +20,7 @@ SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software ./build/hearthline/hearthline_v
 
 ## Game objectives
 
-Collect resources around the opening camp, build the bridge at x=62, cross the river, defeat the guardian near x=90, place two east-facing relays at x=105 and x=107, then activate the beacon at x=108. Build a campfire and survive 24 action turns, replenishing firewood as needed.
+Collect resources around the opening camp, build the bridge at x=62, cross the river, defeat the guardian near x=90, place two relays at x=105 and x=107 from an adjacent tile and rotate each east with 2, then activate the beacon at x=108. Build a campfire and survive 24 action turns, replenishing firewood as needed.
 
 | Key | Action |
 | --- | --- |
@@ -32,11 +32,11 @@ Collect resources around the opening camp, build the bridge at x=62, cross the r
 | E | Activate solved beacon |
 | F / R | Build campfire / refuel |
 | H | Heal using food |
-| 1 / 2 | Build wall to east / rotate adjacent eastern relay |
+| 1 / 2 | Toggle wall to east (after beacon; refundable) / rotate nearest adjacent relay |
 | Escape | Pause |
 | Ctrl+N or F5 after win/loss | Restart |
 
-The window title gives the current objective and exact inventory quantities; the HUD shows health, inventory bars, night progress, and fuel. The visuals currently use colored tile primitives, not production sprites or text rendering.
+The window title gives the current objective and exact inventory quantities; the HUD shows health, inventory bars, night progress, and fuel. Terrain, trees, rocks and the ranger use original procedural pixel art. Gathered resources disappear, walls are drawn, directional relay indicators show rotation, and explored tiles fade outside a 12-tile sight radius. The fixed logical canvas keeps the HUD readable on resize.
 
 
 ## Browser version (Emscripten/WebAssembly)
@@ -70,8 +70,8 @@ The deployment workflow is deliberately **manual** until Pages is configured, to
 
 ## Implementation and limitations
 
-- Deterministic **512 x 512** tile terrain with a designated **128 x 128** expedition area. `kLayerCount = 3` is reserved, but the current terrain grid is a single array and not yet three independently authored tile layers.
+- Deterministic **512 x 512** tile terrain with a designated **128 x 128** expedition area. Three dense byte-sized runtime grids hold terrain, constructed objects and persistent discovery (786,432 cells total, 768 KiB of cell data). These are not yet Aether tilemap assets.
 - Shared gameplay simulation in `src/game.cpp`; the SDL2 host in `src/visual_main.cpp` draws only visible tiles around the player and sends keyboard actions to the same core.
-- Three seeded regression expeditions run in CTest; CI also verifies SDL2 headless startup.
+- Three seeded regression expeditions run in CTest with additional checks for discovery, local bridge placement, relay rotation and losing without fuel; CI also verifies SDL2 headless startup and Chromium input.
 - This is a native SDL2 graphical prototype with an experimental Emscripten browser export; it is not yet an Aether sprite-batch renderer or a tested commercial-quality experience.
-- No sprites, sounds, save/load, world streaming, generalized relay solver, or benchmarked 60 FPS guarantee.
+- No imported sprite assets, sounds, save/load, world streaming, generalized relay solver, or benchmarked 60 FPS guarantee.

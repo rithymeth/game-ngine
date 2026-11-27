@@ -27,13 +27,19 @@ void Test(unsigned seed) {
     CHECK(g.State().player.x==20);
     for(int i=0;i<6;i++) {
         To(g,Game::Resource(i).x-1,64);
+        CHECK(g.ResourceAvailable(i));
         CHECK(g.Act(Action::Gather));
+        CHECK(!g.ResourceAvailable(i));
     }
     CHECK(g.State().inventory.wood==12);
     CHECK(g.State().inventory.energy==2);
+    CHECK(!g.Act(Action::BuildBridge));
+    CHECK(!g.Act(Action::BuildWall,g.State().player));
     To(g,61,64);
     CHECK(!g.Move(1,0));
     CHECK(g.Act(Action::BuildBridge));
+    CHECK(g.ObjectAt(62,64)==Structure::Bridge);
+    CHECK(g.ObjectAt(63,64)==Structure::Bridge);
     CHECK(g.Move(1,0));
     CHECK(g.Move(1,0));
     To(g,87,64);
@@ -44,13 +50,25 @@ void Test(unsigned seed) {
     }
     CHECK(g.State().guardian_defeated);
     To(g,104,64);
+    CHECK(!g.Act(Action::PlaceRelay,{104,64}));
+    CHECK(!g.Act(Action::PlaceRelay,{107,64}));
     CHECK(g.Act(Action::PlaceRelay,{105,64}));
+    CHECK(g.Relays()[0].direction==3);
+    CHECK(g.RotateNearbyRelay());
+    CHECK(g.Relays()[0].direction==0);
     To(g,106,64);
     CHECK(g.Act(Action::PlaceRelay,{107,64}));
     To(g,108,64);
+    CHECK(!g.Act(Action::Interact));
+    CHECK(g.RotateNearbyRelay());
     CHECK(g.Act(Action::Interact));
+    CHECK(!g.RotateNearbyRelay());
     CHECK(g.State().beacon);
     CHECK(g.Act(Action::BuildCampfire));
+    CHECK(g.ObjectAt(Game::FireSite().x,Game::FireSite().y)==Structure::Campfire);
+    Game cold=g;
+    for(int i=0;i<24 && cold.State().phase==Phase::Playing;++i) CHECK(cold.Act(Action::Dodge));
+    CHECK(cold.State().phase==Phase::Lost);
     constexpr int kMaxNightActions=24;
     for(int n=0; n<kMaxNightActions && g.State().phase==Phase::Playing; ++n) {
         if(g.State().fuel<3 && g.State().inventory.wood>0)
@@ -63,6 +81,13 @@ int main(){
     for(unsigned seed : {1u,7u,42u}) Test(seed);
     Game g(7);
     CHECK(g.Terrain(62,64)==Tile::Water);
+    CHECK(g.Discovered(20,64));
+    CHECK(!g.Discovered(80,64));
+    const int before=g.DiscoveredCount();
+    To(g,35,64);
+    CHECK(g.DiscoveredCount()>before);
+    CHECK(g.Discovered(20,64));
+    CHECK(!g.Visible(20,64));
     CHECK(!g.Walkable(-1,64));
     CHECK(!g.Act(Action::BuildBridge));
     CHECK(!g.Act(Action::PlaceRelay,{105,64}));

@@ -15,9 +15,10 @@ async function check(name, viewport, hasTouch) {
     async function contains(value) { await page.waitForFunction(v=>document.querySelector('#status')?.textContent?.includes(v),value,{timeout:10000}); }
     await contains('pos 20,64');
     await page.locator('#canvas').screenshot({path:'/tmp/hearthline-'+name+'.png'});
-    await page.locator('[data-key="103"]').click();
+    async function button(key){const b=page.locator('[data-key="'+key+'"]'); if(hasTouch) await b.tap(); else await b.click();}
+    await button(103);
     await contains('wood 4');
-    await page.locator('[data-key="100"]').click();
+    await button(100);
     await contains('pos 21,64');
     await page.locator('#canvas').focus();
     await page.keyboard.press('d');
@@ -29,9 +30,42 @@ async function check(name, viewport, hasTouch) {
     await page.keyboard.press('Escape');
     await page.keyboard.press('d');
     await contains('pos 23,64');
-    await page.locator('[data-key="1073741886"]').click();
+    await button(1073741886);
     await contains('pos 20,64');
     await contains('wood 0');
+    if(!hasTouch) {
+      await page.locator('#canvas').focus();
+      const press=async(key,count=1)=>{for(let i=0;i<count;i++) await page.keyboard.press(key);};
+      for(let i=0;i<6;i++) {
+        if(i) await press('d');
+        await press('g');
+      }
+      await contains('wood 12');
+      await contains('energy 2');
+      await press('b'); // cannot build remotely
+      await contains('wood 12');
+      await press('d',36);
+      await contains('pos 61,64');
+      await press('b');
+      await contains('wood 8');
+      await press('d',26);
+      await contains('pos 87,64');
+      for(let i=0;i<3;i++){await press('v');await press('k');}
+      await contains('Place P/Q');
+      await press('d',17);
+      await contains('pos 104,64');
+      await press('p'); await press('2');
+      await press('d',4);
+      await press('q'); await press('e'); // wrong orientation cannot activate
+      await contains('energy 0');
+      assert.match(await status.textContent(),/Place P\/Q/);
+      await press('2'); await press('e');
+      await contains('Build F campfire');
+      await press('f'); await press('r');
+      await press('v',9); await press('r'); await press('v',15);
+      await contains('VICTORY');
+      await page.locator('#canvas').screenshot({path:'/tmp/hearthline-victory.png'});
+    }
     const box=await page.locator('#canvas').boundingBox();
     assert(box && box.width>50 && box.height>50);
     assert.deepEqual(errors,[]);

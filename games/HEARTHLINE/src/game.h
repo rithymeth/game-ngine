@@ -13,7 +13,7 @@ constexpr int kBridgeY = 64;
 
 enum class Tile : std::uint8_t { Grass, Tree, Rock, Water, Ruin, Floor };
 enum class Phase { Playing, Won, Lost };
-enum class Structure { Bridge, Wall, Campfire, Relay };
+enum class Structure : std::uint8_t { None, Bridge, Wall, Campfire, Relay };
 enum class Action { Gather, BuildBridge, BuildWall, BuildCampfire, PlaceRelay, RotateRelay, Attack, Dodge, Heal, Refuel, Interact };
 struct Point { int x = 0, y = 0; };
 struct Inventory { int wood = 0, stone = 0, energy = 0, food = 0; };
@@ -30,6 +30,13 @@ class Game {
 public:
     explicit Game(std::uint32_t seed = 1);
     [[nodiscard]] Tile Terrain(int x, int y) const;
+    [[nodiscard]] Structure ObjectAt(int x, int y) const;
+    [[nodiscard]] bool Discovered(int x, int y) const;
+    [[nodiscard]] bool Visible(int x, int y) const;
+    [[nodiscard]] bool ResourceAvailable(int index) const;
+    [[nodiscard]] bool RotateNearbyRelay();
+    [[nodiscard]] int DiscoveredCount() const { return discovered_count_; }
+    [[nodiscard]] static Point FireSite() { return {106,65}; }
     [[nodiscard]] bool Walkable(int x, int y) const;
     [[nodiscard]] bool Move(int dx, int dy);
     [[nodiscard]] bool Act(Action action, Point at = {});
@@ -44,12 +51,15 @@ public:
     [[nodiscard]] static Point Resource(int index);
 private:
     void AdvanceTurn();
+    void Reveal();
     bool Adjacent(Point p) const;
     bool HasStructure(Point p) const;
     std::uint32_t seed_ = 1;
     std::vector<std::uint8_t> terrain_;
+    std::vector<Structure> objects_;
+    std::vector<std::uint8_t> discovered_;
+    int discovered_count_ = 0;
     std::vector<Relay> relays_;
-    std::vector<Point> walls_;
     Snapshot state_{};
     int dodge_turns_ = 0, attack_cooldown_ = 0, enemy_cooldown_ = 0;
     std::array<bool, 6> gathered_{};
