@@ -164,6 +164,44 @@ AETHER_TEST(LocPo_ImportRulesAndErrors) {
     CHECK(!ImportPo(bad, "de", "\"orphan\"\n", &errors));
 }
 
+AETHER_TEST(LocPo_CommentsBelongToTheNextEntryWithoutBlankLines) {
+    const char* po = R"PO(msgid ""
+msgstr ""
+"Language: fr\n"
+msgctxt "approved"
+msgid "Play"
+msgstr "Jouer"
+#, fuzzy
+msgctxt "draft"
+msgid "Quit"
+msgstr "Brouillon"
+msgctxt "before-old"
+msgid "Continue"
+msgstr ""
+"Conti"
+"nuer"
+#~ msgctxt "removed"
+#~ msgid "Removed"
+#~ msgstr "Retire"
+msgctxt "after-old"
+msgid "Options"
+msgstr "Options"
+)PO";
+    StringTable table;
+    table.Set("fr", "draft", "Quitter");
+    std::vector<std::string> errors;
+    CHECK(PoLanguage(po) == "fr");
+    CHECK(ImportPo(table, "fr", po, &errors));
+    const auto has = [&](const char* key, const char* expected) {
+        const std::string* text = table.Find("fr", key);
+        return text != nullptr && *text == expected;
+    };
+    CHECK(has("approved", "Jouer") && has("draft", "Quitter"));
+    CHECK(has("before-old", "Continuer") && has("after-old", "Options"));
+    CHECK(table.Find("fr", "removed") == nullptr);
+    CHECK(errors.size() == 1 && errors[0].find("'draft' is marked fuzzy") != std::string::npos);
+}
+
 AETHER_TEST(LocSync_UsesOnlyThePoHeaderToChooseTheTargetLanguage) {
     const stdfs::path root = Dir("po_language");
     SyncOptions options;

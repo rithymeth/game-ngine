@@ -57,7 +57,7 @@ bool StartsWith(std::string_view s, std::string_view prefix) { return s.substr(0
 
 struct Entry {
     std::string ctxt, id, str;
-    bool has_ctxt = false, has_id = false, has_str = false, fuzzy = false, obsolete = false;
+    bool has_ctxt = false, has_id = false, has_str = false, fuzzy = false;
     usize line = 0;
 };
 
@@ -80,7 +80,7 @@ std::string ExportPo(const StringTable& table, std::string_view language, std::s
 
 namespace {
 
-bool IsHeader(const Entry& e) { return e.has_id && e.id.empty() && !e.has_ctxt && e.has_str && !e.obsolete; }
+bool IsHeader(const Entry& e) { return e.has_id && e.id.empty() && !e.has_ctxt && e.has_str; }
 
 template <typename Visit>
 bool ReadEntries(std::string_view po, std::vector<std::string>* errors, Visit visit) {
@@ -107,11 +107,13 @@ bool ReadEntries(std::string_view po, std::vector<std::string>* errors, Visit vi
             commit();
             continue;
         }
-        if (StartsWith(line, "#~")) {
-            e.obsolete = true;
-            continue;
-        }
         if (line[0] == '#') {
+            // Comments introduce the next entry, even without a blank line.
+            // Obsolete entries consist of comment lines; don't carry their flags forward.
+            const bool obsolete = StartsWith(line, "#~");
+            if (e.has_str || obsolete) commit();
+            if (done) break;
+            if (obsolete) continue;
             if (StartsWith(line, "#,") && line.find("fuzzy") != std::string_view::npos) e.fuzzy = true;
             continue;
         }
@@ -158,7 +160,7 @@ bool ReadEntries(std::string_view po, std::vector<std::string>* errors, Visit vi
 bool ImportPo(StringTable& table, std::string_view language, std::string_view po, std::vector<std::string>* errors) {
     return ReadEntries(po, errors, [&](const Entry& e) {
         const auto& key = e.has_ctxt ? e.ctxt : e.id;
-        if (!IsHeader(e) && !e.obsolete && e.has_str && !e.str.empty() && !key.empty()) {
+        if (!IsHeader(e) && e.has_str && !e.str.empty() && !key.empty()) {
             if (e.fuzzy) {
                 if (errors) errors->push_back("line " + std::to_string(e.line) + ": '" + key +
                                               "' is marked fuzzy, so its translation was skipped");
