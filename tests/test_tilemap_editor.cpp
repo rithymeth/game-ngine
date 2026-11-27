@@ -1980,6 +1980,46 @@ AETHER_TEST(TilemapEditor_WorkspaceDrawsTheAuthoredSheetInPaletteAndCanvas) {
     CHECK(image_quads_for_second_tile() == 0 && !ws.Tilemap().dirty());
 }
 
+AETHER_TEST(TilemapEditor_CanvasShortRowsDrawLikeEmptyPadding) {
+    const auto draw = [](bool truncated, bool solo) {
+        HeadlessImGui ui;
+        TilemapData map;
+        map.Resize(6, 5);
+        map.AddLayer("Ground");
+        map.Set(0, 1, 1, 3);
+        map.Set(0, 2, 1, 30); // not in the concrete grid
+        map.Set(0, 1, 2, AutotileCell(9)); // missing rule in the final partial row
+        if (truncated) map.layers[0].cells.resize(14);
+        map.AddLayer("Empty layer");
+        if (truncated) map.layers[1].cells.clear();
+        Tileset tiles;
+        tiles.texture = assets::NewAssetGuid();
+        tiles.texture_width = tiles.texture_height = 64;
+        tiles.SetSolid(3, true);
+        TilemapEditDocument doc(std::move(map), std::move(tiles));
+        doc.active_layer = solo ? 1 : 0;
+        TilemapPanel panel(doc);
+        panel.solo_layer_art = solo;
+        ui.Frame([&] { panel.Draw(); });
+        std::vector<ImU32> colors;
+        for (const auto* list : ImGui::GetDrawData()->CmdLists) {
+            if (!list->_OwnerName || std::string_view(list->_OwnerName).find("##canvas") == std::string_view::npos) continue;
+            for (const auto& vertex : list->VtxBuffer) colors.push_back(vertex.col);
+        }
+        CHECK(doc.Revision() == 1 && !doc.CanUndo());
+        return colors;
+    };
+    constexpr ImU32 invalid = IM_COL32(255, 96, 215, 255);
+    constexpr ImU32 blocked = IM_COL32(220, 40, 40, 255);
+    for (bool solo : {false, true}) {
+        const auto padded = draw(false, solo);
+        const auto short_rows = draw(true, solo);
+        CHECK(short_rows == padded);
+        CHECK(std::find(short_rows.begin(), short_rows.end(), blocked) != short_rows.end());
+        CHECK(std::count(short_rows.begin(), short_rows.end(), invalid) == 16);
+    }
+}
+
 AETHER_TEST(TilemapEditor_CollisionOutlineSitsAboveDecorativeLayers) {
     HeadlessImGui ui;
     auto doc = Doc();

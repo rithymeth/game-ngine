@@ -632,9 +632,15 @@ void TilemapPanel::DrawCanvas() {
         for (usize layer = 0; layer < map.layers.size(); ++layer) {
             const bool draw_art = !solo_layer_art || layer == doc_.active_layer;
             const bool mark_solid = show_solid && map.layers[layer].collides;
+            const auto& stored = map.layers[layer].cells;
             for (i32 y = bottom; y < top; ++y) {
-                for (i32 x = left; x < right; ++x) {
-                    const i32 raw = map.Get(layer, x, y);
+                const u64 start = static_cast<u64>(y) * map.width + static_cast<u32>(left);
+                if (start >= stored.size()) break;
+                const usize count = std::min(columns, stored.size() - static_cast<usize>(start));
+                const i32* row = stored.data() + static_cast<usize>(start);
+                for (usize offset = 0; offset < count; ++offset) {
+                    const i32 x = left + static_cast<i32>(offset);
+                    const i32 raw = row[offset];
                     if (invalid_paint(raw)) {
                         if (marks.empty()) marks.resize(visible_count);
                         marks[visible_cell(x, y)] |= kInvalidPaint;
