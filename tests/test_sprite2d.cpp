@@ -1390,6 +1390,44 @@ AETHER_TEST(Physics2D_VisualTilemapsDoNotHideLiveCollisionChanges) {
     check_casts(false); // The tileset is solid, but both layers are visual.
 }
 
+AETHER_TEST(Physics2D_WideTileRaysKeepBothCornerHitsAndStableTies) {
+    World world;
+    Tileset tiles;
+    tiles.SetSolid(7, true);
+    TilemapData map;
+    map.Resize(96, 96);
+    map.AddLayer("Floor");
+    map.Set(0, 1, 0, 7);
+    map.Set(0, 0, 1, 7);
+    map.Set(0, 70, 70, 7);
+    Resolvers2D resolvers;
+    resolvers.tilemaps = [&](const assets::AssetGuid&) { return &map; };
+    resolvers.tilesets = [&](const assets::AssetGuid&) { return &tiles; };
+    TilemapRenderer renderer;
+    renderer.pixels_per_unit = 16.0f;
+    world.CreateEntity(Transform{Vec3(0, 0, 0), Quaternion::Identity()}, renderer);
+    Physics2D physics(world, resolvers);
+
+    const Vec2 origin{0.5f, 0.5f}, direction{1.0f, 1.0f};
+    RayHit2D nearest;
+    CHECK(physics.Raycast(origin, direction, 130.0f, nearest));
+    CHECK(nearest.tile && nearest.tile_x == 1 && nearest.tile_y == 0);
+    const auto hits = physics.RaycastAll(origin, direction, 130.0f);
+    if (hits.size() != 3) { CHECK(false); return; }
+    CHECK(hits[0].tile_x == 1 && hits[0].tile_y == 0);
+    CHECK(hits[1].tile_x == 0 && hits[1].tile_y == 1 && hits[1].distance == hits[0].distance);
+    CHECK(hits[2].tile_x == 70 && hits[2].tile_y == 70);
+    CHECK(nearest.distance == hits[0].distance && nearest.normal.x == -1.0f);
+    const auto limited = physics.RaycastAll(origin, direction, 130.0f, 1u, 1);
+    CHECK(limited.size() == 1 && limited.front().tile_x == 1 && limited.front().tile_y == 0);
+
+    const auto reverse = physics.RaycastAll({95.5f, 95.5f}, {-1.0f, -1.0f}, 136.0f);
+    if (reverse.size() != 3) { CHECK(false); return; }
+    CHECK(reverse[0].tile_x == 70 && reverse[0].tile_y == 70);
+    CHECK(reverse[1].tile_x == 1 && reverse[1].tile_y == 0);
+    CHECK(reverse[2].tile_x == 0 && reverse[2].tile_y == 1);
+}
+
 AETHER_TEST(Physics2D_CastsHitClosedTileEdges) {
     World world;
     Tileset tiles;

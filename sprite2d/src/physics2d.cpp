@@ -70,6 +70,48 @@ TileRange GetTileCastRange(f32 world_min, f32 world_max, f32 origin, f32 cell_si
     return GetTileRange(world_min, world_max, origin, cell_size, extent, /*closed_lower_edge=*/true);
 }
 
+bool ShouldClipTileRayRows(TileRange columns, TileRange rows, Vec2 direction) {
+    // Small or axis-aligned rectangles are cheaper to scan directly.
+    return columns.last - columns.first >= 32 && rows.last - rows.first >= 2 &&
+           std::fabs(direction.x) >= 1e-9f && std::fabs(direction.y) >= 1e-9f;
+}
+
+TileRange ClipTileRayRow(TileRange columns, f32 row_y, Vec2 origin, Vec2 direction,
+                         f32 map_x, Vec2 cell_size, f32 max_distance) {
+    // Use the same float edge construction and divisions as SlabRay, so
+    // the broad phase neither drops rounded corner hits nor changes ties.
+    const f32 y0 = (row_y - origin.y) / direction.y;
+    const f32 y1 = (row_y + cell_size.y - origin.y) / direction.y;
+    const f32 enter = std::max(0.0f, std::min(y0, y1));
+    const f32 exit = std::min(max_distance, std::max(y0, y1));
+    if (enter > exit) return {};
+
+    const auto edge_time = [&](i32 x, bool high) {
+        const f32 low = map_x + static_cast<f32>(x) * cell_size.x;
+        const f32 edge = high ? low + cell_size.x : low;
+        return (edge - origin.x) / direction.x;
+    };
+    const auto boundary = [](i32 lo, i32 hi, const auto& before) {
+        while (lo < hi) {
+            const i32 mid = lo + (hi - lo) / 2;
+            if (before(mid)) lo = mid + 1;
+            else hi = mid;
+        }
+        return lo;
+    };
+    // Slab times are monotone in X, reversed when moving left. Find the
+    // closed overlap in row-major order without scanning the whole row.
+    const i32 stop = columns.last + 1;
+    if (direction.x > 0.0f) {
+        const i32 first = boundary(columns.first, stop, [&](i32 x) { return edge_time(x, true) < enter; });
+        const i32 end = boundary(first, stop, [&](i32 x) { return edge_time(x, false) <= exit; });
+        return {first, end - 1};
+    }
+    const i32 first = boundary(columns.first, stop, [&](i32 x) { return edge_time(x, true) > exit; });
+    const i32 end = boundary(first, stop, [&](i32 x) { return edge_time(x, false) >= enter; });
+    return {first, end - 1};
+}
+
 // Every live entity (ForEach hands out components, not entities).
 template <typename F>
 void EachEntity(const World& world, F&& f) {
@@ -674,10 +716,14 @@ bool Physics2D::Raycast(Vec2 origin, Vec2 dir, f32 max_distance, RayHit2D& out, 
             const TileRange y_range = GetTileCastRange(std::min(origin.y, end.y), std::max(origin.y, end.y),
                                                    map_origin.y, ch, map->height);
             if (!x_range.Valid() || !y_range.Valid()) return;
+            const bool refine = ShouldClipTileRayRows(x_range, y_range, dir);
             for (i32 y = y_range.first; y <= y_range.last; ++y) {
-                for (i32 x = x_range.first; x <= x_range.last; ++x) {
+                const f32 row_y = map_origin.y + static_cast<f32>(y) * ch;
+                const TileRange row = refine ? ClipTileRayRow(x_range, row_y, origin, dir, map_origin.x, cell_size, best)
+                                             : x_range;
+                for (i32 x = row.first; x <= row.last; ++x) {
                     if (!IsSolidAt(*map, *ts, x, y)) continue;
-                    const Vec2 lo{map_origin.x + static_cast<f32>(x) * cw, map_origin.y + static_cast<f32>(y) * ch};
+                    const Vec2 lo{map_origin.x + static_cast<f32>(x) * cw, row_y};
                     f32 hit_t = 0;
                     Vec2 n{};
                     if (SlabRay(origin, dir, lo, {lo.x + cw, lo.y + ch}, best, hit_t, n) && hit_t <= best) {
@@ -765,11 +811,14 @@ std::vector<RayHit2D> Physics2D::RaycastAll(Vec2 origin, Vec2 dir, f32 max_dista
             const TileRange y_range = GetTileCastRange(std::min(origin.y, end.y), std::max(origin.y, end.y),
                                                    map_origin.y, cell_height, map->height);
             if (!x_range.Valid() || !y_range.Valid()) return;
+            const bool refine = ShouldClipTileRayRows(x_range, y_range, dir);
             for (i32 y = y_range.first; y <= y_range.last; ++y) {
-                for (i32 x = x_range.first; x <= x_range.last; ++x) {
+                const f32 row_y = map_origin.y + static_cast<f32>(y) * cell_height;
+                const TileRange row = refine ? ClipTileRayRow(x_range, row_y, origin, dir, map_origin.x, cell_size, max_distance)
+                                             : x_range;
+                for (i32 x = row.first; x <= row.last; ++x) {
                     if (!IsSolidAt(*map, *tileset, x, y)) continue;
-                    const Vec2 lo{map_origin.x + static_cast<f32>(x) * cell_width,
-                                  map_origin.y + static_cast<f32>(y) * cell_height};
+                    const Vec2 lo{map_origin.x + static_cast<f32>(x) * cell_width, row_y};
                     f32 t = 0.0f;
                     Vec2 normal{};
                     if (!SlabRay(origin, dir, lo, {lo.x + cell_width, lo.y + cell_height},
