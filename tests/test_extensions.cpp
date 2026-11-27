@@ -118,6 +118,44 @@ AETHER_TEST(Extensions_PanelsMenusAndOwners) {
     CHECK(reg.Panels().empty());
 }
 
+AETHER_TEST(Extensions_ShortcutsWaitUntilTheModalCloses) {
+    HeadlessImGui ui;
+    ExtensionRegistry reg;
+    int fired = 0;
+    reg.AddMenuItem({"Level/Bake/Lighting", "Ctrl+B", [&] { ++fired; }, {}, "test"});
+    bool close = false;
+    const auto modal = [&] {
+        if (ImGui::BeginPopupModal("Confirm scene changes")) {
+            if (close) ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+        }
+    };
+    ui.Frame([&] {
+        ImGui::OpenPopup("Confirm scene changes");
+        modal();
+    });
+
+    ImGuiIO& io = ImGui::GetIO();
+    io.AddKeyEvent(ImGuiMod_Ctrl, true);
+    io.AddKeyEvent(ImGuiKey_B, true);
+    ui.Frame([&] {
+        CHECK(ImGui::IsPopupOpen("Confirm scene changes"));
+        CHECK(reg.PollShortcuts() == 0);
+        modal();
+    });
+    CHECK(fired == 0);
+
+    io.AddKeyEvent(ImGuiKey_B, false);
+    close = true;
+    ui.Frame(modal);
+    io.AddKeyEvent(ImGuiKey_B, true);
+    ui.Frame([&] {
+        CHECK(!ImGui::IsPopupOpen("Confirm scene changes"));
+        CHECK(reg.PollShortcuts() == 1);
+    });
+    CHECK(fired == 1);
+}
+
 AETHER_TEST(Extensions_PropertyDrawerReplacesTheWidget) {
     HeadlessImGui ui;
     ExtensionRegistry reg;

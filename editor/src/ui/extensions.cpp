@@ -256,6 +256,7 @@ ImGuiKeyChord ParseChord(std::string_view text) {
 
 usize ExtensionRegistry::PollShortcuts() const {
     if (ImGui::GetIO().WantTextInput) return 0;
+    if (ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId)) return 0; // Give menus and modals the keyboard.
     usize fired = 0;
     for (const ExtensionMenuItem& item : menu_items_) {
         const ImGuiKeyChord chord = ParseChord(item.shortcut);
