@@ -55,6 +55,7 @@ without a server or network connection.
 | [design/large_world_coordinates.md](design/large_world_coordinates.md) | Floating-origin work, what is done, and the `Vec3d` gameplay decision still open |
 | [design/agent_gameplay_ai_boundary.md](design/agent_gameplay_ai_boundary.md) | Which AI runs inside the game simulation and which runs outside it |
 | [design/M8_PACKAGE_RELIABILITY.md](design/M8_PACKAGE_RELIABILITY.md) | The M8 increment over cook, package, verify and release |
+| [design/JUMP_ENVELOPE_SPIKE.md](design/JUMP_ENVELOPE_SPIKE.md) | Measuring how early or late jumps can land in a package and checking whether an update narrows that window |
 
 ## Editor migration
 
