@@ -1352,7 +1352,11 @@ struct EditorWorkspace::Impl {
             cue_editor->ResetForLoadedCue();
             return true;
         }
-        if (ext == ".aui") return load(ui_doc, "UI Designer", "UI layout");
+        if (ext == ".aui") {
+            if (!load(ui_doc, "UI Designer", "UI layout")) return false;
+            ui_designer->ResetForLoadedLayout();
+            return true;
+        }
         if (ext == ".abt") return load(bt_doc, "Behavior Tree", "behavior tree");
         if (ext == ".avfx") return load(particle_doc, "Particle System", "particle system");
         if (ext == ".aterrain") return load(terrain_doc, "Terrain", "terrain");

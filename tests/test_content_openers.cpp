@@ -27,6 +27,9 @@
 #include "aether/sprite2d/tilemap.h"
 #include "aether/terrain/asset_io.h"
 #include "aether/terrain/terrain.h"
+#include "aether/ui/controls.h"
+#include "aether/ui/layout_file.h"
+#include "aether/ui/panels.h"
 #include "aether/vfx/emitter.h"
 #include "content/content_browser_panel.h"
 #include "core/notifications.h"
@@ -367,6 +370,69 @@ AETHER_TEST(Openers_SoundCueReplacementDoesNotSelectTheSameNodeId) {
     CHECK(rendered.find("Second cue") != std::string::npos && rendered.find("Wave node 1") == std::string::npos);
     CHECK(!palette_open()); // The old graph popup must not intercept the new cue's input.
     open_palette();        // The replacement graph still opens its own palette.
+}
+
+AETHER_TEST(Openers_UILayoutReplacementClearsThePreviousWidgetSelection) {
+    HeadlessImGui ui;
+    ProjectPaths paths;
+    FreshProject("layout_selection", paths);
+    EditorWorkspace ws(paths.file);
+    const auto make_layout = [&](const char* file, const char* name) {
+        aether::ui::Canvas canvas;
+        canvas.name = "Root";
+        auto button = std::make_unique<aether::ui::Button>();
+        button->name = name;
+        button->slot.position = {120, 100};
+        button->slot.size = {240, 100};
+        canvas.AddChild(std::move(button));
+        Write(paths.content / file, aether::ui::SaveLayout(canvas));
+    };
+    make_layout("UI/First.aui", "FirstButton");
+    make_layout("UI/Second.aui", "SecondButton");
+    Write(paths.content / "UI/Broken.aui", "not a layout");
+
+    CHECK(ws.OpenAsset("UI/First.aui"));
+    const i64 tool = ws.FindTool("UI Designer");
+    CHECK(tool >= 0);
+    if (tool < 0) return;
+    const auto draw = [&] { ws.DrawTool(static_cast<usize>(tool)); };
+    ui.Frame(draw);
+    ui.Frame(draw);
+    const auto locate = [](ImU32 color, ImVec2* center = nullptr) {
+        ImVec2 sum{};
+        int vertices = 0;
+        for (const ImDrawList* list : ImGui::GetDrawData()->CmdLists) {
+            for (const ImDrawVert& v : list->VtxBuffer) {
+                if (v.col != color) continue;
+                sum.x += v.pos.x;
+                sum.y += v.pos.y;
+                ++vertices;
+            }
+        }
+        if (center && vertices > 0) *center = ImVec2(sum.x / vertices, sum.y / vertices);
+        return vertices > 0;
+    };
+    constexpr ImU32 button_fill = IM_COL32(56, 61, 71, 255);
+    constexpr ImU32 selection_outline = IM_COL32(255, 150, 40, 255);
+    ImVec2 center{};
+    const bool found = locate(button_fill, &center);
+    CHECK(found);
+    if (!found) return;
+    ImGuiIO& io = ImGui::GetIO();
+    io.AddMousePosEvent(center.x, center.y);
+    ui.Frame(draw);
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+    ui.Frame(draw);
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+    ui.Frame(draw);
+    CHECK(locate(selection_outline));
+
+    CHECK(!ws.OpenAsset("UI/Broken.aui"));
+    ui.Frame(draw);
+    CHECK(locate(selection_outline));
+    CHECK(ws.OpenAsset("UI/Second.aui"));
+    ui.Frame(draw);
+    CHECK(locate(button_fill) && !locate(selection_outline));
 }
 
 AETHER_TEST(Openers_ContentBrowserCreatesAndSelectsAtlasWithoutReplacingOne) {

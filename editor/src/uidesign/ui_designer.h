@@ -33,6 +33,8 @@ public:
     explicit UIDesigner(UILayoutDocument& document);
 
     void Draw();
+    // Clear layout-specific interaction state after a successful replacement.
+    void ResetForLoadedLayout();
 
     // --- Selection ----------------------------------------------------------------------
     const std::vector<WidgetPath>& Selection() const { return selection_; }

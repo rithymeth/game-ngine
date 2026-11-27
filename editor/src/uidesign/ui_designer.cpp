@@ -136,6 +136,21 @@ const std::vector<ResolutionPreset>& ResolutionPresets() {
 
 UIDesigner::UIDesigner(UILayoutDocument& document) : doc_(document) { SetResolution(0); }
 
+void UIDesigner::ResetForLoadedLayout() {
+    ClearSelection();
+    SelectAnimation("");
+    drag_ = Drag::None;
+    drag_rects_.clear();
+    handle_ = -1;
+    key_track_ = key_index_ = -1;
+    new_track_widget_.clear();
+    new_track_property_ = "opacity";
+    name_edit_.clear();
+    name_edit_for_.clear();
+    status_.clear();
+    fit_ = true;
+}
+
 // --- Selection and preview ---------------------------------------------------------------------------
 
 void UIDesigner::Select(const WidgetPath& path, bool add) {
