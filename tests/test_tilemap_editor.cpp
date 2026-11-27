@@ -480,6 +480,44 @@ AETHER_TEST(TilemapEditor_TilesetHistoryKeepsPaintedTileStorage) {
     CHECK(doc.Map().layers[0].cells.data() == cells);
 }
 
+AETHER_TEST(TilemapEditor_AppendingAutotileKeepsExistingTilesetStorage) {
+    TilemapData map;
+    map.Resize(2, 2);
+    Tileset tiles;
+    tiles.SetSolid(4095, true);
+    const std::string existing_name(128, 'a');
+    const std::string added_name(128, 'b');
+    tiles.AddAutotile(existing_name, Autotile{}.tiles);
+    TilemapEditDocument doc(std::move(map), std::move(tiles));
+    const auto* flags = doc.GetTileset().solid.data();
+    const auto* existing = doc.GetTileset().autotiles[0].name.data();
+
+    const usize added = doc.AddAutotile(added_name);
+    CHECK(added == 1 && doc.dirty());
+    CHECK(doc.GetTileset().autotiles[added].tiles == Autotile{}.tiles);
+    const auto* added_storage = doc.GetTileset().autotiles[added].name.data();
+    CHECK(doc.Undo() && !doc.dirty() && doc.GetTileset().autotiles.size() == 1);
+    CHECK(doc.GetTileset().solid.data() == flags && doc.GetTileset().IsSolid(4095));
+    CHECK(doc.GetTileset().autotiles[0].name.data() == existing);
+    CHECK(doc.Redo() && doc.dirty() && doc.GetTileset().autotiles.size() == 2);
+    CHECK(doc.GetTileset().autotiles[added].name == added_name);
+    CHECK(doc.GetTileset().autotiles[added].name.data() == added_storage);
+
+    CHECK(doc.RenameAutotile(added, "Renamed") && doc.SetAutotileTile(added, kNorth, 3));
+    doc.SetSolid(1, true); // intersects with existing snapshot-style history
+    CHECK(doc.Undo() && !doc.GetTileset().IsSolid(1));
+    CHECK(doc.Undo() && doc.GetTileset().autotiles[added].tiles[kNorth] == kEmpty);
+    CHECK(doc.Undo() && doc.GetTileset().autotiles[added].name == added_name);
+    CHECK(doc.Undo() && doc.GetTileset().autotiles.size() == 1 && !doc.dirty());
+    CHECK(doc.Redo() && doc.Redo() && doc.Redo() && doc.Redo());
+    CHECK(doc.GetTileset().IsSolid(1) && doc.GetTileset().IsSolid(4095));
+    CHECK(doc.GetTileset().autotiles[added].name == "Renamed");
+    CHECK(doc.GetTileset().autotiles[added].tiles[kNorth] == 3);
+    CHECK(doc.Undo() && doc.Undo() && doc.Undo() && doc.Undo());
+    CHECK(doc.AddAutotile("Replacement") == added && !doc.CanRedo());
+    CHECK(doc.GetTileset().autotiles[added].name == "Replacement");
+}
+
 AETHER_TEST(TilemapEditor_LayersSolidsAndResize) {
     TilemapEditDocument doc = Doc();
     CHECK(doc.Map().layers.size() == 1 && !doc.RemoveLayer(0)); // the last layer stays

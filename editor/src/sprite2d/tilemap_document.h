@@ -107,6 +107,11 @@ private:
         usize rule;
         std::array<i32, 16> tiles;
     };
+    struct AutotileAppend {
+        // Later edits are undone first, so the tail rule has its initial
+        // empty masks. Redo only needs its name while the rule is absent.
+        std::optional<std::string> removed_name;
+    };
     struct LayerProperties {
         usize layer;
         std::string name;
@@ -128,7 +133,7 @@ private:
     };
     struct HistoryEntry {
         std::variant<sprite2d::TilemapData, BrushEdit, LayerProperties, LayerMove, sprite2d::Tileset,
-                     LayerPresence, HeightEdit, AutotileName, AutotileMasks> edit;
+                     LayerPresence, HeightEdit, AutotileName, AutotileMasks, AutotileAppend> edit;
         u64 state;
     };
     bool Travel(std::vector<HistoryEntry>& from, std::vector<HistoryEntry>& to);

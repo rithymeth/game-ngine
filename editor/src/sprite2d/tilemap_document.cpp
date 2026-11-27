@@ -358,6 +358,15 @@ bool TilemapEditDocument::Travel(std::vector<HistoryEntry>& from, std::vector<Hi
         std::swap(tileset_.autotiles[rule_name->rule].name, rule_name->name);
     } else if (auto* masks = std::get_if<AutotileMasks>(&step.edit)) {
         std::swap(tileset_.autotiles[masks->rule].tiles, masks->tiles);
+    } else if (auto* append = std::get_if<AutotileAppend>(&step.edit)) {
+        if (append->removed_name) {
+            auto& rule = tileset_.autotiles.emplace_back();
+            rule.name.swap(*append->removed_name);
+            append->removed_name.reset();
+        } else {
+            append->removed_name.emplace(std::move(tileset_.autotiles.back().name));
+            tileset_.autotiles.pop_back();
+        }
     } else if (auto* properties = std::get_if<LayerProperties>(&step.edit)) {
         auto& layer = map_.layers[properties->layer];
         std::swap(layer.name, properties->name);
@@ -564,8 +573,18 @@ void TilemapEditDocument::SetSolid(i32 tile, bool solid) {
 }
 
 usize TilemapEditDocument::AddAutotile(const std::string& name) {
-    RecordTileset();
-    return tileset_.AddAutotile(name, Autotile().tiles);
+    EndStroke();
+    undo_.push_back({AutotileAppend{}, state_});
+    usize rule;
+    try {
+        rule = tileset_.AddAutotile(name, Autotile().tiles);
+    } catch (...) {
+        undo_.pop_back();
+        throw;
+    }
+    redo_.clear();
+    Changed();
+    return rule;
 }
 
 bool TilemapEditDocument::RenameAutotile(usize autotile, const std::string& name) {
