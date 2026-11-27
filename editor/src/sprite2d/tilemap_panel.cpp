@@ -840,22 +840,29 @@ void TilemapPanel::DrawCanvas() {
                             !map.InBounds(shape_x_, shape_y_);
         if (shape_active_ && (cancel || !left)) {
             if (!cancel && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
-                if (line_tool) doc_.Line(shape_x_, shape_y_, std::clamp(cx, 0, static_cast<i32>(map.width) - 1),
-                                         std::clamp(cy, 0, static_cast<i32>(map.height) - 1));
+                if (line_tool) doc_.Line(shape_x_, shape_y_, cx, cy);
                 else doc_.Rectangle(shape_x_, shape_y_, cx, cy);
             }
             shape_active_ = false;
         }
         if (shape_active_) {
-            const i32 x = std::clamp(cx, 0, static_cast<i32>(map.width) - 1);
-            const i32 y = std::clamp(cy, 0, static_cast<i32>(map.height) - 1);
             if (line_tool) {
-                const auto center = [&](i32 tile_x, i32 tile_y) {
-                    return ImVec2(to_screen_x(tile_x) + zoom * 0.5f, to_screen_y(tile_y) + zoom * 0.5f);
-                };
-                dl->AddLine(center(shape_x_, shape_y_), center(x, y), IM_COL32(130, 214, 255, 255), 2.0f);
+                // Clip a ray between cell centers to the map's outer edges.
+                // Clamping X and Y separately would change the drag direction.
+                const f64 dx = static_cast<f64>(cx) - shape_x_;
+                const f64 dy = static_cast<f64>(cy) - shape_y_;
+                f64 t = 1.0;
+                if (dx != 0.0) t = std::min(t, ((dx < 0.0 ? -0.5 : map.width - 0.5) - shape_x_) / dx);
+                if (dy != 0.0) t = std::min(t, ((dy < 0.0 ? -0.5 : map.height - 0.5) - shape_y_) / dy);
+                const f64 sx = edge_x(shape_x_) + zoom * 0.5;
+                const f64 sy = edge_y(shape_y_) - zoom * 0.5;
+                dl->AddLine(ImVec2(static_cast<f32>(sx), static_cast<f32>(sy)),
+                            ImVec2(static_cast<f32>(sx + dx * t * zoom), static_cast<f32>(sy - dy * t * zoom)),
+                            IM_COL32(130, 214, 255, 255), 2.0f);
                 if (hovered) ImGui::SetTooltip("Release to paint the line. Escape cancels.");
             } else {
+                const i32 x = std::clamp(cx, 0, static_cast<i32>(map.width) - 1);
+                const i32 y = std::clamp(cy, 0, static_cast<i32>(map.height) - 1);
                 const ImVec2 a(to_screen_x(std::min(x, shape_x_)), to_screen_y(std::max(y, shape_y_)));
                 const ImVec2 b(to_screen_x(std::max(x, shape_x_) + 1), to_screen_y(std::min(y, shape_y_)) + zoom);
                 dl->AddRectFilled(a, b, IM_COL32(130, 214, 255, 48));

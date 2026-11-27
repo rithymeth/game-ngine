@@ -2297,6 +2297,54 @@ AETHER_TEST(TilemapEditor_LineToolPreviewsAndCommitsOneStraightStroke) {
     CHECK(!doc.CanUndo() && doc.CanRedo()); // invalid brush cannot overwrite history
 }
 
+AETHER_TEST(TilemapEditor_LineToolKeepsDirectionAtMapEdges) {
+    HeadlessImGui ui;
+    TilemapData map;
+    map.Resize(6, 6);
+    map.AddLayer("Ground");
+    TilemapEditDocument doc(std::move(map), {});
+    doc.brush = 7;
+    doc.tool = TileTool::Line;
+    TilemapPanel panel(doc);
+    ImVec2 origin;
+    const auto draw = [&] {
+        panel.Draw();
+        const auto pad = ImGui::GetStyle().WindowPadding;
+        origin = {ImGui::GetItemRectMin().x + pad.x + 8, ImGui::GetItemRectMax().y - pad.y - 8};
+    };
+    auto& io = ImGui::GetIO();
+    const auto move = [&](i32 x, i32 y) {
+        io.AddMousePosEvent(origin.x + (x + 0.5f) * panel.zoom, origin.y - (y + 0.5f) * panel.zoom);
+        ui.Frame(draw);
+    };
+    const auto check = [&](const std::vector<std::pair<i32, i32>>& expected) {
+        for (i32 y = 0; y < 6; ++y) {
+            for (i32 x = 0; x < 6; ++x) {
+                const bool painted = std::find(expected.begin(), expected.end(), std::pair{x, y}) != expected.end();
+                CHECK(doc.Map().Get(0, x, y) == (painted ? 7 : kEmpty));
+            }
+        }
+    };
+    const auto drag = [&](i32 x, i32 y, const std::vector<std::pair<i32, i32>>& expected) {
+        move(1, 1);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+        ui.Frame(draw);
+        move(x, y);
+        CHECK(!doc.dirty() && !doc.CanUndo());
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+        ui.Frame(draw);
+        check(expected);
+        CHECK(doc.Undo() && !doc.dirty() && !doc.CanUndo());
+    };
+    ui.Frame(draw);
+    drag(9, 5, {{1, 1}, {2, 2}, {3, 2}, {4, 3}, {5, 3}});
+    drag(5, 9, {{1, 1}, {2, 2}, {2, 3}, {3, 4}, {3, 5}});
+    drag(9, 9, {{1, 1}, {2, 2}, {3, 3}, {4, 4}, {5, 5}});
+    doc.Line(1, 1, std::numeric_limits<i32>::min(), 1);
+    check({{1, 1}, {0, 1}}); // a distant endpoint still stops on the first out-of-map step
+    CHECK(doc.Undo() && !doc.dirty());
+}
+
 AETHER_TEST(TilemapEditor_RectangleDragCancelsAndClipsWithoutPartialHistory) {
     HeadlessImGui ui;
     TilemapEditDocument doc = Doc();

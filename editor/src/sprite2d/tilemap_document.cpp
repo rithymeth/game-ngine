@@ -315,8 +315,9 @@ void TilemapEditDocument::Rectangle(i32 x0, i32 y0, i32 x1, i32 y1) {
 }
 
 void TilemapEditDocument::Line(i32 x, i32 y, i32 end_x, i32 end_y) {
-    if (!map_.InBounds(x, y) || !map_.InBounds(end_x, end_y) ||
+    if (!map_.InBounds(x, y) ||
         (tool != TileTool::Erase && (HasMissingAutotileBrush() || HasOutOfGridBrush()))) return;
+    const bool clipped = !map_.InBounds(end_x, end_y);
     const bool own_stroke = !in_stroke_;
     if (own_stroke) BeginStroke();
     const i32 value = tool == TileTool::Erase ? kEmpty : brush;
@@ -330,6 +331,8 @@ void TilemapEditDocument::Line(i32 x, i32 y, i32 end_x, i32 end_y) {
         const i64 twice = 2 * error;
         if (twice >= dy) { error += dy; x += step_x; }
         if (twice <= dx) { error += dx; y += step_y; }
+        // Each axis is monotone; a line that leaves the map can't re-enter.
+        if (clipped && !map_.InBounds(x, y)) break;
     }
     if (own_stroke) EndStroke();
 }
