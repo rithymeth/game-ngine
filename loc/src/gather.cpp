@@ -91,7 +91,7 @@ GatherReport GatherContent(const stdfs::path& content_dir) {
         GatherJson(doc, rel, raw);
     }
     for (std::string& w : raw.warnings) out.warnings.push_back(std::move(w));
-    std::map<std::string, GatheredText> by_key; // first seen wins (files are in path order)
+    std::map<std::string, GatheredText> by_key; // first nonempty source wins (files are in path order)
     for (const GatheredText& t : raw.entries) {
         const auto it = by_key.find(t.key);
         if (it == by_key.end()) {
@@ -99,8 +99,8 @@ GatherReport GatherContent(const stdfs::path& content_dir) {
         } else if (it->second.source != t.source && !t.source.empty() && !it->second.source.empty()) {
             out.warnings.push_back("The key '" + t.key + "' has two different texts: \"" + it->second.source + "\" (" + it->second.where + ") and \"" +
                                    t.source + "\" (" + t.where + "); the first is kept");
-        } else if (it->second.source.empty()) {
-            it->second.source = t.source; // a use with no text gets the one that has it
+        } else if (it->second.source.empty() && !t.source.empty()) {
+            it->second = t; // Keep the chosen text and its source location together.
         }
     }
     for (auto& [key, text] : by_key) out.entries.push_back(std::move(text));

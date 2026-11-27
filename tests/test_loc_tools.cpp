@@ -101,6 +101,22 @@ AETHER_TEST(LocGather_ContentIsMergedByKeyAndConflictsWarn) {
     CHECK(GatherContent(content / "missing").entries.empty());
 }
 
+AETHER_TEST(LocGather_ConflictNamesTheFileThatSuppliedTheSourceText) {
+    const stdfs::path content = Dir("source_provenance");
+    Write(content / "a-placeholder.aui", R"({"root":{"text_key":"menu.play"}})");
+    Write(content / "b-first.aui", R"({"root":{"text_key":"menu.play","text":"Play"}})");
+    Write(content / "c-conflict.aui", R"({"root":{"text_key":"menu.play","text":"Start"}})");
+    const GatherReport report = GatherContent(content);
+    const GatheredText* found = Find(report, "menu.play");
+    CHECK(found && found->source == "Play" && found->where == "b-first.aui: /root");
+    CHECK(report.warnings.size() == 1);
+    if (report.warnings.size() == 1) {
+        CHECK(report.warnings[0].find("b-first.aui: /root") != std::string::npos);
+        CHECK(report.warnings[0].find("c-conflict.aui: /root") != std::string::npos);
+        CHECK(report.warnings[0].find("a-placeholder.aui") == std::string::npos);
+    }
+}
+
 AETHER_TEST(LocGather_RecognizesAssetExtensionsRegardlessOfCase) {
     const stdfs::path content = Dir("extension_case");
     Write(content / "menu.AUI", R"({"text_key":"ui.play","text":"Play"})");
