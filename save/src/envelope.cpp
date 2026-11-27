@@ -62,18 +62,27 @@ SaveResult Write(const stdfs::path& file, std::string_view contents) {
     }
     std::error_code ec;
     if (!file.parent_path().empty()) stdfs::create_directories(file.parent_path(), ec);
-    if (stdfs::exists(file, ec)) {
+    if (ec) return Fail(SaveError::IoError, "couldn't create the folder for " + file.string());
+    const bool has_primary = stdfs::exists(file, ec);
+    if (ec) return Fail(SaveError::IoError, "couldn't check " + file.string() + ": " + ec.message());
+    if (has_primary) {
         stdfs::path backup = file;
         backup += ".bak";
-        if (!stdfs::exists(backup, ec) && !ec) {
-            stdfs::copy_file(file, backup, ec);
-        } else if (!ec) {
+        const bool has_backup = stdfs::exists(backup, ec);
+        const auto backup_error = [&]() {
+            return Fail(SaveError::IoError, "couldn't preserve the backup at " + backup.string());
+        };
+        if (ec) return backup_error();
+        if (!has_backup) {
+            if (!stdfs::copy_file(file, backup, ec)) return backup_error();
+        } else {
             // Saving after recovery must not replace the last good backup
             // with the damaged primary. Rotate only a readable envelope.
             const EnvelopeInfo previous = Inspect(file);
             if (previous.ok && previous.checksum_ok && previous.format > 0 &&
-                previous.format <= kFormat && !previous.kind.empty() && !previous.type.empty()) {
-                fs::WriteFileAtomic(backup.string(), previous.raw_text.data(), previous.raw_text.size());
+                previous.format <= kFormat && !previous.kind.empty() && !previous.type.empty() &&
+                !fs::WriteFileAtomic(backup.string(), previous.raw_text.data(), previous.raw_text.size())) {
+                return backup_error();
             }
         }
     }

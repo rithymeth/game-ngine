@@ -286,6 +286,26 @@ AETHER_TEST(Save_RepairDoesNotReplaceAHealthyBackupWithDamagedBytes) {
     CHECK(saves.Load("a", loaded).ok && loaded.level == original.level);
 }
 
+AETHER_TEST(Save_BlockedBackupRotationPreservesThePreviousPrimary) {
+    SaveSystem saves(Dir("BlockedBackupRotation"));
+    auto profile = Sample();
+    CHECK(saves.Save("a", profile).ok);
+    const auto primary = saves.Directory() / "a.asav";
+    const auto backup = saves.Directory() / "a.asav.bak";
+    const auto previous = ReadAll(primary);
+    CHECK(!previous.empty());
+    CHECK(stdfs::create_directory(backup));
+    WriteAll(backup / "keep.txt", "not a backup");
+    profile.level = 11;
+    const auto result = saves.Save("a", profile);
+    CHECK(!result.ok && result.error == SaveError::IoError && result.message.find("backup") != std::string::npos);
+    CHECK(ReadAll(primary) == previous);
+    CHECK(ReadAll(backup / "keep.txt") == "not a backup");
+    CHECK(!stdfs::exists(saves.Directory() / "a.asav.bak.tmp"));
+    save_test::Profile loaded;
+    CHECK(saves.Load("a", loaded).ok && loaded.level == Sample().level);
+}
+
 AETHER_TEST(Save_DetectsCorruptionAndTruncation) {
     SaveSystem saves(Dir("Corrupt"));
     save_test::Profile p = Sample();
