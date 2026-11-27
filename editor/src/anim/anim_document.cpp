@@ -1,4 +1,5 @@
 #include "anim/anim_document.h"
+#include "ui/staged_asset_write.h"
 
 #include <algorithm>
 #include <fstream>
@@ -79,20 +80,18 @@ bool AnimGraphDocument::Load(const std::filesystem::path& path, std::string* err
 }
 
 bool AnimGraphDocument::Save(std::string* error) {
-    if (path_.empty()) {
-        if (error != nullptr) *error = "the graph has no file yet; use Save As";
-        return false;
-    }
     return SaveAs(path_, error);
 }
 
 bool AnimGraphDocument::SaveAs(const std::filesystem::path& path, std::string* error) {
-    std::ofstream file(path);
-    if (!file) {
+    if (path.empty()) {
+        if (error != nullptr) *error = "the graph has no file yet; use Save As";
+        return false;
+    }
+    if (!WriteStagedAsset(path, anim::AnimGraphToJson(graph_).dump(2) + "\n")) {
         if (error != nullptr) *error = "can't write " + path.string();
         return false;
     }
-    file << anim::AnimGraphToJson(graph_).dump(2) << "\n";
     path_ = path;
     dirty_ = false;
     return true;

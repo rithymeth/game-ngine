@@ -8,8 +8,16 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <functional>
+#include <iterator>
 #include <map>
+#include <type_traits>
+
+#if defined(__linux__)
+#include <signal.h>
+#include <sys/resource.h>
+#endif
 
 using namespace aether;
 using namespace aether::editor;
@@ -212,6 +220,62 @@ AETHER_TEST(AnimEditors_ViewsAndGraphEdits) {
     ApplyStateMachineEdits(doc, b.machine, del);
     AETHER_CHECK(doc.Get().machines[0].states.size() == 1 && doc.Get().machines[0].states[0].x == 5.0f && doc.Get().machines[0].transitions.empty());
 }
+
+#if defined(__linux__)
+AETHER_TEST(AnimEditors_FailedWritesPreserveGraphAndBlendSpaceFiles) {
+    namespace fs = std::filesystem;
+    const auto dir = fs::temp_directory_path() / "aether_anim_asset_write_failure";
+    fs::create_directories(dir);
+    const auto bytes = [](const fs::path& path) {
+        std::ifstream in(path, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(in), {});
+    };
+    const auto check = [&](auto& document, const char* extension, const auto& edit, const auto& serialize) {
+        const auto original = dir / (std::string("Original") + extension);
+        const auto other = dir / (std::string("Other") + extension);
+        AETHER_CHECK(document.SaveAs(other) && document.SaveAs(original));
+        const auto before = bytes(original);
+        const auto other_before = bytes(other);
+        AETHER_CHECK(!before.empty() && !other_before.empty());
+        edit(document);
+        const auto pending = serialize(document.Get());
+        AETHER_CHECK(document.Dirty() && document.CanUndo());
+
+        struct rlimit previous_limit{};
+        struct sigaction previous_signal{}, ignore{};
+        ignore.sa_handler = SIG_IGN;
+        sigemptyset(&ignore.sa_mask);
+        const bool read_limit = getrlimit(RLIMIT_FSIZE, &previous_limit) == 0;
+        AETHER_CHECK(read_limit);
+        if (!read_limit) return;
+        const bool changed_signal = sigaction(SIGXFSZ, &ignore, &previous_signal) == 0;
+        AETHER_CHECK(changed_signal);
+        if (!changed_signal) return;
+        const struct rlimit blocked{0, previous_limit.rlim_max};
+        const bool limited = setrlimit(RLIMIT_FSIZE, &blocked) == 0;
+        std::string save_error, copy_error;
+        const bool saved = limited && document.Save(&save_error);
+        const bool copied = limited && document.SaveAs(other, &copy_error);
+        const bool restored = !limited || setrlimit(RLIMIT_FSIZE, &previous_limit) == 0;
+        const bool signal_restored = sigaction(SIGXFSZ, &previous_signal, nullptr) == 0;
+        AETHER_CHECK(limited && restored && signal_restored);
+        AETHER_CHECK(!saved && !save_error.empty() && !copied && !copy_error.empty());
+        AETHER_CHECK(bytes(original) == before && bytes(other) == other_before);
+        AETHER_CHECK(document.Path() == original && document.Dirty() && document.CanUndo());
+        AETHER_CHECK(serialize(document.Get()) == pending);
+        AETHER_CHECK(document.Save() && !document.Dirty());
+        std::remove_reference_t<decltype(document)> reloaded;
+        AETHER_CHECK(reloaded.Load(original) && serialize(reloaded.Get()) == pending && bytes(other) == other_before);
+    };
+    Built graph;
+    check(graph.doc, ".aanim", [](auto& doc) { doc.AddVariable(VarType::Bool); }, AnimGraphToJson);
+    BlendSpaceDocument space;
+    space.AddSample("Idle", 0, 0);
+    check(space, ".ablend", [](auto& doc) { doc.AddSample("Walk", 1, 0); }, BlendSpaceToJson);
+    AETHER_CHECK(std::distance(fs::directory_iterator(dir), fs::directory_iterator{}) == 4);
+    fs::remove_all(dir);
+}
+#endif
 
 AETHER_TEST(AnimEditors_BlendSpaceEditing) {
     BlendSpace space;

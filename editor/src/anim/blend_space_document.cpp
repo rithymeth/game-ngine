@@ -1,4 +1,5 @@
 #include "anim/blend_space_document.h"
+#include "ui/staged_asset_write.h"
 
 #include <algorithm>
 #include <cmath>
@@ -43,19 +44,18 @@ bool BlendSpaceDocument::Load(const std::filesystem::path& path, std::string* er
     return true;
 }
 bool BlendSpaceDocument::Save(std::string* error) {
-    if (path_.empty()) {
-        if (error) *error = "the blend space has no file yet; use Save As";
-        return false;
-    }
     return SaveAs(path_, error);
 }
+
 bool BlendSpaceDocument::SaveAs(const std::filesystem::path& path, std::string* error) {
-    std::ofstream file(path);
-    if (!file) {
-        if (error) *error = "can't write " + path.string();
+    if (path.empty()) {
+        if (error != nullptr) *error = "the blend space has no file yet; use Save As";
         return false;
     }
-    file << anim::BlendSpaceToJson(space_).dump(2) << "\n";
+    if (!WriteStagedAsset(path, anim::BlendSpaceToJson(space_).dump(2) + "\n")) {
+        if (error != nullptr) *error = "can't write " + path.string();
+        return false;
+    }
     path_ = path;
     dirty_ = false;
     return true;
