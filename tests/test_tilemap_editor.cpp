@@ -2532,6 +2532,44 @@ AETHER_TEST(TilemapEditor_LineToolKeepsDirectionAtMapEdges) {
     CHECK(doc.Undo() && !doc.dirty());
 }
 
+AETHER_TEST(TilemapEditor_InterruptedShapesDoNotPaintWhenCanvasReturns) {
+    HeadlessImGui ui;
+    auto doc = Doc();
+    TilemapPanel panel(doc);
+    doc.brush = 4;
+    ImVec2 origin;
+    const auto draw = [&] {
+        panel.Draw();
+        const auto pad = ImGui::GetStyle().WindowPadding;
+        origin = {ImGui::GetItemRectMin().x + pad.x + 8, ImGui::GetItemRectMax().y - pad.y - 8};
+    };
+    auto& io = ImGui::GetIO();
+    const auto move = [&](i32 x, i32 y) {
+        io.AddMousePosEvent(origin.x + (x + 0.5f) * panel.zoom, origin.y - (y + 0.5f) * panel.zoom);
+        ui.Frame(draw);
+    };
+    const auto left = [&](bool down) { io.AddMouseButtonEvent(ImGuiMouseButton_Left, down); ui.Frame(draw); };
+    ui.Frame(draw);
+    for (TileTool tool : {TileTool::Line, TileTool::Rectangle}) {
+        doc.tool = tool;
+        move(0, 0);
+        left(true);
+        move(4, 1);
+        CHECK(!doc.dirty());
+        ui.Frame([] {}); // The workspace no longer submits the canvas.
+        left(false);
+        CHECK(!doc.dirty() && !doc.CanUndo() && doc.Map().Get(0, 0, 0) == kEmpty);
+        if (doc.CanUndo()) doc.Undo();
+
+        move(1, 1);
+        left(true);
+        move(3, 1);
+        left(false);
+        CHECK(doc.Map().Get(0, 1, 1) == 4 && doc.Map().Get(0, 3, 1) == 4);
+        CHECK(doc.Undo() && !doc.CanUndo() && !doc.dirty());
+    }
+}
+
 AETHER_TEST(TilemapEditor_RectangleDragCancelsAndClipsWithoutPartialHistory) {
     HeadlessImGui ui;
     TilemapEditDocument doc = Doc();

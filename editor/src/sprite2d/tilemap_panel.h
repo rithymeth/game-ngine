@@ -40,6 +40,7 @@ public:
 
 private:
     void ResetView();
+    void FinishCanvasGesture();
     void DrawPalette();
     bool DrawTileArt(ImDrawList* draw, ImVec2 a, ImVec2 b, i32 tile) const;
     void DrawTools();
@@ -70,6 +71,7 @@ private:
     std::optional<f32> zoom_before_slider_;
     static constexpr f32 kDefaultZoom = 24.0f, kDefaultPan = 8.0f;
     f64 pan_x_ = kDefaultPan, pan_y_ = kDefaultPan;
+    int last_draw_frame_ = -1;
     bool dragging_ = false;
     bool brush_uses_right_ = false;
     struct BrushSample {

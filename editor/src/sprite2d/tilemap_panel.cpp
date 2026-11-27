@@ -213,11 +213,21 @@ void TilemapPanel::ResetView() {
 void TilemapPanel::ResetForNewMap() {
     ResetView();
     selected_autotile_ = 0;
+    FinishCanvasGesture();
+}
+
+void TilemapPanel::FinishCanvasGesture() {
+    if (dragging_) doc_.EndStroke();
     shape_active_ = dragging_ = false;
     last_brush_sample_.reset();
 }
 
 void TilemapPanel::Draw() {
+    const int frame = ImGui::GetFrameCount();
+    // Don't treat a release while switching back to this pane as the end
+    // of a gesture that began before the canvas stopped being submitted.
+    if ((shape_active_ || dragging_) && frame - last_draw_frame_ > 1) FinishCanvasGesture();
+    last_draw_frame_ = frame;
     if (!pending_sheet_.pixels.empty()) {
         show_sheet_ = sheet_.Set(pending_sheet_.width, pending_sheet_.height, pending_sheet_.pixels);
         if (!show_sheet_) sheet_status_ = "Cannot upload the tileset preview. Showing numbered swatches.";
@@ -642,6 +652,7 @@ void TilemapPanel::DrawPalette() {
 void TilemapPanel::DrawCanvas() {
     if (!ImGui::BeginChild("##canvas", ImVec2(0, 0), ImGuiChildFlags_Borders,
                            ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
+        FinishCanvasGesture();
         ImGui::EndChild();
         return;
     }
@@ -654,7 +665,7 @@ void TilemapPanel::DrawCanvas() {
     ImGui::InvisibleButton("##paint", ImVec2(std::max(size.x, 1.0f), std::max(size.y, 1.0f)),
                            ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
     const bool hovered = ImGui::IsItemHovered();
-    const bool canvas_deactivated = dragging_ && ImGui::IsItemDeactivated();
+    const bool canvas_deactivated = (dragging_ || shape_active_) && ImGui::IsItemDeactivated();
     ImGuiIO& io = ImGui::GetIO();
     // Pan is measured from the canvas's bottom-left, with y pointing up.
     const auto reanchor_zoom = [&](f32 from, f32 to, f64 x, f64 y) {
@@ -837,10 +848,10 @@ void TilemapPanel::DrawCanvas() {
             shape_x_ = cx;
             shape_y_ = cy;
         }
-        const bool cancel = !mouse_valid || ImGui::IsKeyPressed(ImGuiKey_Escape) ||
+        const bool cancel = !mouse_valid || io.AppFocusLost || ImGui::IsKeyPressed(ImGuiKey_Escape) ||
                             !map.InBounds(shape_x_, shape_y_);
         if (shape_active_ && (cancel || !left)) {
-            if (!cancel && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+            if (!cancel && canvas_deactivated && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
                 if (line_tool) doc_.Line(shape_x_, shape_y_, cx, cy);
                 else doc_.Rectangle(shape_x_, shape_y_, cx, cy);
             }
