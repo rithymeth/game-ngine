@@ -62,9 +62,26 @@ SyncReport SyncProject(const SyncOptions& o) {
 
     if (!o.po_in.empty()) {
         std::vector<stdfs::path> files;
-        if (stdfs::is_directory(o.po_in, ec)) {
-            for (const auto& entry : stdfs::directory_iterator(o.po_in, ec)) {
-                if (entry.is_regular_file() && HasPoExtension(entry.path())) files.push_back(entry.path());
+        const bool po_directory = stdfs::is_directory(o.po_in, ec);
+        if (ec) {
+            r.messages.push_back("Couldn't inspect PO input " + o.po_in.string() + ": " + ec.message());
+            return r;
+        }
+        if (po_directory) {
+            for (stdfs::directory_iterator it(o.po_in, ec), end; !ec && it != end; it.increment(ec)) {
+                const auto& path = it->path();
+                if (!HasPoExtension(path)) continue;
+                const bool is_file = it->is_regular_file(ec);
+                if (ec) {
+                    r.messages.push_back("Couldn't inspect PO catalog " + path.string() + ": " + ec.message());
+                    return r;
+                }
+                if (is_file) files.push_back(path);
+            }
+            // A failed directory open can produce the end iterator just like an empty directory.
+            if (ec) {
+                r.messages.push_back("Couldn't list PO directory " + o.po_in.string() + ": " + ec.message());
+                return r;
             }
             std::sort(files.begin(), files.end());
         } else {

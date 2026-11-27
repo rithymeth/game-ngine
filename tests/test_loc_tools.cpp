@@ -361,6 +361,61 @@ AETHER_TEST(LocSync_InvalidContentRootDoesNotWriteOutputs) {
     CHECK(empty.ok && empty.gathered.entries.empty() && stdfs::exists(options.strings_file));
 }
 
+#ifndef _WIN32
+AETHER_TEST(LocSync_UnreadablePoDirectoryDoesNotWriteOutputs) {
+    const stdfs::path root = Dir("unreadable_po_folder");
+    SyncOptions options;
+    options.content_dir = root / "Content";
+    options.strings_file = options.content_dir / "Localization/strings.astrings";
+    options.po_in = root / "incoming";
+    options.po_out = root / "outgoing";
+    const std::string before = "key,en,de\nplay,Play,Spielen\n";
+    Write(options.strings_file, before);
+    stdfs::create_directories(options.po_in);
+    stdfs::permissions(options.po_in, stdfs::perms::owner_exec);
+    CHECK(stdfs::is_directory(options.po_in)); // search/stat still works
+    std::error_code listing_error;
+    const stdfs::directory_iterator listing(options.po_in, listing_error);
+
+    if (listing_error == std::errc::permission_denied) {
+        const SyncReport report = SyncProject(options);
+        CHECK(!report.ok && report.po_imported == 0 && report.po_written == 0);
+        CHECK(!report.messages.empty() && report.messages.back().find(options.po_in.string()) != std::string::npos);
+        CHECK(Slurp(options.strings_file) == before && !stdfs::exists(options.po_out));
+    } // privileged runners can list regardless of the permission bits
+
+    stdfs::permissions(options.po_in, stdfs::perms::owner_all);
+    const SyncReport empty = SyncProject(options);
+    CHECK(empty.ok && empty.po_imported == 0 && empty.po_written == 1);
+    CHECK(stdfs::is_regular_file(options.po_out / "de.po"));
+}
+
+AETHER_TEST(LocSync_PoStatusErrorDoesNotWriteOutputs) {
+    const stdfs::path root = Dir("po_status_error");
+    SyncOptions options;
+    options.content_dir = root / "Content";
+    options.strings_file = options.content_dir / "Localization/strings.astrings";
+    options.po_in = root / "incoming";
+    options.po_out = root / "outgoing";
+    const std::string before = "key,en,de\nplay,Play,Spielen\n";
+    Write(options.strings_file, before);
+    stdfs::create_directories(options.po_in);
+    const auto loop = options.po_in / "loop.PO";
+    stdfs::create_symlink(loop.filename(), loop);
+
+    const SyncReport report = SyncProject(options);
+    CHECK(!report.ok && report.po_imported == 0 && report.po_written == 0);
+    CHECK(!report.messages.empty() && report.messages.back().find(loop.string()) != std::string::npos);
+    CHECK(Slurp(options.strings_file) == before && !stdfs::exists(options.po_out));
+
+    // Unrelated files don't participate in catalog status checks.
+    stdfs::remove(loop);
+    stdfs::create_symlink("loop.txt", options.po_in / "loop.txt");
+    const SyncReport ignored = SyncProject(options);
+    CHECK(ignored.ok && ignored.po_imported == 0 && ignored.po_written == 1);
+}
+#endif
+
 AETHER_TEST(LocSync_GathersMergesAndWritesFiles) {
     const stdfs::path root = Dir("sync");
     const stdfs::path content = root / "Content";
