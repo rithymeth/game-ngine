@@ -198,6 +198,34 @@ AETHER_TEST(AudioEditor_CueDocumentEditsAndSaves) {
     std::filesystem::remove_all(dir);
 }
 
+AETHER_TEST(AudioEditor_CueSaveAsFailureKeepsTheExistingSaveTarget) {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / "aether_cue_failed_save_as";
+    fs::create_directories(dir);
+    const fs::path original = dir / "Original.acue";
+    const fs::path blocked = dir / "Blocked.acue";
+    fs::create_directory(blocked); // a directory cannot be opened as the cue file
+
+    SoundCueDocument doc;
+    doc.AddNode(CueNodeType::Wave, 0, 0, "first");
+    std::string error;
+    AETHER_CHECK(!doc.SaveAs(blocked, &error) && !error.empty());
+    AETHER_CHECK(doc.Path().empty() && doc.Name() == "Untitled Cue" && doc.Dirty());
+    AETHER_CHECK(doc.SaveAs(original) && !doc.Dirty());
+    AETHER_CHECK(!doc.SaveAs(blocked) && doc.Path() == original && !doc.Dirty());
+
+    doc.AddNode(CueNodeType::Wave, 0, 100, "second");
+    const auto undo_label = doc.UndoLabel();
+    AETHER_CHECK(!doc.SaveAs(blocked, &error));
+    AETHER_CHECK(doc.Path() == original && doc.Name() == "Original" && doc.Dirty());
+    AETHER_CHECK(doc.CanUndo() && doc.UndoLabel() == undo_label);
+    AETHER_CHECK(doc.Save() && !doc.Dirty());
+
+    SoundCueDocument reloaded;
+    AETHER_CHECK(reloaded.Load(original) && SaveCue(reloaded.Get()) == SaveCue(doc.Get()));
+    fs::remove_all(dir);
+}
+
 AETHER_TEST(AudioEditor_CueGraphViewAndEdits) {
     SoundCueDocument doc;
     const u32 cat = doc.AddNode(CueNodeType::Concatenator, 300, 0);

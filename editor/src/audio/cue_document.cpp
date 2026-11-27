@@ -31,23 +31,26 @@ bool SoundCueDocument::Load(const std::filesystem::path& path, std::string* erro
 }
 
 bool SoundCueDocument::Save(std::string* error) {
-    if (path_.empty()) {
-        if (error != nullptr) *error = "the cue has no file yet (Save As)";
-        return false;
-    }
-    std::ofstream f(path_, std::ios::binary | std::ios::trunc);
-    if (!f) {
-        if (error != nullptr) *error = "couldn't write " + path_.string();
-        return false;
-    }
-    f << audio::SaveCue(cue_);
-    dirty_ = !f.good();
-    return f.good();
+    return SaveAs(path_, error);
 }
 
 bool SoundCueDocument::SaveAs(const std::filesystem::path& path, std::string* error) {
+    if (path.empty()) {
+        if (error != nullptr) *error = "the cue has no file yet (Save As)";
+        return false;
+    }
+    const auto fail = [&] {
+        if (error != nullptr) *error = "couldn't write " + path.string();
+        return false;
+    };
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    if (!f) return fail();
+    f << audio::SaveCue(cue_);
+    f.close(); // The final buffered write can fail on close.
+    if (!f) return fail();
     path_ = path;
-    return Save(error);
+    dirty_ = false;
+    return true;
 }
 void SoundCueDocument::MarkSaved() {
     dirty_ = false;
