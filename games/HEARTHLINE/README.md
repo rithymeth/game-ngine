@@ -38,10 +38,26 @@ Collect resources around the opening camp, build the bridge at x=62, cross the r
 
 The window title gives the current objective and exact inventory quantities; the HUD shows health, inventory bars, night progress, and fuel. The visuals currently use colored tile primitives, not production sprites or text rendering.
 
+
+## Browser version (Emscripten/WebAssembly)
+
+This uses the **same C++ simulation and SDL2 render source** as the native build. Activate an Emscripten SDK with `emcmake` on `PATH`, then run:
+
+```sh
+emcmake cmake -S games/HEARTHLINE -B build/hearthline-web -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DHEARTHLINE_BUILD_VISUAL=ON
+cmake --build build/hearthline-web --target hearthline_visual --parallel 2
+```
+
+The browser game is a **single-file HTML** export at `build/hearthline-web/index.html`. Serve that directory over HTTP to play it locally, for example `python3 -m http.server 8000 -d build/hearthline-web`, then open `http://localhost:8000`. Browsers may reject local `file://` loads.
+
+The page includes a responsive canvas, current objectives/inventory text, touchscreen action and movement buttons, and fullscreen control. Keyboard focus is attached to the canvas. The browser build runs an Emscripten animation-frame callback rather than the native blocking event loop.
+
+GitHub Actions builds and uploads `hearthline-web` as a downloadable workflow artifact (when CI succeeds). A passing WebAssembly compile check does **not** substitute for testing gameplay interactively across actual browsers and mobile devices.
+
 ## Implementation and limitations
 
 - Deterministic **512 x 512** tile terrain with a designated **128 x 128** expedition area. `kLayerCount = 3` is reserved, but the current terrain grid is a single array and not yet three independently authored tile layers.
 - Shared gameplay simulation in `src/game.cpp`; the SDL2 host in `src/visual_main.cpp` draws only visible tiles around the player and sends keyboard actions to the same core.
 - Three seeded regression expeditions run in CTest; CI also verifies SDL2 headless startup.
-- This is a **native graphical prototype**, not yet a WebAssembly/browser export, Aether sprite-batch renderer, or tested commercial-quality experience.
+- This is a native SDL2 graphical prototype with an experimental Emscripten browser export; it is not yet an Aether sprite-batch renderer or a tested commercial-quality experience.
 - No sprites, sounds, save/load, world streaming, generalized relay solver, or benchmarked 60 FPS guarantee.
