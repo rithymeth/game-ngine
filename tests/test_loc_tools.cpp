@@ -80,6 +80,35 @@ AETHER_TEST(LocGather_FindsWidgetKeysLocTextAndBlueprintLiterals) {
     CHECK(other.entries.empty());
 }
 
+AETHER_TEST(LocGather_BlueprintLinksOverrideSavedLocalizationPinDefaults) {
+    const stdfs::path content = Dir("blueprint_wired");
+    Write(content / "wired.abp", R"({"graphs":[
+        {"name":"First","nodes":[
+            {"id":1,"type":"Variable.Get"},
+            {"id":2,"type":"Call.Native:Localize.GetText","defaults":{"key":"stale.key","default":"Stale"}},
+            {"id":3,"type":"Call.Native:Localize.GetText","defaults":{"key":"menu.play","default":"Old source"}}],
+         "links":[{"from":[1,"value"],"to":[2,"key"]},{"from":[1,"value"],"to":[3,"default"]}]},
+        {"name":"Second","nodes":[
+            {"id":2,"type":"Call.Native:Localize.GetText","defaults":{"key":"menu.quit","default":"Quit"}}],
+         "links":[]}]})");
+    const GatherReport report = GatherContent(content);
+    CHECK(!Find(report, "stale.key"));
+    const GatheredText* play = Find(report, "menu.play");
+    const GatheredText* quit = Find(report, "menu.quit");
+    CHECK(play && play->source.empty());
+    CHECK(quit && quit->source == "Quit"); // The duplicate node ID belongs to a different graph.
+    CHECK(report.warnings.size() == 1 && report.warnings[0].find("key isn't a literal") != std::string::npos);
+
+    SyncOptions options;
+    options.content_dir = content;
+    options.strings_file = content / "Localization/strings.astrings";
+    Write(options.strings_file, "key,en,fr\nmenu.play,Play,Jouer\n");
+    CHECK(SyncProject(options).ok);
+    const std::string saved = Slurp(options.strings_file);
+    CHECK(saved.find("menu.play,Play,Jouer") != std::string::npos);
+    CHECK(saved.find("stale.key") == std::string::npos);
+}
+
 AETHER_TEST(LocGather_ContentIsMergedByKeyAndConflictsWarn) {
     const stdfs::path content = Dir("content");
     Write(content / "UI/a.aui", R"({"root":{"type":"Text","text":"Play","text_key":"menu.play"}})");

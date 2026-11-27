@@ -3,6 +3,7 @@
 #include "aether/platform/filesystem.h"
 
 #include <algorithm>
+#include <limits>
 #include <map>
 
 namespace aether::loc {
@@ -27,7 +28,32 @@ bool IsLocalizeNode(const std::string& type) {
            type == "Call.Native:UI.SetTextKey";
 }
 
-void Walk(const Json& j, const std::string& where, const std::string& path, GatherReport& report) {
+struct WiredPins {
+    bool key = false;
+    bool default_text = false;
+};
+
+u32 ReadNodeId(const Json& value) {
+    if (!value.is_number_integer()) return 0;
+    const u64 id = value.get<u64>();
+    return id <= std::numeric_limits<u32>::max() ? static_cast<u32>(id) : 0;
+}
+
+std::map<u32, WiredPins> WiredLocalizationPins(const Json& links) {
+    std::map<u32, WiredPins> pins;
+    for (const Json& link : links) {
+        const auto to = link.find("to");
+        if (to == link.end() || !to->is_array() || to->size() != 2 || !(*to)[1].is_string()) continue;
+        const u32 id = ReadNodeId((*to)[0]);
+        if (id == 0) continue;
+        const auto& pin = (*to)[1].get_ref<const std::string&>();
+        if (pin == "key") pins[id].key = true;
+        if (pin == "default") pins[id].default_text = true;
+    }
+    return pins;
+}
+
+void Walk(const Json& j, const std::string& where, const std::string& path, GatherReport& report, WiredPins pins = {}) {
     if (j.is_array()) {
         usize i = 0;
         for (const Json& item : j) Walk(item, where, path + "/" + std::to_string(i++), report);
@@ -45,14 +71,32 @@ void Walk(const Json& j, const std::string& where, const std::string& path, Gath
     if (IsText(j, "hint_key")) add(j["hint_key"].get<std::string>(), IsText(j, "hint") ? j["hint"].get<std::string>() : std::string());
     if (IsText(j, "type") && IsLocalizeNode(j["type"].get<std::string>())) {
         const Json defaults = j.contains("defaults") && j["defaults"].is_object() ? j["defaults"] : Json::object();
-        if (IsText(defaults, "key") && !defaults["key"].get<std::string>().empty()) {
-            add(defaults["key"].get<std::string>(), IsText(defaults, "default") ? defaults["default"].get<std::string>() : std::string());
+        if (!pins.key && IsText(defaults, "key") && !defaults["key"].get<std::string>().empty()) {
+            const bool has_default = !pins.default_text && IsText(defaults, "default");
+            add(defaults["key"].get<std::string>(), has_default ? defaults["default"].get<std::string>() : std::string());
         } else {
             report.warnings.push_back(where + ": " + (path.empty() ? "/" : path) + ": a " + j["type"].get<std::string>() +
                                       " node's key isn't a literal, so it can't be gathered");
         }
     }
-    for (auto it = j.begin(); it != j.end(); ++it) Walk(it.value(), where, path + "/" + it.key(), report);
+    for (auto it = j.begin(); it != j.end(); ++it) {
+        const std::string child_path = path + "/" + it.key();
+        const auto links = it.key() == "nodes" && it->is_array() ? j.find("links") : j.end();
+        if (links == j.end() || !links->is_array()) {
+            Walk(it.value(), where, child_path, report);
+            continue;
+        }
+        // IDs are local to each Blueprint graph, and incoming links win over
+        // the saved defaults that are retained for when the wire is removed.
+        const auto wired = WiredLocalizationPins(*links);
+        usize index = 0;
+        for (const Json& node : *it) {
+            const auto id = node.find("id");
+            const auto found = id != node.end() ? wired.find(ReadNodeId(*id)) : wired.end();
+            Walk(node, where, child_path + "/" + std::to_string(index++), report,
+                 found == wired.end() ? WiredPins{} : found->second);
+        }
+    }
 }
 
 } // namespace
