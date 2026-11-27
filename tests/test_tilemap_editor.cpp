@@ -1200,6 +1200,34 @@ AETHER_TEST(TilemapEditor_ReordersLayersAndKeepsTheBrushOnTheSameLayer) {
     CHECK(TilemapToJson(saved) == TilemapToJson(doc.Map()));
 }
 
+AETHER_TEST(TilemapEditor_ReorderHistoryDoesNotCopyTileStorage) {
+    TilemapData map;
+    map.Resize(4, 4);
+    map.AddLayer("A");
+    map.AddLayer("B");
+    map.AddLayer("C");
+    TilemapEditDocument doc(std::move(map), {});
+    const auto* a_cells = doc.Map().layers[0].cells.data();
+    const auto* b_cells = doc.Map().layers[1].cells.data();
+    const auto* c_cells = doc.Map().layers[2].cells.data();
+    doc.active_layer = 1;
+    CHECK(doc.MoveLayer(0, 2));
+    CHECK(doc.active_layer == 0 && doc.Map().layers[2].cells.data() == a_cells);
+    doc.active_layer = 1; // An explicit selection after the move must come back on redo.
+    CHECK(doc.Undo() && !doc.dirty() && doc.active_layer == 1);
+    CHECK(doc.Map().layers[0].cells.data() == a_cells &&
+          doc.Map().layers[1].cells.data() == b_cells &&
+          doc.Map().layers[2].cells.data() == c_cells);
+    doc.active_layer = 2;
+    CHECK(doc.Redo() && doc.active_layer == 1);
+    CHECK(doc.Map().layers[0].cells.data() == b_cells &&
+          doc.Map().layers[1].cells.data() == c_cells &&
+          doc.Map().layers[2].cells.data() == a_cells);
+    CHECK(doc.Undo() && doc.active_layer == 2);
+    CHECK(doc.MoveLayer(2, 0) && !doc.CanRedo() && doc.active_layer == 0);
+    CHECK(doc.Map().layers[0].cells.data() == c_cells);
+}
+
 AETHER_TEST(TilemapEditor_DuplicatesLayerIndependentlyAboveSource) {
     TilemapData map;
     map.Resize(2, 2);

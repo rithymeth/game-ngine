@@ -93,13 +93,18 @@ private:
         std::string name;
         bool collides;
     };
+    struct LayerMove {
+        usize from, to;
+        usize selection;
+    };
     struct HistoryEntry {
-        std::variant<Snapshot, CellEdits, LayerProperties> edit;
+        std::variant<Snapshot, CellEdits, LayerProperties, LayerMove> edit;
         u64 state;
     };
     bool Travel(std::vector<HistoryEntry>& from, std::vector<HistoryEntry>& to);
     void Record(bool track_selection = false);
     void RecordLayerProperties(usize layer);
+    void RotateLayers(usize from, usize to);
     void Changed();
     void ClampActive();
     bool PaintCell(i32 x, i32 y, i32 value);

@@ -267,6 +267,10 @@ bool TilemapEditDocument::Travel(std::vector<HistoryEntry>& from, std::vector<Hi
         auto& layer = map_.layers[properties->layer];
         std::swap(layer.name, properties->name);
         std::swap(layer.collides, properties->collides);
+    } else if (auto* move = std::get_if<LayerMove>(&step.edit)) {
+        RotateLayers(move->from, move->to);
+        std::swap(move->from, move->to);
+        std::swap(active_layer, move->selection);
     } else {
         for (auto& [key, value] : std::get<CellEdits>(step.edit))
             std::swap(map_.layers[key.first].cells[key.second], value);
@@ -296,14 +300,21 @@ bool TilemapEditDocument::RemoveLayer(usize layer) {
     return true;
 }
 
-bool TilemapEditDocument::MoveLayer(usize from, usize to) {
-    if (in_stroke_ || from == to || from >= map_.layers.size() || to >= map_.layers.size()) return false;
-    Record(true);
+void TilemapEditDocument::RotateLayers(usize from, usize to) {
     const auto begin = map_.layers.begin();
     const auto src = begin + static_cast<std::ptrdiff_t>(from);
     const auto dst = begin + static_cast<std::ptrdiff_t>(to);
     if (from < to) std::rotate(src, src + 1, dst + 1);
     else std::rotate(dst, src, src + 1);
+}
+
+bool TilemapEditDocument::MoveLayer(usize from, usize to) {
+    if (in_stroke_ || from == to || from >= map_.layers.size() || to >= map_.layers.size()) return false;
+    // Moving whole layers is reversible without copying their tile storage.
+    undo_.push_back({LayerMove{to, from, active_layer}, state_});
+    redo_.clear();
+    Changed();
+    RotateLayers(from, to);
     if (active_layer == from) active_layer = to;
     else if (from < active_layer && active_layer <= to) --active_layer;
     else if (to <= active_layer && active_layer < from) ++active_layer;
