@@ -1533,6 +1533,55 @@ AETHER_TEST(Physics2D_RaycastChunkTraversalKeepsTiesFiltersAndLiveEdits) {
     check_nearest(trigger, 1, 1.5f);
 }
 
+AETHER_TEST(Physics2D_NearestTileRayKeepsResolverOrderAndLiveTransforms) {
+    World world;
+    TilemapData map;
+    map.tileset = Guid();
+    map.Resize(4, 1);
+    map.AddLayer("Floor");
+    map.Fill(0, 0, 0, 3, 0, 1);
+    Tileset tiles;
+    tiles.SetSolid(1, true);
+    TilemapRenderer renderer;
+    renderer.pixels_per_unit = 16.0f;
+    renderer.tilemap.guid = Guid();
+    world.CreateEntity(renderer);
+    world.CreateEntity(Transform{});
+    const auto first = Guid();
+    const auto floor = Guid();
+    renderer.tilemap.guid = first;
+    world.CreateEntity(Transform{Vec3(-100, 0, 0), Quaternion::Identity()}, renderer);
+    renderer.tilemap.guid = floor;
+    const auto floor_entity = world.CreateEntity(Transform{Vec3(100, 0, 0), Quaternion::Identity()}, renderer);
+
+    std::vector<assets::AssetGuid> calls;
+    bool move_floor = true;
+    Resolvers2D resolvers;
+    resolvers.tilemaps = [&](const assets::AssetGuid& id) -> const TilemapData* {
+        calls.push_back(id);
+        if (id == first) {
+            if (move_floor) world.GetComponent<Transform>(floor_entity)->position.x = 3;
+            return nullptr;
+        }
+        return id == floor ? &map : nullptr;
+    };
+    resolvers.tilesets = [&](const assets::AssetGuid& id) -> const Tileset* {
+        calls.push_back(id);
+        return id == map.tileset ? &tiles : nullptr;
+    };
+    Physics2D physics(world, resolvers);
+    RayHit2D hit;
+    CHECK(physics.Raycast({0, 0.5f}, {1, 0}, 10, hit));
+    CHECK(hit.tile && hit.tile_x == 0 && hit.tile_y == 0 && hit.distance == 3.0f);
+    CHECK(calls == (std::vector<assets::AssetGuid>{first, floor, map.tileset}));
+
+    calls.clear();
+    move_floor = false;
+    world.RemoveComponent<Transform>(floor_entity);
+    CHECK(!physics.Raycast({0, 0.5f}, {1, 0}, 10, hit));
+    CHECK(calls == (std::vector<assets::AssetGuid>{first}));
+}
+
 AETHER_TEST(Physics2D_RaycastsAndOverlaps) {
     World world;
     Tileset ts;

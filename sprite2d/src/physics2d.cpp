@@ -125,6 +125,20 @@ void EachEntity(const World& world, F&& f) {
 }
 
 template <typename F>
+void EachTilemapEntity(const World& world, F&& f) {
+    const auto transform_id = GetComponentId<Transform>();
+    const auto renderer_id = GetComponentId<TilemapRenderer>();
+    world.ForEachArchetype([&](const Archetype& archetype) {
+        if (!archetype.Has(transform_id) || !archetype.Has(renderer_id)) return;
+        for (usize c = 0; c < archetype.ChunkCount(); ++c) {
+            const u32 count = archetype.ChunkEntityCount(c);
+            const Entity* entities = archetype.EntityArray(c);
+            for (u32 i = 0; i < count; ++i) f(entities[i]);
+        }
+    });
+}
+
+template <typename F>
 void EachCollider(const World& world, F&& f) {
     const auto transform_id = GetComponentId<Transform>();
     const auto collider_id = GetComponentId<Collider2D>();
@@ -753,7 +767,7 @@ bool Physics2D::Raycast(Vec2 origin, Vec2 dir, f32 max_distance, RayHit2D& out, 
         }
     });
     if (tiles_.tilemaps && tiles_.tilesets && (mask & 1u) != 0) { // solid tiles are on layer 1
-        EachEntity(world_, [&](Entity e) {
+        EachTilemapEntity(world_, [&](Entity e) {
             const TilemapRenderer* r = world_.GetComponent<TilemapRenderer>(e);
             const Transform* t = world_.GetComponent<Transform>(e);
             if (!r || !t) return;
