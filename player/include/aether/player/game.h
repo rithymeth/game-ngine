@@ -546,6 +546,7 @@ private:
     void UpdateUiPointers(f32 dt);
     void ApplyVirtualControls();
     std::array<input::InputState::Pointer, input::InputState::kMaxPointers> ui_pointers_{}; // as of the last Tick
+    u64 ui_input_clear_generation_ = 0;
     std::array<bool, input::InputState::kMaxPointers> ui_pointer_used_{};                   // pressed on something the UI took
     struct HeldControl {
         const void* widget = nullptr; // identity only: the widget may be gone

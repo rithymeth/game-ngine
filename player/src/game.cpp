@@ -1586,6 +1586,19 @@ void Game::UpdateUiPointers(f32 dt) {
             break;
         }
     }
+    if (ui_input_clear_generation_ != input_state_.ClearGeneration()) {
+        // Losing focus cancels a UI gesture; treating it as a pointer-up
+        // could click whichever button was being held when focus changed.
+        ui_input_clear_generation_ = input_state_.ClearGeneration();
+        for (usize i = 0; i < ui_pointers_.size(); ++i) {
+            const auto& before = ui_pointers_[i];
+            if (i == 0 || before.down) {
+                router.CancelPointer({before.x * ui_pointer_scale_x_, before.y * ui_pointer_scale_y_}, static_cast<u32>(i));
+            }
+        }
+        ui_pointers_ = {};
+        ui_pointer_used_ = {};
+    }
     for (usize i = 0; i < input::InputState::kMaxPointers; ++i) {
         const input::InputState::Pointer now = input_state_.GetPointer(i);
         const input::InputState::Pointer before = ui_pointers_[i];

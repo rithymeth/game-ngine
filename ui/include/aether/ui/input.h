@@ -21,6 +21,7 @@ public:
     bool PointerMove(Vec2 pixel, u32 pointer = 0);
     bool PointerDown(Vec2 pixel, int button = 0, u32 pointer = 0);
     bool PointerUp(Vec2 pixel, int button = 0, u32 pointer = 0);
+    void CancelPointer(Vec2 pixel, u32 pointer = 0); // drop capture without a click or a hit test
     bool Wheel(Vec2 pixel, f32 delta); // + is away from the user (scroll up)
     bool Navigate(NavDirection direction);
     bool Accept();

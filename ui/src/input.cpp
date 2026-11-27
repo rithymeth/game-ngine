@@ -199,6 +199,23 @@ bool UIInputRouter::PointerUp(Vec2 pixel, int button, u32 pointer) {
     return true;
 }
 
+void UIInputRouter::CancelPointer(Vec2 pixel, u32 pointer) {
+    Sanitize();
+    if (Widget* c = Captured(pointer)) {
+        captured_.erase(pointer);
+        Dispatch d(dispatching_);
+        c->OnPointerUp({ToLayout(pixel), 0, pointer}, false, *this);
+    }
+    Finish();
+    Sanitize();
+    if (pointer == 0) {
+        SetHovered(nullptr);
+        tooltip_source_ = nullptr;
+        hover_time_ = 0.0f;
+        HideTooltip();
+    }
+}
+
 bool UIInputRouter::Wheel(Vec2 pixel, f32 delta) {
     Sanitize();
     Widget* hit = viewport_.HitTest(pixel);

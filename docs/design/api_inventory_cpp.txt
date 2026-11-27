@@ -2902,6 +2902,7 @@
   i32 TouchSlot(u32 touch_id,bool create)
   public:void SetButton(Key key,bool down)
   static usize Index(Key key)
+  u64 ClearGeneration()const
   void AddMouseDelta(f32 dx,f32 dy)
   void AddWheel(f32 delta)
   void Clear()
@@ -7258,6 +7259,7 @@
   static bool Within(const Widget*w,const Widget*root)
   static void SetModal(input::InputSystem&system,bool modal,i32 priority=1000)
   std::vector<Widget*>Candidates()const
+  void CancelPointer(Vec2 pixel,u32 pointer=0)
   void ClearFocus()
   void ClosePopup()
   void Finish()

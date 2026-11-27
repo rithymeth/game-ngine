@@ -164,7 +164,11 @@ public:
         values_.fill(0.0f);
         pointers_ = {};
         touch_ids_ = {};
+        ++clear_generation_;
     }
+    // Lets consumers distinguish a device reset from an ordinary release,
+    // even when new input arrives before the next update.
+    u64 ClearGeneration() const { return clear_generation_; }
 
     // --- Pointers ------------------------------------------------------------------------
     // Where the pointers are, in window pixels: the mouse is pointer 0 (always there; `down` follows its left button), and each touch takes
@@ -212,6 +216,7 @@ private:
     std::array<f32, kKeyCount> values_{};
     std::array<Pointer, kMaxPointers> pointers_{};
     std::array<TouchId, kMaxPointers> touch_ids_{};
+    u64 clear_generation_ = 0;
 };
 
 } // namespace aether::input

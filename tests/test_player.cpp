@@ -1036,6 +1036,34 @@ AETHER_TEST(Player_PointersDriveTheUiAndVirtualControls) {
     in.SetPointer(0, 200, 173, false, true);
     in.SetButton(Key::MouseLeft, false);
     game.Tick(1.0f / 60.0f);
+
+    // Alt-tabbing during a press cancels it. Regaining focus and moving
+    // over the same button before the next tick must not turn it into a click.
+    game.SetUiPointerScale(1.0f, 1.0f);
+    auto* live_button = dynamic_cast<ui::Button*>(viewport->Find("Play"));
+    live_button->hold_key = "GamepadX"; // A is also the UI Accept key.
+    int clicks = 0;
+    live_button->on_clicked = [&] { ++clicks; };
+    const WindowEvent move{.type = WindowEventType::MouseMove, .x = 150, .y = 130};
+    const WindowEvent press{.type = WindowEventType::Key, .key = Key::MouseLeft, .down = true};
+    const WindowEvent release{.type = WindowEventType::Key, .key = Key::MouseLeft, .down = false};
+    const WindowEvent lost{.type = WindowEventType::Focus, .down = false};
+    const WindowEvent gained{.type = WindowEventType::Focus, .down = true};
+    const WindowEvent down[] = {move, press};
+    ApplyWindowEvents(down, in);
+    game.Tick(1.0f / 60.0f);
+    CHECK(live_button->IsPressed() && in.IsDown(Key::GamepadX));
+    const WindowEvent alt_tab[] = {lost, gained, move};
+    ApplyWindowEvents(alt_tab, in);
+    game.Tick(1.0f / 60.0f);
+    CHECK(!live_button->IsPressed() && !in.IsDown(Key::GamepadX));
+    CHECK(clicks == 0);
+
+    ApplyWindowEvents(down, in);
+    game.Tick(1.0f / 60.0f);
+    ApplyWindowEvents(std::span{&release, 1}, in);
+    game.Tick(1.0f / 60.0f);
+    CHECK(clicks == 1);
     game.EndPlay();
 }
 
