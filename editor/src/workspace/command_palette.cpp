@@ -21,9 +21,10 @@ bool ContainsNoCase(std::string_view haystack, std::string_view needle) {
 
 } // namespace
 
-CommandPalette::CommandPalette(const EditorWorkspace& workspace, const assets::AssetDatabase* assets)
+CommandPalette::CommandPalette(const EditorWorkspace& workspace, const assets::AssetDatabase* assets,
+                               std::string_view initial_query)
     : workspace_(&workspace), assets_(assets) {
-    SetQuery(std::string_view{});
+    SetQuery(initial_query);
 }
 
 void CommandPalette::SetQuery(std::string_view query) {

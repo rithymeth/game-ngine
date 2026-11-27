@@ -43,7 +43,8 @@ public:
     using AssetOpener = std::function<void(const std::string& content_relative_path)>;
 
     // The workspace (and, optionally, the asset database) must outlive the palette.
-    explicit CommandPalette(const EditorWorkspace& workspace, const assets::AssetDatabase* assets = nullptr);
+    explicit CommandPalette(const EditorWorkspace& workspace, const assets::AssetDatabase* assets = nullptr,
+                            std::string_view initial_query = {});
 
     void SetAssetOpener(AssetOpener opener) { opener_ = std::move(opener); }
 

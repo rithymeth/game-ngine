@@ -523,6 +523,34 @@ AETHER_TEST(EditorWorkspace_EnterActivatesTheFirstPaletteResult) {
     }
 }
 
+AETHER_TEST(EditorWorkspace_PaletteFiltersOnlyOncePerFrame) {
+    HeadlessImGui imgui;
+    EditorWorkspace ws;
+    int label_reads = 0;
+    Command probe;
+    probe.id = "test.unmatched";
+    probe.label_now = [&] {
+        ++label_reads;
+        return std::string("Unmatched");
+    };
+    CHECK(ws.Commands().Add(std::move(probe)));
+    const auto frame = [&] { imgui.Frame([&] { ws.DrawCommandPalette(); }); };
+    ws.OpenCommandPalette();
+    frame();
+    frame();
+
+    // The probe is filtered out in the final list, so only matching reads its label.
+    label_reads = 0;
+    ImGui::GetIO().AddInputCharactersUTF8("terrain");
+    frame();
+    CHECK(ws.PaletteQuery() == "terrain");
+    CHECK(label_reads == 1);
+
+    label_reads = 0;
+    for (int i = 0; i < 60; ++i) frame();
+    CHECK(label_reads == 60);
+}
+
 // The concept's first row names the project and its save state beside the mark, and puts the user's initials in a
 // circle at the far right. The chip reads the active document, so the first unsaved edit changes its words.
 AETHER_TEST(EditorWorkspace_TheMenuBarNamesTheProjectAndItsSaveState) {
