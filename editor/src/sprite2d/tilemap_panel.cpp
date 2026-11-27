@@ -308,20 +308,27 @@ bool TilemapPanel::FocusCell(usize layer, i32 x, i32 y) {
 void TilemapPanel::DrawTools() {
     bool save_shortcut = false;
     const auto& io = ImGui::GetIO();
+    const bool show_command = native_command_ || io.ConfigMacOSXBehaviors;
     if (!dragging_ && !rect_active_ && !io.WantTextInput && !ImGui::IsAnyItemActive() &&
         !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) {
-        // ImGui maps Cmd to its logical Ctrl modifier on macOS.
-        const bool undo = ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Z);
-        const bool redo_shift = ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Z);
+        const auto shortcut = [&](ImGuiKeyChord chord) {
+            const bool ctrl = ImGui::Shortcut(ImGuiMod_Ctrl | chord);
+            // The shell leaves ImGui's global swap off. Bind raw Command
+            // (Super) locally on macOS, but not Windows/Linux Super.
+            const bool cmd = native_command_ && !io.ConfigMacOSXBehaviors && ImGui::Shortcut(ImGuiMod_Super | chord);
+            return ctrl || cmd;
+        };
+        const bool undo = shortcut(ImGuiKey_Z);
+        const bool redo_shift = shortcut(ImGuiMod_Shift | ImGuiKey_Z);
         const bool redo_alt = ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Y);
         if (undo) doc_.Undo();
         else if (redo_shift || redo_alt) doc_.Redo();
-        save_shortcut = ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_S);
+        save_shortcut = shortcut(ImGuiKey_S);
     }
     if (!doc_.TilemapFile().empty()) {
         ImGui::BeginDisabled(!doc_.dirty());
         const bool clicked = ImGui::Button("Save tilemap and tileset");
-        ImGui::SetItemTooltip("%s", io.ConfigMacOSXBehaviors ? "Save (Cmd+S)" : "Save (Ctrl+S)");
+        ImGui::SetItemTooltip("%s", show_command ? "Save (Cmd+S)" : "Save (Ctrl+S)");
         if (clicked || (save_shortcut && doc_.dirty())) {
             save_error_.clear();
             if (!doc_.Save(&save_error_) && save_error_.empty()) save_error_ = "Could not save the tilemap and tileset.";
@@ -348,12 +355,12 @@ void TilemapPanel::DrawTools() {
     ImGui::SameLine();
     ImGui::BeginDisabled(!doc_.CanUndo());
     if (ImGui::Button("Undo")) doc_.Undo();
-    ImGui::SetItemTooltip("%s", ImGui::GetIO().ConfigMacOSXBehaviors ? "Undo (Cmd+Z)" : "Undo (Ctrl+Z)");
+    ImGui::SetItemTooltip("%s", show_command ? "Undo (Cmd+Z)" : "Undo (Ctrl+Z)");
     ImGui::EndDisabled();
     ImGui::SameLine();
     ImGui::BeginDisabled(!doc_.CanRedo());
     if (ImGui::Button("Redo")) doc_.Redo();
-    ImGui::SetItemTooltip("%s", ImGui::GetIO().ConfigMacOSXBehaviors ? "Redo (Cmd+Shift+Z)" : "Redo (Ctrl+Y or Ctrl+Shift+Z)");
+    ImGui::SetItemTooltip("%s", show_command ? "Redo (Cmd+Shift+Z)" : "Redo (Ctrl+Y or Ctrl+Shift+Z)");
     ImGui::EndDisabled();
     ImGui::SameLine();
     ImGui::Checkbox("Grid", &show_grid);

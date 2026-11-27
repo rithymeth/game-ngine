@@ -4,6 +4,7 @@
 #include "aether/assets/png_writer.h"
 #include "aether/project/project.h"
 #include "core/editor_document.h"
+#include "host/imgui_window_input.h"
 #include "packaging/build_window.h"
 #include "packaging/new_project_panel.h"
 #include "sprite2d/tilemap_document.h"
@@ -1903,6 +1904,75 @@ AETHER_TEST(TilemapEditor_SaveShortcutWritesBothAssetsAndKeepsFailedEdits) {
     CHECK(LoadTileset(tileset_file, tiles) && tiles.IsSolid(4));
     CHECK(doc.CanUndo());
     fs::remove_all(dir);
+}
+
+AETHER_TEST(TilemapEditor_CommandShortcutsUseTheRealWindowInputBridge) {
+    namespace fs = std::filesystem;
+    using input::Key;
+    for (const bool native_command : {true, false}) {
+        const auto dir = fs::temp_directory_path() / ("tilemap-command-keys-" + assets::ToString(assets::NewAssetGuid()));
+        const auto map_file = dir / "Map.atilemap";
+        const auto tileset_file = dir / "Ground.atileset";
+        HeadlessImGui ui; // matches the shell: no global macOS modifier remapping
+        auto doc = Doc();
+        TilemapPanel panel(doc, native_command);
+        ImGuiWindowInput bridge;
+        ImGuiIO& io = ImGui::GetIO();
+        const Key left_command = KeyFromGlfwKey(343);
+        const Key right_command = KeyFromGlfwKey(347);
+        CHECK(!io.ConfigMacOSXBehaviors && left_command == Key::LeftSuper && right_command == Key::RightSuper);
+        const auto draw = [&] { panel.Draw(); };
+        const auto press = [&](Key modifier, Key key, bool shift = false, bool ctrl = false) {
+            const auto send = [&](bool down) {
+                const auto event = [&](Key k) {
+                    WindowEvent e{};
+                    e.type = WindowEventType::Key;
+                    e.key = k;
+                    e.down = down;
+                    return e;
+                };
+                std::vector<WindowEvent> events{event(modifier)};
+                if (shift) events.push_back(event(Key::LeftShift));
+                if (ctrl) events.push_back(event(Key::LeftCtrl));
+                events.push_back(event(key));
+                bridge.Feed(events, io);
+                ui.Frame(draw);
+            };
+            send(true);
+            send(false);
+        };
+
+        doc.brush = 3;
+        doc.Apply(1, 1);
+        if (!doc.Save(map_file, tileset_file)) { CHECK(false); return; }
+        doc.brush = 4;
+        doc.Apply(1, 1);
+        ui.Frame(draw);
+        ui.Frame([&] { ImGui::SetWindowFocus(); draw(); });
+        ui.Frame(draw);
+
+        press(left_command, Key::S);
+        TilemapData reloaded;
+        CHECK(doc.dirty() == !native_command);
+        CHECK(LoadTilemap(map_file, reloaded) && reloaded.Get(0, 1, 1) == (native_command ? 4 : 3));
+
+        press(left_command, Key::Z, false, true);
+        CHECK(doc.Map().Get(0, 1, 1) == 4); // extra modifiers must not trigger ordinary shortcuts
+        press(left_command, Key::Z);
+        CHECK(doc.Map().Get(0, 1, 1) == (native_command ? 3 : 4));
+        if (native_command) doc.Redo(); // reset the edit so Ctrl also proves it can undo on macOS
+        press(Key::LeftCtrl, Key::Z);
+        CHECK(doc.Map().Get(0, 1, 1) == 3);
+        press(right_command, Key::Z, true);
+        CHECK(doc.Map().Get(0, 1, 1) == (native_command ? 4 : 3));
+        if (!native_command) press(Key::LeftCtrl, Key::Y);
+        CHECK(doc.Map().Get(0, 1, 1) == 4);
+        press(Key::LeftCtrl, Key::Z);
+        CHECK(doc.Map().Get(0, 1, 1) == 3);
+        press(Key::LeftCtrl, Key::S);
+        CHECK(!doc.dirty() && LoadTilemap(map_file, reloaded) && reloaded.Get(0, 1, 1) == 3);
+        fs::remove_all(dir);
+    }
 }
 
 AETHER_TEST(TilemapEditor_MissingAutotileBrushCannotPaintAfterUndo) {
