@@ -1,5 +1,6 @@
 #include "aether/save/save_system.h"
 #include "aether/core/json_util.h"
+#include "envelope_detail.h"
 
 #include "aether/core/log.h"
 #include "aether/save/envelope.h"
@@ -123,11 +124,17 @@ std::vector<SlotInfo> SaveSystem::ListSlots() const {
             const Json j = Json::parse(bytes.begin(), bytes.end(), nullptr, false);
             if (JsonString(j, "$type") == kKind) {
                 const auto type = j.find("type");
-                u64 timestamp = 0, version = 0;
-                if ((type == j.end() || type->is_string()) &&
+                const auto payload = j.find("data");
+                const auto checksum = j.find("checksum");
+                u64 timestamp = 0, version = 0, format = 0;
+                // Validate the envelope without needing the game's reflected type.
+                if (type != j.end() && type->is_string() && !type->get_ref<const std::string&>().empty() &&
+                    payload != j.end() && checksum != j.end() && checksum->is_string() &&
+                    ReadSlotNumber(j, "format", envelope::kFormat, format) && format > 0 &&
                     ReadSlotNumber(j, "timestamp_utc", std::numeric_limits<u64>::max(), timestamp) &&
-                    ReadSlotNumber(j, "type_version", std::numeric_limits<u16>::max(), version)) {
-                    if (type != j.end()) info.type = type->get<std::string>();
+                    ReadSlotNumber(j, "type_version", std::numeric_limits<u16>::max(), version) &&
+                    *checksum == envelope::detail::ChecksumText(payload->dump())) {
+                    info.type = type->get<std::string>();
                     info.timestamp = timestamp;
                     info.version = static_cast<u16>(version);
                     info.valid = true;

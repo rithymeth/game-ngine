@@ -1,32 +1,17 @@
 #include "aether/save/envelope.h"
 #include "aether/core/json_util.h"
+#include "envelope_detail.h"
 
 #include "aether/core/log.h"
-#include "aether/pak/pak.h"
 #include "aether/platform/filesystem.h"
 #include "aether/reflection/serialize.h"
 
-#include <cstdio>
 #include <ctime>
 
 namespace aether::save::envelope {
 
 namespace stdfs = std::filesystem;
 using reflect::Json;
-
-namespace {
-
-u32 Checksum(const std::string& text) {
-    return pak::Crc32(std::span<const u8>(reinterpret_cast<const u8*>(text.data()), text.size()));
-}
-
-std::string Hex(u32 value) {
-    char buf[16];
-    std::snprintf(buf, sizeof buf, "%08x", value);
-    return buf;
-}
-
-} // namespace
 
 SaveResult Fail(SaveError error, std::string message) {
     SaveResult r;
@@ -51,7 +36,7 @@ std::string Make(std::string_view kind, std::string_view name, const reflect::Ty
                      {"type_version", type.version},
                      {"slot", std::string(name)},
                      {"timestamp_utc", static_cast<u64>(std::time(nullptr))},
-                     {"checksum", Hex(Checksum(dumped))},
+                     {"checksum", detail::ChecksumText(dumped)},
                      {"data", std::move(data)}};
     return envelope.dump(2);
 }
@@ -146,7 +131,7 @@ EnvelopeInfo InspectBytes(std::span<const u8> bytes) {
     }
     info.ok = true;
     info.data = j["data"];
-    info.checksum_ok = info.checksum_stored == Hex(Checksum(info.data.dump()));
+    info.checksum_ok = info.checksum_stored == detail::ChecksumText(info.data.dump());
     return info;
 }
 
@@ -174,7 +159,7 @@ SaveResult ReadFromMemory(std::span<const u8> bytes, const std::string& source, 
         if (envelope.value("format", 0u) == 0 || envelope.value("format", 0u) > kFormat) {
             return Fail(SaveError::Corrupt, source + " has a file format this version doesn't know");
         }
-        if (envelope.value("checksum", "") != Hex(Checksum(envelope["data"].dump()))) {
+        if (envelope.value("checksum", "") != detail::ChecksumText(envelope["data"].dump())) {
             return Fail(SaveError::Corrupt, source + " has been changed or damaged (its checksum doesn't match)");
         }
         if (envelope.value("type", "") != type.name) {

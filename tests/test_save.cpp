@@ -214,6 +214,33 @@ AETHER_TEST(Save_SlotListKeepsGoodSavesWhenOtherHeadersAreDamaged) {
     CHECK(saves.Load("good", loaded).ok && SameProfile(loaded, profile));
 }
 
+AETHER_TEST(Save_SlotListDoesNotAdvertiseDamagedPayloadsAsValid) {
+    SaveSystem saves(Dir("BadPayloadList"));
+    const auto profile = Sample();
+    CHECK(saves.Save("good", profile).ok);
+    const auto good = reflect::Json::parse(ReadAll(saves.Directory() / "good.asav"));
+    auto tampered = good;
+    tampered["data"]["level"] = 99;
+    WriteAll(saves.Directory() / "tampered.asav", tampered.dump());
+    auto no_data = good;
+    no_data.erase("data");
+    WriteAll(saves.Directory() / "no_data.asav", no_data.dump());
+    auto future_format = good;
+    future_format["format"] = envelope::kFormat + 1;
+    WriteAll(saves.Directory() / "future_format.asav.bak", future_format.dump());
+
+    const auto slots = saves.ListSlots();
+    CHECK(slots.size() == 4);
+    for (const auto& slot : slots) {
+        CHECK(slot.bytes > 0);
+        CHECK(slot.valid == (slot.slot == "good"));
+    }
+    CHECK(saves.Exists("future_format"));
+    save_test::Profile loaded;
+    for (const auto* slot : {"tampered", "no_data", "future_format"})
+        CHECK(!saves.Load(slot, loaded).ok);
+}
+
 AETHER_TEST(Save_WritesAreAtomicAndLeaveNoTempFile) {
     const stdfs::path dir = Dir("Atomic");
     SaveSystem saves(dir);
