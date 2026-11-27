@@ -496,13 +496,20 @@ void Physics2D::Step(f32 dt) {
     };
     std::vector<MapInfo> maps;
     if (tiles_.tilemaps && tiles_.tilesets) {
-        for (Entity e : [&] {
-                 std::vector<Entity> v;
-                 EachEntity(world_, [&](Entity x) {
-                     if (world_.GetComponent<TilemapRenderer>(x) && world_.GetComponent<Transform>(x)) v.push_back(x);
-                 });
-                 return v;
-             }()) {
+        const auto renderer_id = GetComponentId<TilemapRenderer>();
+        std::vector<Entity> tilemap_entities;
+        // Keep resolution separate from enumeration: user callbacks run only
+        // after the ordered list of candidate entities is complete.
+        world_.ForEachArchetype([&](const Archetype& archetype) {
+            if (!archetype.Has(renderer_id) || !archetype.Has(transform_id)) return;
+            for (usize chunk = 0; chunk < archetype.ChunkCount(); ++chunk) {
+                const u32 count = archetype.ChunkEntityCount(chunk);
+                if (count == 0) continue;
+                const Entity* entities = archetype.EntityArray(chunk);
+                tilemap_entities.insert(tilemap_entities.end(), entities, entities + count);
+            }
+        });
+        for (Entity e : tilemap_entities) {
             const TilemapRenderer* r = world_.GetComponent<TilemapRenderer>(e);
             const Transform* t = world_.GetComponent<Transform>(e);
             const TilemapData* map = tiles_.tilemaps(r->tilemap.guid);
