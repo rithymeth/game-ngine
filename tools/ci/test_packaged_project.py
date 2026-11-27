@@ -502,6 +502,23 @@ def main():
             if compare_traces(legacy, legacy, 0).get("route_verified") is not False:
                 raise RuntimeError("old logs silently claimed route verification")
             compare_traces(original_trace, legacy, 2)
+            # An intact trace with the wrong status is not evidence and must not export an overlay.
+            inconsistent = root / "Inconsistent Verdict.txt"
+            rejected_overlay = root / "Inconsistent Overlay.json"
+            for source, status in ((original_trace, "missed"), (changed_trace, "pass")):
+                verdict_prefix = "Jump Proof: "
+                lines = source.read_text(encoding="utf-8").splitlines()
+                if sum(line.startswith(verdict_prefix) for line in lines) != 1:
+                    raise RuntimeError("trace did not include exactly one verdict")
+                inconsistent.write_text("\n".join(
+                    verdict_prefix + json.dumps({**json.loads(line.removeprefix(verdict_prefix)), "status": status})
+                    if line.startswith(verdict_prefix) else line for line in lines), encoding="utf-8")
+                result = subprocess.run([sys.executable, compare, inconsistent, inconsistent,
+                                         "--overlay-data", "--output", rejected_overlay],
+                                        cwd=empty_cwd, capture_output=True, text=True, timeout=10)
+                if (result.returncode != 2 or "verdict disagrees with the route target" not in result.stderr
+                        or rejected_overlay.exists()):
+                    raise RuntimeError("inconsistent verdict was accepted: " + result.stdout + result.stderr)
             truncated = root / "Truncated.txt"
             truncated.write_text("\n".join(original_trace.read_text(encoding="utf-8").splitlines()[:-1]), encoding="utf-8")
             compare_traces(original_trace, truncated, 2)
