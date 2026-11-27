@@ -1349,6 +1349,47 @@ AETHER_TEST(Physics2D_RaycastsAndOverlaps) {
     CHECK(physics.OverlapBox({-5, -5}, {1, 1}).empty());
 }
 
+AETHER_TEST(Physics2D_VisualTilemapsDoNotHideLiveCollisionChanges) {
+    World world;
+    Tileset tiles;
+    tiles.tile_width = tiles.tile_height = 16;
+    TilemapData map;
+    map.Resize(8, 4);
+    map.AddLayer("Decor");
+    map.AddLayer("Floor");
+    map.layers[0].collides = map.layers[1].collides = false;
+    map.Set(0, 2, 1, 7);
+    map.Set(1, 4, 1, 7);
+    Resolvers2D resolvers;
+    resolvers.tilemaps = [&](const assets::AssetGuid&) { return &map; };
+    resolvers.tilesets = [&](const assets::AssetGuid&) { return &tiles; };
+    TilemapRenderer renderer;
+    renderer.pixels_per_unit = 16.0f;
+    world.CreateEntity(Transform{Vec3(0, 0, 0), Quaternion::Identity()}, renderer);
+    Physics2D physics(world, resolvers);
+
+    const Vec2 origin{0.5f, 1.5f}, direction{1.0f, 0.0f};
+    const auto check_casts = [&](bool expected) {
+        RayHit2D hit;
+        CHECK(physics.Raycast(origin, direction, 8.0f, hit) == expected);
+        if (expected) CHECK(hit.tile && hit.tile_x == 4 && hit.tile_y == 1);
+        const auto all = physics.RaycastAll(origin, direction, 8.0f);
+        CHECK(all.size() == (expected ? 1u : 0u));
+        if (!all.empty()) CHECK(all.front().tile && all.front().tile_x == 4);
+        CHECK(physics.CircleCast(origin, direction, 0.25f, 8.0f, hit) == expected);
+        if (expected) CHECK(hit.tile && hit.tile_x == 4);
+        CHECK(physics.BoxCast(origin, {0.25f, 0.25f}, direction, 8.0f, hit) == expected);
+        if (expected) CHECK(hit.tile && hit.tile_x == 4);
+    };
+    check_casts(false);
+    map.layers[1].collides = true;
+    check_casts(false); // The tileset does not yet mark any tile solid.
+    tiles.SetSolid(7, true);
+    check_casts(true);
+    map.layers[1].collides = false;
+    check_casts(false); // The tileset is solid, but both layers are visual.
+}
+
 AETHER_TEST(Physics2D_CastsHitClosedTileEdges) {
     World world;
     Tileset tiles;

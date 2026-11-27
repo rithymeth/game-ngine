@@ -29,8 +29,13 @@ bool IsValidRigidbody(const Rigidbody2D& body) {
            std::isfinite(body.gravity_scale) && std::isfinite(body.linear_damping) &&
            body.linear_damping >= 0.0f && IsFinite(body.velocity);
 }
-bool TilemapGeometry(const TilemapRenderer& renderer, const Transform& transform, const Tileset& tileset,
-                     Vec2& origin, Vec2& cell_size) {
+bool CollisionTilemapGeometry(const TilemapRenderer& renderer, const Transform& transform,
+                              const TilemapData& map, const Tileset& tileset, Vec2& origin, Vec2& cell_size) {
+    // Purely visual tilemaps have no candidates. Check the current data each
+    // time so changes to the layer flags or tileset take effect immediately.
+    if (map.width == 0 || map.height == 0 || tileset.solid.empty() ||
+        std::none_of(map.layers.begin(), map.layers.end(),
+                     [](const TileLayer& layer) { return layer.collides && !layer.cells.empty(); })) return false;
     origin = {transform.position.x, transform.position.y};
     if (!IsFinite(origin) || !std::isfinite(renderer.pixels_per_unit) || renderer.pixels_per_unit <= 0.0f ||
         tileset.tile_width == 0 || tileset.tile_height == 0) return false;
@@ -410,7 +415,7 @@ void Physics2D::Step(f32 dt) {
             const TilemapData* map = tiles_.tilemaps(r->tilemap.guid);
             const Tileset* ts = map ? tiles_.tilesets(map->tileset) : nullptr;
             Vec2 map_origin{}, cell_size{};
-            if (!map || !ts || !TilemapGeometry(*r, *t, *ts, map_origin, cell_size)) continue;
+            if (!map || !ts || !CollisionTilemapGeometry(*r, *t, *map, *ts, map_origin, cell_size)) continue;
             maps.push_back({map, ts, map_origin, cell_size});
         }
     }
@@ -661,7 +666,7 @@ bool Physics2D::Raycast(Vec2 origin, Vec2 dir, f32 max_distance, RayHit2D& out, 
             const Tileset* ts = map ? tiles_.tilesets(map->tileset) : nullptr;
             if (!map || !ts) return;
             Vec2 map_origin{}, cell_size{};
-            if (!TilemapGeometry(*r, *t, *ts, map_origin, cell_size)) return;
+            if (!CollisionTilemapGeometry(*r, *t, *map, *ts, map_origin, cell_size)) return;
             const f32 cw = cell_size.x, ch = cell_size.y;
             const Vec2 end = origin + dir * best;
             const TileRange x_range = GetTileCastRange(std::min(origin.x, end.x), std::max(origin.x, end.x),
@@ -753,7 +758,7 @@ std::vector<RayHit2D> Physics2D::RaycastAll(Vec2 origin, Vec2 dir, f32 max_dista
             const Tileset* tileset = map ? tiles_.tilesets(map->tileset) : nullptr;
             if (!map || !tileset) return;
             Vec2 map_origin{}, cell_size{};
-            if (!TilemapGeometry(*renderer, *transform, *tileset, map_origin, cell_size)) return;
+            if (!CollisionTilemapGeometry(*renderer, *transform, *map, *tileset, map_origin, cell_size)) return;
             const f32 cell_width = cell_size.x, cell_height = cell_size.y;
             const TileRange x_range = GetTileCastRange(std::min(origin.x, end.x), std::max(origin.x, end.x),
                                                    map_origin.x, cell_width, map->width);
@@ -862,7 +867,7 @@ bool Physics2D::CircleCast(Vec2 origin, Vec2 dir, f32 radius, f32 max_distance, 
             const Tileset* tileset = map ? tiles_.tilesets(map->tileset) : nullptr;
             if (!map || !tileset) return;
             Vec2 map_origin{}, cell_size{};
-            if (!TilemapGeometry(*renderer, *transform, *tileset, map_origin, cell_size)) return;
+            if (!CollisionTilemapGeometry(*renderer, *transform, *map, *tileset, map_origin, cell_size)) return;
             const f32 cell_width = cell_size.x, cell_height = cell_size.y;
             const TileRange x_range = GetTileCastRange(std::min(origin.x, end.x) - radius,
                                                    std::max(origin.x, end.x) + radius,
@@ -965,7 +970,7 @@ bool Physics2D::BoxCast(Vec2 origin, Vec2 half, Vec2 dir, f32 max_distance, RayH
             const Tileset* tileset = map ? tiles_.tilesets(map->tileset) : nullptr;
             if (!map || !tileset) return;
             Vec2 map_origin{}, cell_size{};
-            if (!TilemapGeometry(*renderer, *transform, *tileset, map_origin, cell_size)) return;
+            if (!CollisionTilemapGeometry(*renderer, *transform, *map, *tileset, map_origin, cell_size)) return;
             const f32 cell_width = cell_size.x, cell_height = cell_size.y;
             const TileRange x_range = GetTileCastRange(std::min(origin.x, end.x) - half.x,
                                                    std::max(origin.x, end.x) + half.x,
