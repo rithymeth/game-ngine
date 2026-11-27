@@ -124,6 +124,23 @@ void EachEntity(const World& world, F&& f) {
     });
 }
 
+template <typename F>
+void EachCollider(const World& world, F&& f) {
+    const auto transform_id = GetComponentId<Transform>();
+    const auto collider_id = GetComponentId<Collider2D>();
+    world.ForEachArchetype([&](const Archetype& archetype) {
+        if (!archetype.Has(transform_id) || !archetype.Has(collider_id)) return;
+        for (usize c = 0; c < archetype.ChunkCount(); ++c) {
+            const u32 count = archetype.ChunkEntityCount(c);
+            if (count == 0) continue;
+            const Entity* entities = archetype.EntityArray(c);
+            const auto* transforms = static_cast<const Transform*>(archetype.ComponentArray(c, transform_id));
+            const auto* colliders = static_cast<const Collider2D*>(archetype.ComponentArray(c, collider_id));
+            for (u32 i = 0; i < count; ++i) f(entities[i], transforms[i], colliders[i]);
+        }
+    });
+}
+
 u64 Key(Entity e) { return (static_cast<u64>(e.generation) << 32) | e.index; }
 bool RayHitBefore(const RayHit2D& a, const RayHit2D& b) {
     if (a.distance != b.distance) return a.distance < b.distance;
@@ -710,19 +727,17 @@ bool Physics2D::Raycast(Vec2 origin, Vec2 dir, f32 max_distance, RayHit2D& out, 
     dir = dir * (1.0f / len);
     f32 best = max_distance;
     bool found = false;
-    EachEntity(world_, [&](Entity e) {
-        const Transform* t = world_.GetComponent<Transform>(e);
-        const Collider2D* c = world_.GetComponent<Collider2D>(e);
-        if (!t || !c || !IsValidCollider(*c, *t) || c->trigger || (c->layer & mask) == 0) return;
-        const Vec2 center{t->position.x + c->offset.x, t->position.y + c->offset.y};
+    EachCollider(world_, [&](Entity e, const Transform& t, const Collider2D& c) {
+        if (!IsValidCollider(c, t) || c.trigger || (c.layer & mask) == 0) return;
+        const Vec2 center{t.position.x + c.offset.x, t.position.y + c.offset.y};
         f32 hit_t = 0;
         Vec2 n{};
         bool hit = false;
-        if (c->shape == Shape2D::Box) {
-            hit = SlabRay(origin, dir, {center.x - c->half_extents.x, center.y - c->half_extents.y},
-                          {center.x + c->half_extents.x, center.y + c->half_extents.y}, best, hit_t, n);
+        if (c.shape == Shape2D::Box) {
+            hit = SlabRay(origin, dir, {center.x - c.half_extents.x, center.y - c.half_extents.y},
+                          {center.x + c.half_extents.x, center.y + c.half_extents.y}, best, hit_t, n);
         } else {
-            hit = SweepCircle(origin, dir, center, c->radius, best, hit_t, n);
+            hit = SweepCircle(origin, dir, center, c.radius, best, hit_t, n);
         }
         if (hit && hit_t <= best) {
             RayHit2D candidate;

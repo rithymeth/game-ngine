@@ -1499,6 +1499,40 @@ AETHER_TEST(Physics2D_TilemapCollisionAndWalls) {
     CHECK(tile_begin);
 }
 
+AETHER_TEST(Physics2D_RaycastChunkTraversalKeepsTiesFiltersAndLiveEdits) {
+    World world;
+    const Entity first = world.CreateEntity(); // lower ID, inserted into collider storage later
+    Collider2D collider;
+    const Transform at_four{Vec3(4, 0, 0), Quaternion::Identity()};
+    const Entity second = world.CreateEntity(at_four, collider);
+    world.CreateEntity(Transform{Vec3(1, 0, 0), Quaternion::Identity()});
+    world.CreateEntity(collider); // insufficient without a transform
+    world.AddComponent<Transform>(first, at_four);
+    world.AddComponent<Collider2D>(first, collider);
+    const Entity trigger = world.CreateEntity(Transform{Vec3(2, 0, 0), Quaternion::Identity()}, collider);
+    world.GetComponent<Collider2D>(trigger)->trigger = true;
+    const Entity other_layer = world.CreateEntity(Transform{Vec3(3, 0, 0), Quaternion::Identity()}, collider);
+    world.GetComponent<Collider2D>(other_layer)->layer = 2;
+
+    Physics2D physics(world);
+    const auto check_nearest = [&](Entity entity, u32 mask, f32 distance) {
+        RayHit2D hit;
+        CHECK(physics.Raycast({0, 0}, {1, 0}, 10, hit, mask));
+        CHECK(hit.entity == entity && !hit.tile && hit.distance == distance);
+        const auto all = physics.RaycastAll({0, 0}, {1, 0}, 10, mask, 1);
+        CHECK(all.size() == 1);
+        if (!all.empty())
+            CHECK(all.front().entity == hit.entity && all.front().distance == hit.distance &&
+                  all.front().normal.x == hit.normal.x && all.front().normal.y == hit.normal.y);
+    };
+    check_nearest(first, 1, 3.5f);
+    check_nearest(other_layer, 2, 2.5f);
+    world.RemoveComponent<Collider2D>(first);
+    check_nearest(second, 1, 3.5f);
+    world.GetComponent<Collider2D>(trigger)->trigger = false;
+    check_nearest(trigger, 1, 1.5f);
+}
+
 AETHER_TEST(Physics2D_RaycastsAndOverlaps) {
     World world;
     Tileset ts;
