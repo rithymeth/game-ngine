@@ -933,6 +933,12 @@ AETHER_TEST(Player_PointersDriveTheUiAndVirtualControls) {
     stick->slot.anchors = ui::Anchors::Point(0, 0);
     stick->slot.position = {400, 100};
     stick->slot.size = {200, 200};
+    auto* scroll = root->Add<ui::ScrollBox>();
+    scroll->name = "Log";
+    scroll->slot.anchors = ui::Anchors::Point(0, 0);
+    scroll->slot.position = {620, 210};
+    scroll->slot.size = {200, 100};
+    scroll->Add<ui::Spacer>(ui::Vec2{100, 360});
     root->Add<ui::Text>("idle")->name = "Status";
     const std::string layout = ui::SaveLayout(*root);
     const std::string script_guid = assets::ToString(assets::NewAssetGuid());
@@ -1068,6 +1074,32 @@ AETHER_TEST(Player_PointersDriveTheUiAndVirtualControls) {
     ApplyWindowEvents(std::span{&release, 1}, in);
     game.Tick(1.0f / 60.0f);
     CHECK(clicks == 1);
+
+    // The wheel hits and scrolls the UI at scaled pointer coordinates. It
+    // reaches gameplay only when the hovered UI did not handle the wheel.
+    input::InputMappingContext wheel_context;
+    wheel_context.name = "WheelTest";
+    wheel_context.bindings.push_back({.action = "Zoom", .key = Key::MouseWheel});
+    game.InputActions().AddAction({"Zoom", input::ActionValueType::Axis1D});
+    game.InputActions().AddContext(wheel_context);
+    auto* log = dynamic_cast<ui::ScrollBox*>(viewport->Find("Log"));
+    CHECK(log != nullptr && log->MaxOffset() > log->wheel_step);
+    if (log == nullptr) return;
+    game.SetUiPointerScale(0.75f, 0.75f);
+    const WindowEvent wheel{.type = WindowEventType::Scroll, .dy = -1.0f};
+    const WindowEvent over_log{.type = WindowEventType::MouseMove, .x = 900, .y = 300};
+    const WindowEvent log_events[] = {over_log, wheel};
+    ApplyWindowEvents(log_events, in);
+    game.Tick(1.0f / 60.0f);
+    CHECK(log->Offset() == log->wheel_step && game.InputActions().GetAxis1D("Zoom") == 0.0f);
+    game.Tick(1.0f / 60.0f);
+    CHECK(log->Offset() == log->wheel_step); // a wheel notch is applied only once
+
+    const WindowEvent over_button{.type = WindowEventType::MouseMove, .x = 200, .y = 173};
+    const WindowEvent button_events[] = {over_button, wheel};
+    ApplyWindowEvents(button_events, in);
+    game.Tick(1.0f / 60.0f);
+    CHECK(log->Offset() == log->wheel_step && game.InputActions().GetAxis1D("Zoom") == -1.0f);
     game.EndPlay();
 }
 

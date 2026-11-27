@@ -219,15 +219,19 @@ void UIInputRouter::CancelPointer(Vec2 pixel, u32 pointer) {
 bool UIInputRouter::Wheel(Vec2 pixel, f32 delta) {
     Sanitize();
     Widget* hit = viewport_.HitTest(pixel);
+    bool handled = false;
     {
         Dispatch d(dispatching_);
         for (Widget* w = hit; w != nullptr; w = w->Parent()) {
-            if (w->IsEnabled() && w->OnWheel(delta, *this)) break;
+            if (w->IsEnabled() && w->OnWheel(delta, *this)) {
+                handled = true;
+                break;
+            }
         }
     }
     Relayout(); // scroll offsets apply on layout
     Finish();
-    return hit != nullptr;
+    return handled;
 }
 
 std::vector<Widget*> UIInputRouter::Candidates() const {

@@ -1625,6 +1625,12 @@ void Game::UpdateUiPointers(f32 dt) {
         if (!now.down) ui_pointer_used_[i] = false;
         ui_pointers_[i] = now;
     }
+    const f32 wheel = input_state_.Value(input::Key::MouseWheel);
+    const auto& mouse = ui_pointers_[0];
+    if (mouse.active && wheel != 0.0f &&
+        router.Wheel({mouse.x * ui_pointer_scale_x_, mouse.y * ui_pointer_scale_y_}, wheel)) {
+        input_state_.SetAxis(input::Key::MouseWheel, 0.0f); // do not zoom gameplay behind a scrolling menu
+    }
     router.Tick(dt);
 }
 
