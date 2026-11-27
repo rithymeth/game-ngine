@@ -87,27 +87,46 @@ void BlendSpaceEditor::DrawGrid() {
     // Interaction: drag samples (snapped), drag the preview dot, right-click to add, Delete to remove.
     ImGui::InvisibleButton("##canvas", ImVec2(std::max(size.x, 1.0f), std::max(size.y, 1.0f)),
                            ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
-    const ImVec2 mouse = ImGui::GetIO().MousePos;
+    const ImGuiIO& io = ImGui::GetIO();
+    const ImVec2 mouse = io.MousePos;
+    const bool active = ImGui::IsItemActive();
     f32 px, py;
     canvas_.ScreenToParam(s, mouse.x, mouse.y, px, py);
-    if (ImGui::IsItemActivated() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+    if (!io.AppFocusLost && ImGui::IsItemActivated() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
         dragging_ = canvas_.HitTest(s, mouse.x, mouse.y);
         dragging_preview_ = dragging_ < 0;
+        drag_start_x_ = mouse.x;
+        drag_start_y_ = mouse.y;
+        drag_moved_ = false;
         if (dragging_ >= 0) {
             selected_ = dragging_;
             ++drag_id_;
         }
     }
-    if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-        if (dragging_ >= 0) {
-            // Coalesce the frames of this gesture, not every drag of this sample.
-            doc_.MoveSample(static_cast<usize>(dragging_), px, py, grid_divisions, "drag:" + std::to_string(drag_id_));
-        } else if (dragging_preview_) {
-            preview_x = std::clamp(px, s.x.min, s.x.max);
-            preview_y = s.dimensions == 2 ? std::clamp(py, s.y.min, s.y.max) : 0.0f;
+    if ((dragging_ >= 0 || dragging_preview_) && !io.AppFocusLost && ImGui::IsMousePosValid(&mouse)) {
+        const bool held_drag = active && ImGui::IsMouseDragging(ImGuiMouseButton_Left);
+        // ImGui's held-drag threshold does not see any motion delivered together with the release.
+        // Check the final distance as well, without turning a click into a snapped move.
+        const f32 dx = mouse.x - drag_start_x_, dy = mouse.y - drag_start_y_;
+        const f32 threshold = io.MouseDragThreshold;
+        const bool released_drag = ImGui::IsItemDeactivated() && ImGui::IsMouseReleased(ImGuiMouseButton_Left) &&
+                                   (drag_moved_ || dx * dx + dy * dy >= threshold * threshold);
+        if (held_drag || released_drag) {
+            drag_moved_ = true;
+            if (dragging_ >= 0) {
+                // Coalesce all input from this gesture, including the release.
+                doc_.MoveSample(static_cast<usize>(dragging_), px, py, grid_divisions, "drag:" + std::to_string(drag_id_));
+            } else {
+                preview_x = std::clamp(px, s.x.min, s.x.max);
+                preview_y = s.dimensions == 2 ? std::clamp(py, s.y.min, s.y.max) : 0.0f;
+            }
         }
     }
-    if (!ImGui::IsItemActive()) dragging_ = -1, dragging_preview_ = false;
+    if (!active || io.AppFocusLost) {
+        dragging_ = -1;
+        dragging_preview_ = false;
+        drag_moved_ = false;
+    }
     if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
         const std::string clip = clip_names_.empty() ? std::string("Clip") : clip_names_.front();
         selected_ = static_cast<i32>(doc_.AddSample(clip, Snap(px, s.x.min, s.x.max, grid_divisions), Snap(py, s.y.min, s.y.max, grid_divisions)));

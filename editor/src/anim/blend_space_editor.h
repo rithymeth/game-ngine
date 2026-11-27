@@ -35,6 +35,8 @@ private:
     i32 dragging_ = -1;
     u64 drag_id_ = 0;
     bool dragging_preview_ = false;
+    bool drag_moved_ = false;
+    f32 drag_start_x_ = 0, drag_start_y_ = 0;
 };
 
 } // namespace aether::editor

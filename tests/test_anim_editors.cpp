@@ -347,29 +347,58 @@ AETHER_TEST(AnimEditors_BlendSpaceSeparateDragsUndoSeparately) {
     frame();
     frame();
     ImGuiIO& io = ImGui::GetIO();
-    const auto move = [&](f32 x) {
+    const auto queue_pos = [&](f32 x, f32 offset = 0.0f) {
         f32 sx, sy;
         editor.Canvas().ParamToScreen(doc.Get(), x, 0.0f, sx, sy);
-        io.AddMousePosEvent(sx, sy);
-        frame();
+        io.AddMousePosEvent(sx + offset, sy);
     };
-    const auto drag = [&](f32 start, f32 through, f32 end) {
-        move(start);
+    const auto press = [&](f32 start, f32 offset = 0.0f) {
+        queue_pos(start, offset);
+        frame();
         io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
         frame();
-        move(through);
-        move(end);
-        io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
-        frame();
     };
-    drag(1.0f, 1.5f, 2.0f);
-    AETHER_CHECK(editor.Selected() == 0 && doc.Get().samples[0].x == 2.0f);
-    drag(2.0f, 2.5f, 3.0f);
+    const auto release_at = [&](f32 end) {
+        queue_pos(end);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+        frame(); // Final motion and release arrive in the same input batch.
+    };
+    press(1.0f, 3.0f);
+    queue_pos(1.0f, 5.0f); // Small pointer motion inside a normal click.
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+    frame();
+    AETHER_CHECK(editor.Selected() == 0 && doc.Get().samples[0].x == 1.0f && !doc.CanUndo() && !doc.Dirty());
+
+    press(1.0f);
+    queue_pos(1.5f);
+    frame();
+    AETHER_CHECK(doc.Get().samples[0].x == 1.5f);
+    release_at(2.0f);
+    const bool landed = doc.Get().samples[0].x == 2.0f;
+    AETHER_CHECK(landed);
+    if (!landed) return;
+    press(2.0f);
+    release_at(3.0f); // Entire movement first appears on release.
     AETHER_CHECK(doc.Get().samples[0].x == 3.0f);
     AETHER_CHECK(doc.Undo() && doc.Get().samples[0].x == 2.0f);
     AETHER_CHECK(doc.Undo() && doc.Get().samples[0].x == 1.0f && !doc.CanUndo());
     AETHER_CHECK(doc.Redo() && doc.Get().samples[0].x == 2.0f);
     AETHER_CHECK(doc.Redo() && doc.Get().samples[0].x == 3.0f && !doc.CanRedo());
+
+    press(0.0f); // An empty part of the grid moves only the preview dot.
+    release_at(0.75f);
+    AETHER_CHECK(std::fabs(editor.preview_x - 0.75f) < 0.01f && doc.Get().samples[0].x == 3.0f);
+
+    press(3.0f);
+    queue_pos(3.5f);
+    frame();
+    AETHER_CHECK(doc.Get().samples[0].x == 3.5f);
+    queue_pos(4.0f);
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+    io.AddFocusEvent(false);
+    frame();
+    AETHER_CHECK(doc.Get().samples[0].x == 3.5f); // A focus-loss release is not a final edit.
+    AETHER_CHECK(doc.Undo() && doc.Get().samples[0].x == 3.0f);
 }
 
 AETHER_TEST(AnimEditors_ClipViewerPlaybackAndNotifies) {
