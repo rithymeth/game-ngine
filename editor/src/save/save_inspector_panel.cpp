@@ -113,10 +113,10 @@ bool SaveInspectorPanel::DeleteOpen() {
 }
 
 bool SaveInspectorPanel::CopyOpen(const std::string& name, std::string* error) {
-    std::string why;
-    const bool ok = doc_.CopyTo(name, &why);
-    message_ = ok ? "Copied to " + name + "." : why;
-    if (error) *error = why;
+    copy_error_.clear();
+    const bool ok = doc_.CopyTo(name, &copy_error_);
+    message_ = ok ? "Copied to " + name + "." : "";
+    if (error) *error = copy_error_;
     Refresh();
     return ok;
 }
@@ -155,14 +155,16 @@ void SaveInspectorPanel::Draw() {
         ImGui::EndPopup();
     }
     if (open_copy_) {
+        copy_error_.clear();
         ImGui::OpenPopup("Copy save");
         open_copy_ = false;
     }
     if (ImGui::BeginPopupModal("Copy save", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::InputText("New name", &copy_name_);
+        if (ImGui::InputText("New name", &copy_name_)) copy_error_.clear();
         if (ImGui::Button("Copy") && CopyOpen(copy_name_)) ImGui::CloseCurrentPopup();
         ImGui::SameLine();
         if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+        if (!copy_error_.empty()) ImGui::TextWrapped("%s", copy_error_.c_str());
         ImGui::EndPopup();
     }
     ImGui::Separator();

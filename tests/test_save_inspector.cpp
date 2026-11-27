@@ -294,6 +294,38 @@ AETHER_TEST(SaveInspector_RescuesAnOrphanedBackupThroughCopyAs) {
     CHECK(doc.IsOpen() && doc.File() == orphan && Slurp(orphan) == original);
 }
 
+AETHER_TEST(SaveInspector_CopyErrorIsVisibleInsideTheModal) {
+    HeadlessImGui ui;
+    const auto file = MakeBagSave(Dir("panel_copy_error"));
+    SaveInspectorDocument doc;
+    SaveInspectorPanel panel(doc);
+    panel.SetDirectory(file.parent_path());
+    CHECK(doc.Open(file));
+    std::string rendered;
+    auto& platform = ImGui::GetPlatformIO();
+    platform.Platform_ClipboardUserData = &rendered;
+    platform.Platform_SetClipboardTextFn = [](ImGuiContext*, const char* text) {
+        *static_cast<std::string*>(ImGui::GetPlatformIO().Platform_ClipboardUserData) = text;
+    };
+
+    ui.Frame([&] {
+        ImGui::OpenPopup("Copy save");
+        panel.Draw();
+    });
+    std::string reason;
+    CHECK(!panel.CopyOpen("slot1", &reason) && !reason.empty());
+    ui.Frame([&] {
+        ImGui::LogToClipboard();
+        panel.Draw();
+        ImGui::LogFinish();
+        CHECK(ImGui::IsPopupOpen("Copy save"));
+    });
+    const auto input = rendered.find("New name");
+    const auto error = rendered.find(reason);
+    CHECK(input != std::string::npos && error != std::string::npos);
+    CHECK(error > input); // the message was drawn inside the popup, after its input
+}
+
 AETHER_TEST(SaveInspector_PanelDeleteRescans) {
     const stdfs::path dir = Dir("panel_delete");
     const stdfs::path file = MakeBagSave(dir);

@@ -53,6 +53,7 @@ private:
     std::filesystem::path directory_;
     std::vector<Entry> entries_;
     std::string copy_name_;
+    std::string copy_error_;
     std::string message_;
     bool confirm_delete_ = false;
     bool open_copy_ = false;
