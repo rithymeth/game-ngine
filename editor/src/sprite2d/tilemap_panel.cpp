@@ -591,7 +591,20 @@ void TilemapPanel::DrawPalette() {
         selected_autotile_ = static_cast<int>(n);
         pick_brush(AutotileCell(n));
     }
-    if (selected_autotile_ >= 0 && static_cast<usize>(selected_autotile_) < ts.autotiles.size() && doc_.brush >= 0) {
+    const bool has_selected_rule = selected_autotile_ >= 0 && static_cast<usize>(selected_autotile_) < ts.autotiles.size();
+    if (has_selected_rule) {
+        const auto index = static_cast<usize>(selected_autotile_);
+        ImGui::PushID("autotile-name");
+        ImGui::PushID(selected_autotile_);
+        std::string name = ts.autotiles[index].name;
+        ImGui::SetNextItemWidth(122.0f);
+        if (ImGui::InputText("Rule name", &name, ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll))
+            doc_.RenameAutotile(index, name);
+        ImGui::SetItemTooltip("Enter saves a nonblank name. Escape cancels.");
+        ImGui::PopID();
+        ImGui::PopID();
+    }
+    if (has_selected_rule && doc_.brush >= 0) {
         // Assigns the brush tile to a neighbour mask of the selected autotile.
         const Autotile& at = ts.autotiles[static_cast<usize>(selected_autotile_)];
         ImGui::TextWrapped("Editing masks: %s", at.name.c_str());

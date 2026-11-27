@@ -1653,6 +1653,72 @@ AETHER_TEST(TilemapEditor_ProjectSwitchProtectsAndClearsOldMap) {
     CHECK(ws.OpenAsset("Tiles/Level1.atilemap", &error) && ws.Tilemap().TilemapFile() != old_map);
 }
 
+AETHER_TEST(TilemapEditor_RenamesAutotileRulesWithoutChangingPaintedCells) {
+    HeadlessImGui ui;
+    TilemapData map;
+    map.Resize(6, 5);
+    map.AddLayer("Ground");
+    Tileset tiles;
+    tiles.texture_width = tiles.texture_height = 32;
+    std::array<i32, 16> variants{};
+    variants[kEast] = 3;
+    const auto rule = tiles.AddAutotile("River", variants);
+    tiles.AddAutotile("Road", variants);
+    tiles.SetSolid(3, true);
+    map.Set(0, 1, 1, AutotileCell(rule));
+    TilemapEditDocument doc(std::move(map), std::move(tiles));
+    doc.brush = AutotileCell(rule);
+    const auto* cells = doc.Map().layers[0].cells.data();
+    const auto* solid = doc.GetTileset().solid.data();
+    const auto revision = doc.Revision();
+    CHECK(!doc.RenameAutotile(99, "Valid") && !doc.RenameAutotile(rule, " \t") &&
+          !doc.RenameAutotile(rule, "River") && !doc.CanUndo());
+
+    TilemapPanel panel(doc);
+    ImGuiWindow* palette = nullptr;
+    const auto draw = [&] {
+        const auto* parent = ImGui::GetCurrentWindowRead();
+        const auto id = ImGui::GetID("##left");
+        panel.Draw();
+        for (ImGuiWindow* child : parent->DC.ChildWindows)
+            if (child->ChildId == id) palette = child;
+    };
+    ui.Frame(draw);
+    if (!palette) { CHECK(false); return; }
+    const ImGuiID name_seed = palette->GetID("autotile-name");
+    const int first = 0;
+    const ImGuiID rule_seed = ImHashData(&first, sizeof(first), name_seed);
+    const ImGuiID field = ImHashStr("Rule name", 0, rule_seed);
+    const auto clip = palette->InnerClipRect;
+    auto& io = ImGui::GetIO();
+    bool clicked = false;
+    for (f32 y = clip.Min.y + 4; y < clip.Max.y; y += 6) {
+        io.AddMousePosEvent(clip.Min.x + 19, y);
+        ui.Frame(draw);
+        if (ImGui::GetHoveredID() != field) continue;
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+        ui.Frame(draw);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+        ui.Frame(draw);
+        clicked = true;
+        break;
+    }
+    if (!clicked) { CHECK(false); return; }
+    io.AddInputCharactersUTF8("River ## North");
+    ui.Frame(draw);
+    CHECK(doc.GetTileset().autotiles[rule].name == "River" && doc.Revision() == revision);
+    io.AddKeyEvent(ImGuiKey_Enter, true);
+    ui.Frame(draw);
+    io.AddKeyEvent(ImGuiKey_Enter, false);
+    ui.Frame(draw);
+    CHECK(doc.GetTileset().autotiles[rule].name == "River ## North" && doc.Revision() == revision + 1);
+    CHECK(doc.GetTileset().autotiles[rule].tiles == variants && doc.GetTileset().autotiles[1].name == "Road");
+    CHECK(doc.Map().layers[0].cells.data() == cells && doc.GetTileset().solid.data() == solid);
+    CHECK(doc.Map().Get(0, 1, 1) == AutotileCell(rule) && doc.brush == AutotileCell(rule));
+    CHECK(doc.Undo() && doc.GetTileset().autotiles[rule].name == "River" && !doc.dirty());
+    CHECK(doc.Redo() && doc.GetTileset().autotiles[rule].name == "River ## North");
+}
+
 AETHER_TEST(TilemapEditor_RenamesLayersWithoutErasingCellsOrAcceptingBlankNames) {
     TilemapEditDocument doc = Doc();
     CHECK(!doc.RenameLayer(0, "") && !doc.RenameLayer(0, " \t") && !doc.CanUndo());

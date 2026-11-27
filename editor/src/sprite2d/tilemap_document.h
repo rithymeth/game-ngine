@@ -70,6 +70,7 @@ public:
     // The tileset (undoable).
     void SetSolid(i32 tile, bool solid);
     usize AddAutotile(const std::string& name);
+    bool RenameAutotile(usize autotile, const std::string& name);
     // Which tile an autotile shows for a neighbour mask.
     bool SetAutotileTile(usize autotile, u8 mask, i32 tile);
     bool FillEmptyAutotileMasks(usize autotile, i32 tile);
@@ -98,6 +99,10 @@ private:
         usize changed = 0;
     };
     using BrushEdit = std::map<usize, LayerStroke>; // layer -> opposite cell data
+    struct AutotileName {
+        usize rule;
+        std::string name;
+    };
     struct LayerProperties {
         usize layer;
         std::string name;
@@ -118,7 +123,7 @@ private:
         std::vector<std::vector<i32>> cropped_rows;
     };
     struct HistoryEntry {
-        std::variant<sprite2d::TilemapData, BrushEdit, LayerProperties, LayerMove, sprite2d::Tileset, LayerPresence, HeightEdit> edit;
+        std::variant<sprite2d::TilemapData, BrushEdit, LayerProperties, LayerMove, sprite2d::Tileset, LayerPresence, HeightEdit, AutotileName> edit;
         u64 state;
     };
     bool Travel(std::vector<HistoryEntry>& from, std::vector<HistoryEntry>& to);

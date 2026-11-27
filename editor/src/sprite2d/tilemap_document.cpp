@@ -344,6 +344,8 @@ bool TilemapEditDocument::Travel(std::vector<HistoryEntry>& from, std::vector<Hi
     // full map on either stack, including for structural history.
     if (auto* opposite_map = std::get_if<TilemapData>(&step.edit)) {
         std::swap(map_, *opposite_map);
+    } else if (auto* rule_name = std::get_if<AutotileName>(&step.edit)) {
+        std::swap(tileset_.autotiles[rule_name->rule].name, rule_name->name);
     } else if (auto* properties = std::get_if<LayerProperties>(&step.edit)) {
         auto& layer = map_.layers[properties->layer];
         std::swap(layer.name, properties->name);
@@ -552,6 +554,18 @@ void TilemapEditDocument::SetSolid(i32 tile, bool solid) {
 usize TilemapEditDocument::AddAutotile(const std::string& name) {
     RecordTileset();
     return tileset_.AddAutotile(name, Autotile().tiles);
+}
+
+bool TilemapEditDocument::RenameAutotile(usize autotile, const std::string& name) {
+    if (autotile >= tileset_.autotiles.size() || tileset_.autotiles[autotile].name == name ||
+        std::all_of(name.begin(), name.end(), [](unsigned char c) { return std::isspace(c) != 0; })) return false;
+    EndStroke();
+    auto& current = tileset_.autotiles[autotile].name;
+    undo_.push_back({AutotileName{autotile, current}, state_});
+    current = name;
+    redo_.clear();
+    Changed();
+    return true;
 }
 
 bool TilemapEditDocument::SetAutotileTile(usize autotile, u8 mask, i32 tile) {
