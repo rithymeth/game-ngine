@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <deque>
 #include <string_view>
 #include <unordered_set>
 
@@ -108,12 +109,16 @@ void TilemapEditDocument::EndStroke() {
 bool TilemapEditDocument::PaintCell(i32 x, i32 y, i32 value) {
     if (active_layer >= map_.layers.size() || !map_.InBounds(x, y)) return false;
     const u64 index = static_cast<u64>(y) * map_.width + static_cast<u32>(x);
+    if (index >= map_.layers[active_layer].cells.size()) return false;
+    return PaintCellAt(static_cast<usize>(index), value);
+}
+
+bool TilemapEditDocument::PaintCellAt(usize index, i32 value) {
     auto& cells = map_.layers[active_layer].cells;
-    if (index >= cells.size()) return false;
-    auto& cell = cells[static_cast<usize>(index)];
+    auto& cell = cells[index];
     if (cell == value) return false;
     if (!stroke_start_) {
-        const auto address = std::pair{active_layer, static_cast<usize>(index)};
+        const auto address = std::pair{active_layer, index};
         auto it = stroke_cells_.find(address);
         // Bound node overhead for broad fills. On promotion retain the start
         // of the gesture, not the partially painted state.
@@ -132,7 +137,7 @@ bool TilemapEditDocument::PaintCell(i32 x, i32 y, i32 value) {
         }
     }
 
-    const i32 original = stroke_start_->map.layers[active_layer].cells[static_cast<usize>(index)];
+    const i32 original = stroke_start_->map.layers[active_layer].cells[index];
     if (cell == original) ++stroke_changed_cells_;
     else if (value == original) --stroke_changed_cells_;
     cell = value;
@@ -163,6 +168,49 @@ std::vector<std::pair<i32, i32>> TilemapEditDocument::FloodRegion(i32 x, i32 y) 
     return region;
 }
 
+void TilemapEditDocument::FloodPaint(i32 x, i32 y) {
+    if (active_layer >= map_.layers.size() || !map_.InBounds(x, y)) return;
+    const i32 target = map_.Get(active_layer, x, y);
+    if (target == brush) return;
+    const auto& cells = map_.layers[active_layer].cells;
+    const usize width = map_.width;
+    const usize height = map_.height;
+    if (cells.size() != static_cast<u64>(width) * height) {
+        // Retain Get's missing-cells-as-empty behavior for noncanonical data.
+        for (const auto& [cx, cy] : FloodRegion(x, y)) PaintCell(cx, cy, brush);
+        return;
+    }
+
+    struct Run { usize row, first, end; }; // end is exclusive
+    std::deque<Run> pending;
+    // As each horizontal run is discovered, paint it immediately. The new
+    // brush value marks it visited, with no per-cell queue or visited bitmap.
+    const auto paint_run = [&](usize row, usize col) {
+        const usize base = row * width;
+        usize first = col;
+        usize end = col + 1;
+        while (first > 0 && cells[base + first - 1] == target) --first;
+        while (end < width && cells[base + end] == target) ++end;
+        pending.push_back({row, first, end});
+        for (usize i = base + first; i < base + end; ++i) PaintCellAt(i, brush);
+        return end;
+    };
+    paint_run(static_cast<usize>(y), static_cast<usize>(x));
+    while (!pending.empty()) {
+        const auto [row, first, end] = pending.front();
+        pending.pop_front();
+        const auto scan = [&](usize adjacent) {
+            const usize base = adjacent * width;
+            for (usize col = first; col < end; ) {
+                if (cells[base + col] == target) col = paint_run(adjacent, col);
+                else ++col;
+            }
+        };
+        if (row > 0) scan(row - 1);
+        if (row + 1 < height) scan(row + 1);
+    }
+}
+
 void TilemapEditDocument::Apply(i32 x, i32 y) {
     if (tool == TileTool::Pick) {
         if (map_.InBounds(x, y)) brush = map_.Get(active_layer, x, y);
@@ -173,11 +221,7 @@ void TilemapEditDocument::Apply(i32 x, i32 y) {
     switch (tool) {
     case TileTool::Paint: PaintCell(x, y, brush); break;
     case TileTool::Erase: PaintCell(x, y, kEmpty); break;
-    case TileTool::Fill:
-        if (map_.Get(active_layer, x, y) != brush) {
-            for (const auto& [cx, cy] : FloodRegion(x, y)) PaintCell(cx, cy, brush);
-        }
-        break;
+    case TileTool::Fill: FloodPaint(x, y); break;
     case TileTool::Pick: break; // handled before starting a stroke
     case TileTool::Rectangle: break; // see Rectangle()
     }

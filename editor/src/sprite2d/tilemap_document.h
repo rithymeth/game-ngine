@@ -97,6 +97,8 @@ private:
     void Changed();
     void ClampActive();
     bool PaintCell(i32 x, i32 y, i32 value);
+    bool PaintCellAt(usize index, i32 value); // validated cell on the active layer
+    void FloodPaint(i32 x, i32 y);
 
     sprite2d::TilemapData map_;
     sprite2d::Tileset tileset_;

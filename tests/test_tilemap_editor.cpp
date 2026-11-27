@@ -284,6 +284,51 @@ AETHER_TEST(TilemapEditor_FloodRegionDoesNotCrossDiagonalOrLayerBoundaries) {
     CHECK(doc.FloodRegion(0, 0).empty());
 }
 
+AETHER_TEST(TilemapEditor_FloodPaintMatchesRegionThroughNarrowConnections) {
+    TilemapData map;
+    map.Resize(71, 57);
+    map.AddLayer("Unchanged");
+    map.AddLayer("Pattern");
+    const i32 grass = AutotileCell(0);
+    map.Fill(1, 0, 0, 70, 56, grass);
+    // Alternating teeth force multiple runs per row and many reconnections.
+    for (i32 y = 1; y < 56; y += 2) {
+        for (i32 x = 1; x < 70; x += 3) map.Set(1, x, y, 1);
+    }
+    map.Fill(1, 4, 4, 10, 10, 1);
+    map.Fill(1, 5, 5, 9, 9, grass); // A region of the same value inside a closed ring.
+    TilemapEditDocument doc(std::move(map), {});
+    doc.active_layer = 1;
+    const auto original = doc.Map().layers[1].cells;
+    auto expected = original;
+    const auto region = doc.FloodRegion(0, 0);
+    CHECK(region.size() > 2500);
+    for (const auto& [x, y] : region) expected[static_cast<usize>(y) * 71 + x] = kEmpty;
+    doc.tool = TileTool::Fill;
+    doc.brush = kEmpty;
+    doc.Apply(0, 0);
+    CHECK(doc.Map().layers[1].cells == expected);
+    CHECK(doc.Map().Get(1, 7, 7) == grass && doc.Map().Get(0, 70, 56) == kEmpty);
+    CHECK(doc.Undo() && doc.Map().layers[1].cells == original && !doc.CanUndo());
+    CHECK(doc.Redo() && doc.Map().layers[1].cells == expected);
+}
+
+AETHER_TEST(TilemapEditor_FloodPaintRemainsOneStrokeWithPaintAndRevert) {
+    TilemapEditDocument doc = Doc();
+    doc.BeginStroke();
+    doc.brush = 8;
+    doc.Apply(1, 1);
+    doc.tool = TileTool::Fill;
+    doc.brush = 4;
+    doc.Apply(0, 0);
+    CHECK(doc.Map().Get(0, 1, 1) == 8 && doc.Map().Get(0, 5, 4) == 4);
+    doc.brush = kEmpty;
+    doc.Apply(1, 1);
+    doc.Apply(5, 4);
+    doc.EndStroke();
+    CHECK(!doc.CanUndo() && !doc.dirty());
+}
+
 AETHER_TEST(TilemapEditor_AutotileBrushPaintsByNeighbours) {
     TilemapEditDocument doc = Doc();
     const usize at = doc.AddAutotile("Ground");
