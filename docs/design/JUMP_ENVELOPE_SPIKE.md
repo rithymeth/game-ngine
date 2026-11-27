@@ -63,6 +63,20 @@ first frame is null: the timing loss still counts, but the report does not
 invent a visible split. Evidence capture is optional because it reads the cooked archive
 twice and includes the recorded inputs in the report.
 
+### Review a timing map
+
+Turn an existing report into a static, shareable SVG without opening the
+engine or rerunning the players:
+
+~~~sh
+python3 tools/jump_envelope_map.py jump-envelope.json --output timing-map.svg
+~~~
+
+The map highlights offset zero and labels each timing as kept, lost, gained,
+missed, or not tested. A skipped timing is never displayed as a miss. The
+first path split, when captured, appears above the rows. Keep the JSON for
+replay and package fingerprints; the map is a review aid, not a new test.
+
 ## Prior art and what we would ship differently
 
 - [Unity InputEventTrace](https://docs.unity3d.com/Packages/com.unity.inputsystem@1.4/api/UnityEngine.InputSystem.LowLevel.InputEventTrace.html)
