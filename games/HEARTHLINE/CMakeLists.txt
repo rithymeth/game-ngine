@@ -1,0 +1,21 @@
+cmake_minimum_required(VERSION 3.21)
+project(Hearthline LANGUAGES CXX)
+include(CTest)
+
+add_library(hearthline_core STATIC src/game.cpp)
+target_compile_features(hearthline_core PUBLIC cxx_std_20)
+target_include_directories(hearthline_core PUBLIC src)
+
+add_executable(hearthline_sim src/main.cpp)
+target_link_libraries(hearthline_sim PRIVATE hearthline_core)
+if(MSVC)
+    target_compile_options(hearthline_core PRIVATE /W4)
+else()
+    target_compile_options(hearthline_core PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+if(BUILD_TESTING)
+    add_executable(hearthline_tests tests/game_tests.cpp)
+    target_link_libraries(hearthline_tests PRIVATE hearthline_core)
+    add_test(NAME hearthline_simulation COMMAND hearthline_tests)
+endif()
