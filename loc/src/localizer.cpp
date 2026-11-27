@@ -44,8 +44,11 @@ std::string Localizer::Resolve(const LocText& text, const FormatArgs* args, std:
     const std::string* found = FindLocalizedEntry(table_, text.key, language_, default_language_,
                                                    args ? &entry_language : nullptr);
     const std::string& chosen = found ? *found : (!text.source.empty() ? text.source : text.key);
-    // A fallback translation uses its own plural rules, not the requested language's.
-    return args ? Format(chosen, found ? entry_language : language_, *args, errors) : chosen;
+    if (!args) return chosen;
+    // Found entries use their own rules. A keyed source was authored in
+    // the default language; a keyless literal still follows the requested locale.
+    const bool authored_fallback = !text.IsLiteral() && !text.source.empty();
+    return Format(chosen, found ? entry_language : (authored_fallback ? default_language_ : language_), *args, errors);
 }
 
 } // namespace aether::loc

@@ -200,6 +200,21 @@ AETHER_TEST(Loc_FallbackEntriesUseTheLanguageTheyWereWrittenIn) {
     CHECK(localizer.Resolve("coins", &zero) == "0 piece"); // Existing exact-language behavior stays intact.
 }
 
+AETHER_TEST(Loc_KeyedSourceFallbackUsesTheDefaultLanguage) {
+    Localizer localizer;
+    localizer.SetLanguage("km-KH");
+    const FormatArgs one{{"count", i64{1}}}, zero{{"count", i64{0}}};
+    const LocText missing{"coins.missing", "{count} coin{count|s}"};
+    CHECK(localizer.Resolve(missing, &one) == "1 coin");
+    CHECK(localizer.Resolve(missing, &zero) == "0 coins");
+    CHECK(localizer.Resolve(missing) == missing.source);
+    CHECK(localizer.Resolve(LocText::Literal("{count|one:singular;other:other}"), &one) == "other");
+
+    localizer.SetDefaultLanguage("fr");
+    const LocText french{"coins.missing", "{count|one:piece;other:pieces}"};
+    CHECK(localizer.Resolve(french, &zero) == "piece");
+}
+
 AETHER_TEST(Loc_KhmerCountsUseOneFormAndEnglishFallbackKeepsItsSingular) {
     StringTable table;
     table.Set("km", "days", "{count} {count|one:unexpected;other:\xe1\x9e\x90\xe1\x9f\x92\xe1\x9e\x84\xe1\x9f\x83}");
