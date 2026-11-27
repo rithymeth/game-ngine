@@ -8,7 +8,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 
-from jump_proof_compare import read_trace, write_new_json
+from jump_proof_compare import read_trace_details, write_new_json
 
 IGNORED_PACKAGE_FILES = {"PackageManifest.json", "Paks/Game.apak"}
 MAP_LIMIT = 64 * 1024 * 1024
@@ -110,6 +110,7 @@ def isolate(args):
         cell = changed_cell(read_map(before_extract / asset), read_map(after_extract / asset))
 
         traces = []
+        baseline_route = None
         for index, (package, expectation) in enumerate(((original, 0), (modified, 5), (original, 0))):
             proc = run([package / args.player, "--jump-proof", route, "--jump-trace",
                         "--user-dir", root / f"profile-{index}"], root, valid=(0, 5))
@@ -117,14 +118,25 @@ def isolate(args):
                 raise ValueError("controlled replay must pass before, miss after, and pass on a repeated baseline")
             trace = root / f"trace-{index}.txt"
             trace.write_text(proc.stdout, encoding="utf-8")
-            traces.append(read_trace(trace))
-        before, after, repeat = traces
-        if before != repeat or len(before) != len(after):
-            raise ValueError("baseline was not repeatable or trace lengths differ")
+            points, descriptor, status = read_trace_details(trace)
+            if descriptor is None:
+                raise ValueError(f"controlled replay {index + 1}: missing route descriptor")
+            if index == 0:
+                baseline_route = descriptor
+            elif descriptor != baseline_route:
+                raise ValueError(f"controlled replay {index + 1}: route descriptors differ")
+            if status != ("pass" if proc.returncode == 0 else "missed"):
+                raise ValueError(f"controlled replay {index + 1}: trace verdict disagrees with the player exit code")
+            traces.append((points, status))
+        (before, before_status), (after, after_status), (repeat, _) = traces
+        if before != repeat:
+            raise ValueError("baseline was not repeatable")
         for frame, (a, b) in enumerate(zip(before, after), 1):
             if any(abs(a[i] - b[i]) > TOLERANCE for i in (0, 1)):
                 result = {"asset": asset, "cell": cell, "frames": len(before),
-                          "first_difference_frame": frame, "before_position": a, "after_position": b}
+                          "first_difference_frame": frame, "before_position": a, "after_position": b,
+                          "before_status": before_status, "after_status": after_status,
+                          "verdict_changed": before_status != after_status}
                 if args.overlay_data:
                     if len(before) > 20_000:
                         raise ValueError("editor overlay supports up to 20000 frames")
