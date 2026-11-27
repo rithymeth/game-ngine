@@ -65,6 +65,7 @@ AETHER_TEST(EditorHost_KeysMapToImGui) {
 
 AETHER_TEST(EditorHost_WindowEventsDriveImGui) {
     ImGuiContextScope scope;
+    ImGuiWindowInput window_input;
     ImGuiIO& io = ImGui::GetIO();
     WindowEvent move;
     move.type = WindowEventType::MouseMove, move.x = 40, move.y = 25, move.dx = 2, move.dy = 1;
@@ -76,7 +77,7 @@ AETHER_TEST(EditorHost_WindowEventsDriveImGui) {
     resize.type = WindowEventType::Resize, resize.x = 640, resize.y = 480;
     const std::vector<WindowEvent> events = {move, KeyEvent(Key::MouseLeft, true), KeyEvent(Key::LeftCtrl, true),
                                              KeyEvent(Key::S, true), wheel, typed, resize};
-    FeedImGuiEvents(events, io);
+    window_input.Feed(events, io);
     ImGui::NewFrame();
     CHECK(io.MousePos.x == 40 && io.MousePos.y == 25);
     CHECK(ImGui::IsMouseDown(ImGuiMouseButton_Left) && !ImGui::IsMouseDown(ImGuiMouseButton_Right));
@@ -88,13 +89,13 @@ AETHER_TEST(EditorHost_WindowEventsDriveImGui) {
     ImGui::EndFrame();
 
     // Releasing the right-hand key keeps Ctrl held while the left one is.
-    FeedImGuiEvents(std::vector<WindowEvent>{KeyEvent(Key::RightCtrl, true), KeyEvent(Key::RightCtrl, false),
+    window_input.Feed(std::vector<WindowEvent>{KeyEvent(Key::RightCtrl, true), KeyEvent(Key::RightCtrl, false),
                                              KeyEvent(Key::S, false), KeyEvent(Key::MouseLeft, false)},
                     io);
     ImGui::NewFrame();
     CHECK(io.KeyCtrl && !ImGui::IsKeyDown(ImGuiKey_S) && !ImGui::IsMouseDown(ImGuiMouseButton_Left));
     ImGui::EndFrame();
-    FeedImGuiEvents(std::vector<WindowEvent>{KeyEvent(Key::LeftCtrl, false)}, io);
+    window_input.Feed(std::vector<WindowEvent>{KeyEvent(Key::LeftCtrl, false)}, io);
     ImGui::NewFrame();
     CHECK(!io.KeyCtrl);
     ImGui::EndFrame();
@@ -102,12 +103,13 @@ AETHER_TEST(EditorHost_WindowEventsDriveImGui) {
 
 AETHER_TEST(EditorHost_SuperModifierReachesKeyboardShortcuts) {
     ImGuiContextScope scope;
+    ImGuiWindowInput window_input;
     ImGuiIO& io = ImGui::GetIO();
     const Key left = KeyFromVirtualKey(0x5B);
     const Key right = KeyFromGlfwKey(347);
     const CommandChord palette{ImGuiKey_K, true, false, false};
     const auto feed = [&](std::vector<WindowEvent> events) {
-        FeedImGuiEvents(events, io);
+        window_input.Feed(events, io);
         ImGui::NewFrame();
     };
 
@@ -125,6 +127,46 @@ AETHER_TEST(EditorHost_SuperModifierReachesKeyboardShortcuts) {
     feed({KeyEvent(right, false), KeyEvent(Key::K, true)});
     CHECK(io.KeyCtrl && !io.KeySuper);
     CHECK(palette.Pressed(io));
+    ImGui::EndFrame();
+}
+
+AETHER_TEST(EditorHost_QuickModifierReleaseDoesNotReappearWithTrickling) {
+    ImGuiContextScope scope;
+    ImGuiWindowInput window_input;
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigInputTrickleEventQueue = true;
+    window_input.Feed(std::vector<WindowEvent>{KeyEvent(Key::LeftSuper, true), KeyEvent(Key::LeftSuper, false)}, io);
+    ImGui::NewFrame();
+    CHECK(io.KeySuper && ImGui::IsKeyDown(ImGuiKey_LeftSuper)); // release is queued for a later frame
+    ImGui::EndFrame();
+    window_input.Feed(std::vector<WindowEvent>{KeyEvent(Key::K, true)}, io);
+    for (int frame = 0; frame < 2; ++frame) {
+        ImGui::NewFrame();
+        CHECK(!ImGui::IsKeyDown(ImGuiKey_LeftSuper) && !ImGui::IsKeyDown(ImGuiKey_RightSuper));
+        CHECK(!io.KeySuper);
+        ImGui::EndFrame();
+    }
+    CHECK(ImGui::IsKeyDown(ImGuiKey_K));
+}
+
+AETHER_TEST(EditorHost_FocusRoundTripReleasesModifiersInOnePoll) {
+    ImGuiContextScope scope;
+    ImGuiWindowInput window_input;
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigInputTrickleEventQueue = true;
+    window_input.Feed(std::vector<WindowEvent>{KeyEvent(Key::LeftCtrl, true), KeyEvent(Key::RightSuper, true)}, io);
+    ImGui::NewFrame();
+    CHECK(io.KeyCtrl && io.KeySuper);
+    ImGui::EndFrame();
+
+    WindowEvent lost{}, gained{};
+    lost.type = gained.type = WindowEventType::Focus;
+    lost.down = false;
+    gained.down = true;
+    window_input.Feed(std::vector<WindowEvent>{lost, gained, KeyEvent(Key::K, true)}, io);
+    ImGui::NewFrame();
+    CHECK(!ImGui::IsKeyDown(ImGuiKey_LeftCtrl) && !ImGui::IsKeyDown(ImGuiKey_RightSuper));
+    CHECK(!io.KeyCtrl && !io.KeySuper && ImGui::IsKeyPressed(ImGuiKey_K));
     ImGui::EndFrame();
 }
 

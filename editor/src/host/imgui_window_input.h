@@ -5,6 +5,7 @@
 
 #include <imgui.h>
 
+#include <array>
 #include <span>
 
 namespace aether::editor {
@@ -16,6 +17,13 @@ namespace aether::editor {
 // backend (imgui_impl_win32, imgui_impl_glfw), so any window the engine can
 // open drives the editor UI the same way.
 ImGuiKey ToImGuiKey(input::Key key);
-void FeedImGuiEvents(std::span<const WindowEvent> events, ImGuiIO& io);
+class ImGuiWindowInput {
+public:
+    void Feed(std::span<const WindowEvent> events, ImGuiIO& io);
+
+private:
+    // Keep the latest platform state, not ImGui's potentially delayed frame state.
+    std::array<bool, 8> held_modifiers_{};
+};
 
 } // namespace aether::editor

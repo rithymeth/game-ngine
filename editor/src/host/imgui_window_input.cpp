@@ -79,27 +79,22 @@ int MouseButton(Key key) {
     }
 }
 
-// The modifier keys ImGui wants as ImGuiMod_* alongside the keys themselves.
-void UpdateModifier(ImGuiIO& io, Key key, bool down, bool (&held)[8]) {
-    static constexpr Key kKeys[8] = {Key::LeftShift, Key::RightShift, Key::LeftCtrl,  Key::RightCtrl,
-                                    Key::LeftAlt,   Key::RightAlt,   Key::LeftSuper, Key::RightSuper};
-    for (int i = 0; i < 8; ++i) {
-        if (kKeys[i] == key) held[i] = down;
-    }
-    io.AddKeyEvent(ImGuiMod_Shift, held[0] || held[1]);
-    io.AddKeyEvent(ImGuiMod_Ctrl, held[2] || held[3]);
-    io.AddKeyEvent(ImGuiMod_Alt, held[4] || held[5]);
-    io.AddKeyEvent(ImGuiMod_Super, held[6] || held[7]);
-}
+struct Modifier {
+    Key left;
+    Key right;
+    ImGuiKey aggregate;
+};
+
+constexpr Modifier kModifiers[] = {
+    {Key::LeftShift, Key::RightShift, ImGuiMod_Shift},
+    {Key::LeftCtrl, Key::RightCtrl, ImGuiMod_Ctrl},
+    {Key::LeftAlt, Key::RightAlt, ImGuiMod_Alt},
+    {Key::LeftSuper, Key::RightSuper, ImGuiMod_Super},
+};
 
 } // namespace
 
-void FeedImGuiEvents(std::span<const WindowEvent> events, ImGuiIO& io) {
-    // ImGui keeps modifier state itself; reconstruct both sides from it.
-    bool held[8] = {ImGui::IsKeyDown(ImGuiKey_LeftShift), ImGui::IsKeyDown(ImGuiKey_RightShift),
-                    ImGui::IsKeyDown(ImGuiKey_LeftCtrl),  ImGui::IsKeyDown(ImGuiKey_RightCtrl),
-                    ImGui::IsKeyDown(ImGuiKey_LeftAlt),   ImGui::IsKeyDown(ImGuiKey_RightAlt),
-                    ImGui::IsKeyDown(ImGuiKey_LeftSuper), ImGui::IsKeyDown(ImGuiKey_RightSuper)};
+void ImGuiWindowInput::Feed(std::span<const WindowEvent> events, ImGuiIO& io) {
     for (const WindowEvent& e : events) {
         switch (e.type) {
             case WindowEventType::Key: {
@@ -110,7 +105,13 @@ void FeedImGuiEvents(std::span<const WindowEvent> events, ImGuiIO& io) {
                 const ImGuiKey key = ToImGuiKey(e.key);
                 if (key == ImGuiKey_None) break;
                 io.AddKeyEvent(key, e.down);
-                UpdateModifier(io, e.key, e.down, held);
+                for (usize i = 0; i < std::size(kModifiers); ++i) {
+                    const Modifier& mod = kModifiers[i];
+                    if (e.key != mod.left && e.key != mod.right) continue;
+                    held_modifiers_[2 * i + (e.key == mod.right)] = e.down;
+                    io.AddKeyEvent(mod.aggregate, held_modifiers_[2 * i] || held_modifiers_[2 * i + 1]);
+                    break;
+                }
                 break;
             }
             case WindowEventType::Char:
@@ -123,6 +124,19 @@ void FeedImGuiEvents(std::span<const WindowEvent> events, ImGuiIO& io) {
                 io.AddMouseWheelEvent(e.dx, e.dy);
                 break;
             case WindowEventType::Focus:
+                if (!e.down) {
+                    // ImGui coalesces loss and regain in a single frame. Queue releases
+                    // explicitly so held modifiers are cleared even on that round trip.
+                    for (usize i = 0; i < std::size(kModifiers); ++i) {
+                        const Modifier& mod = kModifiers[i];
+                        const bool left = held_modifiers_[2 * i];
+                        const bool right = held_modifiers_[2 * i + 1];
+                        if (left) io.AddKeyEvent(ToImGuiKey(mod.left), false);
+                        if (right) io.AddKeyEvent(ToImGuiKey(mod.right), false);
+                        if (left || right) io.AddKeyEvent(mod.aggregate, false);
+                    }
+                    held_modifiers_.fill(false);
+                }
                 io.AddFocusEvent(e.down);
                 break;
             case WindowEventType::Resize:
