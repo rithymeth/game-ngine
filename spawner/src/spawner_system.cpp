@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace aether::spawn {
 
@@ -101,7 +102,10 @@ i32 SpawnerSystem::SpawnUpTo(Entity spawner, i32 wanted) {
         const Entity created = spawn_(prefab, place);
         s = world_.GetComponent<Spawner>(spawner);
         if (created.IsNull() || !world_.IsAlive(created)) break; // the host could not (a prefab that is not there): do not try the rest this time
-        if (s != nullptr) ++s->spawned;
+        if (s != nullptr && s->spawned < std::numeric_limits<i32>::max()) {
+            // Match Room and TotalSpawned: a negative saved count starts at zero.
+            s->spawned = std::max(s->spawned, 0) + 1;
+        }
         alive_[spawner].push_back(created);
         events_.push_back({spawner, created});
         ++made;

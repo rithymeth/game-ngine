@@ -246,6 +246,25 @@ AETHER_TEST(Spawner_SpawnNowSkipsTheTimerNotTheLimits) {
     CHECK(!r.prefabs_asked.empty() && r.prefabs_asked.front() == "Prefabs/Wolf.aprefab");
 }
 
+AETHER_TEST(Spawner_SavedSpawnCounterStaysWithinBounds) {
+    Rig r;
+    Spawner saved = Basic();
+    saved.max_alive = 0;
+    saved.total = 2;
+    saved.spawned = -3; // a stale or hand-edited runtime value is read as zero
+    const Entity bounded = r.MakeSpawner(saved);
+    CHECK(r.system.TotalSpawned(bounded) == 0);
+    CHECK(r.system.SpawnNow(bounded, 2) == 2);
+    CHECK(r.system.TotalSpawned(bounded) == 2);
+    CHECK(r.system.SpawnNow(bounded, 2) == 0 && r.system.AliveCount(bounded) == 2);
+
+    saved.total = 0;
+    saved.spawned = std::numeric_limits<i32>::max() - 1;
+    const Entity unlimited = r.MakeSpawner(saved);
+    CHECK(r.system.SpawnNow(unlimited, 2) == 2 && r.system.AliveCount(unlimited) == 2);
+    CHECK(r.system.TotalSpawned(unlimited) == std::numeric_limits<i32>::max());
+}
+
 AETHER_TEST(Spawner_TheKitAddsItsStageAndSystem) {
     const std::unique_ptr<kit::IKit> kit = MakeSpawnerKit();
     CHECK(std::string(kit->Name()) == "Spawner" && kit->Deps().empty());
