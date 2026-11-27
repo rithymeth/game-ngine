@@ -66,7 +66,11 @@ GatherReport GatherContent(const stdfs::path& content_dir) {
     if (stdfs::is_directory(content_dir, ec)) {
         for (stdfs::recursive_directory_iterator it(content_dir, ec), end; !ec && it != end; it.increment(ec)) {
             if (!it->is_regular_file()) continue;
-            const std::string ext = it->path().extension().string();
+            std::string ext = it->path().extension().string();
+            // Match the asset database for ASCII extensions, without depending on the system locale.
+            for (char& c : ext) {
+                if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+            }
             if (ext == ".ascene" || ext == ".aprefab" || ext == ".aui" || ext == ".abp") files.push_back(it->path());
         }
     }

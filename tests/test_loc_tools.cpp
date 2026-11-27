@@ -101,6 +101,20 @@ AETHER_TEST(LocGather_ContentIsMergedByKeyAndConflictsWarn) {
     CHECK(GatherContent(content / "missing").entries.empty());
 }
 
+AETHER_TEST(LocGather_RecognizesAssetExtensionsRegardlessOfCase) {
+    const stdfs::path content = Dir("extension_case");
+    Write(content / "menu.AUI", R"({"text_key":"ui.play","text":"Play"})");
+    Write(content / "level.ASCENE", R"({"label":{"key":"scene.title","source":"Level"}})");
+    Write(content / "item.ApReFaB", R"({"label":{"key":"prefab.title","source":"Item"}})");
+    Write(content / "logic.aBp", R"({"label":{"key":"blueprint.title","source":"Logic"}})");
+    Write(content / "index.TXT", R"({"text_key":"ignored","text":"Notes"})");
+    const GatherReport report = GatherContent(content);
+    CHECK(report.entries.size() == 4 && report.warnings.empty());
+    CHECK(Find(report, "ui.play") && Find(report, "scene.title"));
+    CHECK(Find(report, "prefab.title") && Find(report, "blueprint.title"));
+    CHECK(!Find(report, "ignored"));
+}
+
 AETHER_TEST(LocMerge_AddsKeysKeepsTranslationsReportsUnused) {
     StringTable table;
     table.Set("en", "play", "Play");
