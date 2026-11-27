@@ -722,6 +722,7 @@ void TilemapPanel::DrawCanvas() {
     ImGui::InvisibleButton("##paint", ImVec2(std::max(size.x, 1.0f), std::max(size.y, 1.0f)),
                            ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
     const bool hovered = ImGui::IsItemHovered();
+    const bool canvas_activated = ImGui::IsItemActivated();
     const bool canvas_deactivated = (dragging_ || shape_active_) && ImGui::IsItemDeactivated();
     ImGuiIO& io = ImGui::GetIO();
     // Pan is measured from the canvas's bottom-left, with y pointing up.
@@ -896,11 +897,16 @@ void TilemapPanel::DrawCanvas() {
     const bool on_map = mouse_valid && hovered && map.InBounds(cx, cy);
     const bool left = ImGui::IsMouseDown(ImGuiMouseButton_Left) && ImGui::IsItemActive();
     const bool right = ImGui::IsMouseDown(ImGuiMouseButton_Right) && ImGui::IsItemActive();
+    // Only the click that captures the canvas can start a gesture. If both
+    // clicks arrive together, ImGui gives the left button priority.
+    const bool start_left = on_map && canvas_activated && left && ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+    const bool start_right = on_map && canvas_activated && !start_left && right &&
+                             ImGui::IsMouseClicked(ImGuiMouseButton_Right);
     const TileTool selected = doc_.tool;
     const bool line_tool = selected == TileTool::Line;
     const bool shape_tool = selected == TileTool::Rectangle || line_tool;
     if (shape_tool) {
-        if (left && !right && !dragging_ && on_map && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        if (start_left && !dragging_) {
             shape_active_ = true;
             shape_x_ = cx;
             shape_y_ = cy;
@@ -985,15 +991,12 @@ void TilemapPanel::DrawCanvas() {
     }
     dl->PopClipRect();
 
-    // In shape modes a fresh right press starts a freehand eraser, but
-    // never takes over a left drag or starts late after its release.
-    const bool shape_erase_drag = right && !shape_active_ &&
-        (dragging_ || (!left && ImGui::IsMouseClicked(ImGuiMouseButton_Right)));
-    // A press on blank canvas must not start painting when the pointer later enters the map.
-    const bool brush_start = on_map && ImGui::IsMouseClicked(right ? ImGuiMouseButton_Right : ImGuiMouseButton_Left);
-    const bool brush_drag = mouse_valid && (dragging_ || brush_start) &&
-        (shape_tool ? shape_erase_drag :
-         right || (left && (selected == TileTool::Paint || selected == TileTool::Erase)));
+    // Keep the initiating button for the entire freehand stroke. A second
+    // held button cannot erase a paint stroke or take over at release.
+    const bool brush_right = dragging_ ? brush_uses_right_ : start_right;
+    const bool left_freehand = selected == TileTool::Paint || selected == TileTool::Erase;
+    const bool brush_drag = mouse_valid && (dragging_ || start_left || start_right) &&
+        (brush_right ? right && !shape_active_ : left && left_freehand);
     const auto sample_brush = [&](TileTool tool) {
         doc_.tool = tool;
         if (last_brush_sample_ && last_brush_sample_->tool == tool)
@@ -1007,10 +1010,10 @@ void TilemapPanel::DrawCanvas() {
         if (!dragging_) {
             doc_.BeginStroke();
             dragging_ = true;
+            brush_uses_right_ = brush_right;
         }
-        brush_uses_right_ = right;
         if (on_map) {
-            sample_brush(right ? TileTool::Erase : selected);
+            sample_brush(brush_right ? TileTool::Erase : selected);
         } else {
             // Do not connect across another panel or a trip outside the map.
             last_brush_sample_.reset();
@@ -1021,7 +1024,7 @@ void TilemapPanel::DrawCanvas() {
             // final position before ending the stroke, but not on focus loss.
             const ImGuiMouseButton brush_button = brush_uses_right_ ? ImGuiMouseButton_Right : ImGuiMouseButton_Left;
             if (on_map && canvas_deactivated && !io.AppFocusLost && ImGui::IsMouseReleased(brush_button) &&
-                (brush_uses_right_ || selected == TileTool::Paint || selected == TileTool::Erase))
+                (brush_uses_right_ || left_freehand))
                 sample_brush(brush_uses_right_ ? TileTool::Erase : selected);
             doc_.EndStroke();
             last_brush_sample_.reset();
@@ -1029,8 +1032,7 @@ void TilemapPanel::DrawCanvas() {
         }
         // Fill and Pick are one-shot tools. Crossing into the map or another
         // region after a press must not choose a new tile.
-        if (on_map && left && ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
-            (selected == TileTool::Fill || selected == TileTool::Pick))
+        if (start_left && (selected == TileTool::Fill || selected == TileTool::Pick))
             doc_.Apply(cx, cy);
     }
     ImGui::EndChild();
