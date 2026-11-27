@@ -251,4 +251,9 @@ class JumpEnvelope(unittest.TestCase):
         self.assertEqual(output.read_text(), "keep")
 
 if __name__ == "__main__":
-    unittest.main()
+    result = unittest.main(exit=False).result
+    if result.testsRun and len(result.skipped) == result.testsRun:
+        # A green CTest entry would otherwise hide an entirely skipped suite.
+        print("Jump Envelope stand-in tests skipped: requires POSIX executables.")
+        sys.exit(77)
+    sys.exit(0 if result.testsRun and result.wasSuccessful() else 1)

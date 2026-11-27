@@ -131,11 +131,12 @@ a workflow.
 
 ## Evidence and next gate
 
-Run python3 tools/ci/test_jump_envelope.py on POSIX. The test player has a
-deliberately narrower candidate window. It exercises the CLI, process
-invocation, independent profiles, status/landing checks and report handling;
-it does not emulate Aether physics. Next, run the same experiment on two
-actual packaged 2D starter builds and verify the output against their
-traces. Before a production merge, also validate the desired platform(s).
-Automatic CI wiring, editor UI, multi-input perturbations, player skill and general
-level playability are outside the spike.
+CTest runs the Jump Envelope and map-tool suites when Python is available
+in a supported desktop build. The stand-in player suite uses POSIX executable
+scripts, so CTest reports it as skipped if none of its cases can run.
+Run it directly on POSIX with `python3 tools/ci/test_jump_envelope.py`.
+The stand-in has a deliberately narrower candidate window and tests the CLI,
+independent profiles, verdict checks and reports, not Aether physics. Use the
+separate native package smoke above to verify replay against actual players
+on the platforms you intend to ship. Multi-input perturbations, player skill
+and general level playability are outside the spike.

@@ -757,7 +757,7 @@ if(AETHER_BUILD_TESTS AND Python3_Interpreter_FOUND AND NOT ANDROID AND NOT IOS)
     set_tests_properties(jump_proof_tools PROPERTIES TIMEOUT 30)
     add_test(NAME jump_envelope_tools
         COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_SOURCE_DIR}/tools/ci/test_jump_envelope.py)
-    set_tests_properties(jump_envelope_tools PROPERTIES TIMEOUT 90)
+    set_tests_properties(jump_envelope_tools PROPERTIES TIMEOUT 90 SKIP_RETURN_CODE 77)
     add_test(NAME jump_envelope_map_tools
         COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_SOURCE_DIR}/tools/ci/test_jump_envelope_map.py)
     set_tests_properties(jump_envelope_map_tools PROPERTIES TIMEOUT 30)
