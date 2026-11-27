@@ -213,6 +213,7 @@ void TilemapPanel::ResetView() {
 void TilemapPanel::ResetForNewMap() {
     ResetView();
     selected_autotile_ = 0;
+    scroll_to_invalid_mask_ = false;
     FinishCanvasGesture();
 }
 
@@ -261,6 +262,7 @@ bool TilemapPanel::FindNextInvalidPaint() {
     if (invalid_search_revision_ != doc_.Revision()) invalid_paint_cell_.reset();
     invalid_search_revision_ = doc_.Revision();
     invalid_autotile_mask_.reset();
+    scroll_to_invalid_mask_ = false;
     // Strict cooking checks every variant, even in rules not painted on this map.
     for (usize rule = 0; count != 0 && rule < tiles.autotiles.size() && !invalid_autotile_mask_; ++rule) {
         const auto& variants = tiles.autotiles[rule].tiles;
@@ -273,7 +275,10 @@ bool TilemapPanel::FindNextInvalidPaint() {
         }
     }
     const auto focus_rule = [&] {
-        if (invalid_autotile_mask_) selected_autotile_ = static_cast<i32>(invalid_autotile_mask_->rule);
+        if (invalid_autotile_mask_) {
+            selected_autotile_ = static_cast<i32>(invalid_autotile_mask_->rule);
+            scroll_to_invalid_mask_ = true;
+        }
         return false; // there is no canvas cell to focus
     };
     const auto previous = invalid_paint_cell_;
@@ -636,6 +641,9 @@ void TilemapPanel::DrawPalette() {
         ImGui::PopID();
         ImGui::PopID();
     }
+    const auto* scroll_mask = scroll_to_invalid_mask_ && invalid_autotile_mask_ &&
+                              invalid_search_revision_ == doc_.Revision() ? &*invalid_autotile_mask_ : nullptr;
+    scroll_to_invalid_mask_ = false;
     if (has_selected_rule) {
         const auto rule = static_cast<usize>(selected_autotile_);
         const Autotile& at = ts.autotiles[rule];
@@ -660,6 +668,8 @@ void TilemapPanel::DrawPalette() {
             ImGui::BeginDisabled(!can_assign);
             if (ImGui::SmallButton(label)) doc_.SetAutotileTile(rule, static_cast<u8>(m), doc_.brush);
             ImGui::EndDisabled();
+            if (scroll_mask && scroll_mask->rule == rule && scroll_mask->mask == static_cast<usize>(m))
+                ImGui::SetScrollHereY(0.5f);
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                 ImGui::SetTooltip("%s", tile == kEmpty ? "This mask is empty." : "Right-click to clear this mask.");
                 if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) doc_.SetAutotileTile(rule, static_cast<u8>(m), kEmpty);

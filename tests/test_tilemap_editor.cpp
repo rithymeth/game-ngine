@@ -3297,6 +3297,59 @@ AETHER_TEST(TilemapEditor_FindsInvalidVariantsInUnusedAutotileRules) {
     CHECK(clean.find("No invalid painted tiles") != std::string::npos);
 }
 
+AETHER_TEST(TilemapEditor_FindingAnInvalidMaskScrollsItIntoView) {
+    HeadlessImGui ui;
+    TilemapData map;
+    map.Resize(4, 4);
+    Tileset tiles;
+    tiles.texture = assets::NewAssetGuid();
+    tiles.texture_width = 64;
+    tiles.texture_height = 64;
+    for (usize i = 0; i < 512; ++i) {
+        auto masks = Autotile{}.tiles;
+        if (i == 510) masks[15] = 99; // out of the 16-tile sheet
+        tiles.AddAutotile("Canal bank " + std::to_string(i), masks);
+    }
+    TilemapEditDocument doc(std::move(map), std::move(tiles));
+    TilemapPanel panel(doc);
+    doc.brush = 3;
+    ImGuiWindow* palette = nullptr;
+    const auto draw = [&] {
+        ui.Frame([&] {
+            const ImGuiID palette_id = ImGui::GetID("##left");
+            const auto* parent = ImGui::GetCurrentWindowRead();
+            panel.Draw();
+            for (ImGuiWindow* child : parent->DC.ChildWindows)
+                if (child->ChildId == palette_id) palette = child;
+        });
+    };
+    draw();
+    if (!palette) { CHECK(false); return; }
+    CHECK(palette->Scroll.y == 0.0f);
+    const u64 revision = doc.Revision();
+    CHECK(!panel.FindNextInvalidPaint()); // only the tileset needs a repair
+    draw();
+    draw(); // Apply the palette's requested scroll target.
+    CHECK(palette->Scroll.y > 7000.0f);
+
+    auto& io = ImGui::GetIO();
+    const ImGuiID mask_id = ImHashStr("NESW 99", 0, palette->GetID(2015));
+    const ImRect clip = palette->InnerClipRect;
+    bool mask_visible = false;
+    for (f32 y = clip.Min.y + 2.0f; !mask_visible && y < clip.Max.y; y += 4.0f) {
+        for (f32 x = clip.Min.x + 8.0f; x < clip.Max.x; x += 12.0f) {
+            io.AddMousePosEvent(x, y);
+            draw();
+            if (ImGui::GetHoveredID() == mask_id) { mask_visible = true; break; }
+        }
+    }
+    CHECK(mask_visible && doc.Revision() == revision && doc.brush == 3 && !doc.CanUndo());
+    ImGui::SetScrollY(palette, 0.0f);
+    draw();
+    draw();
+    CHECK(palette->Scroll.y == 0.0f); // Don't fight later manual scrolling.
+}
+
 AETHER_TEST(TilemapEditor_LargeMapOnlyDrawsVisibleGridLines) {
     HeadlessImGui ui;
     auto doc = Doc();

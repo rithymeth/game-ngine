@@ -65,6 +65,7 @@ private:
     std::optional<InvalidPaintCell> invalid_paint_cell_;
     struct InvalidAutotileMask { usize rule, mask; i32 tile; u32 grid_count; };
     std::optional<InvalidAutotileMask> invalid_autotile_mask_;
+    bool scroll_to_invalid_mask_ = false;
     std::optional<u64> invalid_search_revision_;
     struct PendingFocus { i32 x, y; u64 revision; };
     std::optional<PendingFocus> pending_focus_;
