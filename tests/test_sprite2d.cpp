@@ -636,6 +636,78 @@ AETHER_TEST(Sprite2D_ViewCullingAndTilemapBatches) {
     CHECK(inside == 6);
 }
 
+AETHER_TEST(Sprite2D_RotatedTilemapCullingMatchesFullScan) {
+    RegisterSprite2DComponents();
+    World world;
+    Tileset ts;
+    ts.texture = Guid();
+    ts.texture_width = 48;
+    ts.texture_height = 8;
+    ts.tile_width = 24;
+    ts.tile_height = 8;
+    TilemapData map;
+    map.Resize(25, 14);
+    map.AddLayer("ground");
+    map.AddLayer("details");
+    map.Fill(0, 0, 0, 24, 13, 0);
+    map.Fill(1, 3, 2, 21, 9, 1);
+    TilemapRenderer renderer;
+    renderer.pixels_per_unit = 16.0f;
+    const Entity e = world.CreateEntity(Transform{}, renderer);
+    Resolvers2D resolvers;
+    resolvers.tilemaps = [&](const assets::AssetGuid&) { return &map; };
+    resolvers.tilesets = [&](const assets::AssetGuid&) { return &ts; };
+    auto* transform = world.GetComponent<Transform>(e);
+    if (!transform) return;
+
+    for (const f32 angle : {4e-7f, 0.21f, -0.55f, 0.785398f, 1.6f, 3.141593f}) {
+        for (const f32 offset : {0.0f, 1048576.0f}) {
+            transform->position = Vec3(3.75f - offset, -6.25f + offset, 0);
+            transform->rotation = Quaternion{0, 0, std::sin(angle / 2), std::cos(angle / 2)};
+            const auto all = BuildSpriteBatches(world, resolvers);
+            CHECK(all.size() == 1);
+            if (all.size() != 1) return;
+            const auto& vertices = all[0].vertices;
+            const auto compare = [&](const ViewRect& view) {
+                std::vector<usize> expected;
+                for (usize i = 0; i < vertices.size(); i += 4) {
+                    f32 left = vertices[i].x, right = left, bottom = vertices[i].y, top = bottom;
+                    for (usize j = i + 1; j < i + 4; ++j) {
+                        left = std::min(left, vertices[j].x);
+                        right = std::max(right, vertices[j].x);
+                        bottom = std::min(bottom, vertices[j].y);
+                        top = std::max(top, vertices[j].y);
+                    }
+                    if (right >= view.min_x && left <= view.max_x && top >= view.min_y && bottom <= view.max_y)
+                        expected.push_back(i);
+                }
+                const auto culled = BuildSpriteBatches(world, resolvers, &view);
+                if (expected.empty()) {
+                    CHECK(culled.empty());
+                    return;
+                }
+                CHECK(culled.size() == 1);
+                if (culled.size() != 1) return;
+                CHECK(culled[0].QuadCount() == expected.size() && culled[0].texture == ts.texture);
+                if (culled[0].vertices.size() != expected.size() * 4) return;
+                for (usize q = 0; q < expected.size(); ++q) {
+                    for (usize j = 0; j < 4; ++j) {
+                        const auto& a = culled[0].vertices[q * 4 + j];
+                        const auto& b = vertices[expected[q] + j];
+                        CHECK(a.x == b.x && a.y == b.y && a.u == b.u && a.v == b.v);
+                    }
+                }
+            };
+            for (usize i = 0; i < vertices.size(); i += 67) {
+                const auto& v = vertices[i];
+                compare({v.x, v.y, v.x, v.y}); // touching a corner
+                compare({v.x - 3, v.y - 2, v.x + 1, v.y + 3});
+            }
+            compare({100 - offset, 100 + offset, 116 - offset, 125 + offset});
+        }
+    }
+}
+
 AETHER_TEST(Sprite2D_AnimatorPlaysClipsOnTheSprite) {
     RegisterSprite2DComponents();
     World world;

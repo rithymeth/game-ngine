@@ -40,6 +40,48 @@ bool Visible(const ViewRect* view, const Rect& r) {
     return !view || (r.max_x >= view->min_x && r.min_x <= view->max_x && r.max_y >= view->min_y && r.min_y <= view->max_y);
 }
 
+struct CellRange {
+    i32 x0, y0, x1, y1;
+};
+
+CellRange TileCellsInView(const TilemapData& map, const ViewRect* view, const Vec3& origin,
+                          const PlaneRotation& rotation, f32 tw, f32 th) {
+    const CellRange all{0, 0, static_cast<i32>(map.width) - 1, static_cast<i32>(map.height) - 1};
+    if (!view || map.width == 0 || map.height == 0) return all;
+    const f64 left = static_cast<f64>(view->min_x) - origin.x;
+    const f64 right = static_cast<f64>(view->max_x) - origin.x;
+    const f64 bottom = static_cast<f64>(view->min_y) - origin.y;
+    const f64 top = static_cast<f64>(view->max_y) - origin.y;
+    const auto index = [](f64 cell, i32 last) {
+        return static_cast<i32>(std::clamp(std::floor(cell), 0.0, static_cast<f64>(last)));
+    };
+    if (rotation.s == 0.0f && rotation.c == 1.0f) {
+        // Preserve the axis-aligned path's edge convention.
+        return {index(left / tw, all.x1), index(bottom / th, all.y1),
+                index(right / tw, all.x1), index(top / th, all.y1)};
+    }
+
+    const f64 c = rotation.c, s = rotation.s;
+    const f64 ac = std::abs(c), as = std::abs(s), det = c * c + s * s;
+    // A tile's world AABB may overlap the view even when its rotated quad does not.
+    // First expand the view by a tile's AABB half-extents so all such tile centers
+    // are included, then bound the inverse-transformed rectangle in grid space.
+    // The padding covers float rounding when corners are built in world space.
+    const f64 rounding = 8.0 * (std::numeric_limits<f32>::epsilon() *
+        (std::abs(static_cast<f64>(origin.x)) + std::abs(static_cast<f64>(origin.y)) +
+         static_cast<f64>(map.width) * tw + static_cast<f64>(map.height) * th) +
+        std::numeric_limits<f32>::min());
+    const f64 cx = (left + right) * 0.5, cy = (bottom + top) * 0.5;
+    const f64 rx = (right - left + ac * tw + as * th) * 0.5 + rounding;
+    const f64 ry = (top - bottom + as * tw + ac * th) * 0.5 + rounding;
+    const f64 tx = (c * cx + s * cy) / det, ty = (-s * cx + c * cy) / det;
+    const f64 hx = (ac * rx + as * ry) / det, hy = (as * rx + ac * ry) / det;
+    const f64 x0 = (tx - hx) / tw - 0.5, x1 = (tx + hx) / tw - 0.5;
+    const f64 y0 = (ty - hy) / th - 0.5, y1 = (ty + hy) / th - 0.5;
+    if (x1 < 0 || y1 < 0 || x0 > all.x1 || y0 > all.y1) return {0, 0, -1, -1};
+    return {index(x0, all.x1), index(y0, all.y1), index(x1, all.x1), index(y1, all.y1)};
+}
+
 bool FiniteColor(const SpriteColor& color) {
     return std::isfinite(color.r) && std::isfinite(color.g) && std::isfinite(color.b) && std::isfinite(color.a);
 }
@@ -179,24 +221,13 @@ static std::vector<SpriteBatch> BuildSpriteBatchesImpl(const World& world, const
         const f32 th = static_cast<f32>(tileset->tile_height) / renderer->pixels_per_unit;
         if (!std::isfinite(tw) || !std::isfinite(th) || tw <= 0.0f || th <= 0.0f) return;
         const PlaneRotation rotation(t->rotation);
+        const auto cells = TileCellsInView(*map, view, t->position, rotation, tw, th);
+        if (cells.x0 > cells.x1 || cells.y0 > cells.y1) return;
         // Each layer is one item, so layers sort with the entity's order and keep their own order.
         for (usize layer = 0; layer < map->layers.size(); ++layer) {
             Item item{renderer->sorting_layer, renderer->order, t->position.z, sequence, tileset->texture, {}};
-            // Cells in the view only (the rotation is rarely used on maps; the box handles it).
-            i32 x0 = 0, y0 = 0, x1 = static_cast<i32>(map->width) - 1, y1 = static_cast<i32>(map->height) - 1;
-            if (view && std::abs(rotation.s) < 1e-6f && rotation.c > 0.0f) {
-                const auto cell_index = [](f32 bound, f32 origin, f32 size, u32 count) {
-                    const f64 index = std::floor((static_cast<f64>(bound) - origin) / size);
-                    return static_cast<i32>(std::clamp(index, 0.0, static_cast<f64>(count - 1)));
-                };
-                if (map->width == 0 || map->height == 0) return;
-                x0 = cell_index(view->min_x, t->position.x, tw, map->width);
-                y0 = cell_index(view->min_y, t->position.y, th, map->height);
-                x1 = cell_index(view->max_x, t->position.x, tw, map->width);
-                y1 = cell_index(view->max_y, t->position.y, th, map->height);
-            }
-            for (i32 y = y0; y <= y1; ++y) {
-                for (i32 x = x0; x <= x1; ++x) {
+            for (i32 y = cells.y0; y <= cells.y1; ++y) {
+                for (i32 x = cells.x0; x <= cells.x1; ++x) {
                     const i32 tile = ResolveTile(*map, *tileset, layer, x, y);
                     f32 uv[4];
                     if (tile < 0 || !tileset->Uv(tile, uv)) continue;
