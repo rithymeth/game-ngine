@@ -1737,6 +1737,45 @@ AETHER_TEST(Physics2D_LastClearedSolidFlagMatchesReloadedTilemap) {
     CHECK(cast());
 }
 
+AETHER_TEST(Physics2D_CircleCastChunkTraversalKeepsMixedHitSelection) {
+    World world;
+    TilemapData map;
+    map.Resize(4, 1);
+    map.AddLayer("Floor");
+    map.Set(0, 2, 0, 1);
+    Tileset tiles;
+    tiles.SetSolid(1, true);
+    TilemapRenderer renderer;
+    renderer.pixels_per_unit = 16.0f;
+    world.CreateEntity(Transform{Vec3(0, 0, 0), Quaternion::Identity()}, renderer);
+    world.CreateEntity(renderer);
+    world.CreateEntity(Transform{Vec3(0.25f, 0.5f, 0), Quaternion::Identity()});
+
+    const auto crate = Box(world, Vec3(2.5f, 0.5f, 0), {0.5f, 0.5f}, BodyType2D::Static, false);
+    const auto orb = Box(world, Vec3(1.25f, 0.5f, 0), {0.25f, 0.25f}, BodyType2D::Static, false);
+    auto* orb_collider = world.GetComponent<Collider2D>(orb);
+    orb_collider->shape = Shape2D::Circle;
+    orb_collider->radius = 0.25f;
+    orb_collider->layer = 2;
+    const auto trigger = Box(world, Vec3(0.5f, 0.5f, 0), {0.25f, 0.25f}, BodyType2D::Static, false);
+    world.GetComponent<Collider2D>(trigger)->trigger = true;
+
+    int resolutions = 0;
+    Resolvers2D resolvers;
+    resolvers.tilemaps = [&](const assets::AssetGuid&) { ++resolutions; return &map; };
+    resolvers.tilesets = [&](const assets::AssetGuid&) { return &tiles; };
+    Physics2D physics(world, resolvers);
+    const auto cast = [&](u32 mask, RayHit2D& hit) { return physics.CircleCast({0, 0.5f}, {1, 0}, 0.25f, 5, hit, mask); };
+    RayHit2D hit;
+    CHECK(cast(1u, hit) && !hit.tile && hit.entity == crate && hit.distance == 1.75f);
+    CHECK(cast(2u, hit) && !hit.tile && hit.entity == orb && hit.distance == 0.75f && resolutions == 1);
+
+    world.RemoveComponent<Collider2D>(crate);
+    CHECK(cast(1u, hit) && hit.tile && hit.tile_x == 2 && hit.distance == 1.75f);
+    map.layers[0].collides = false;
+    CHECK(!cast(1u, hit) && resolutions == 3);
+}
+
 AETHER_TEST(Physics2D_RaycastsAndOverlaps) {
     World world;
     Tileset ts;
