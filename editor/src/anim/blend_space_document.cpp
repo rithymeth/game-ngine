@@ -96,6 +96,9 @@ bool BlendSpaceDocument::MoveSample(usize index, f32 x, f32 y, u32 divisions, co
     if (index >= space_.samples.size()) return false;
     const f32 nx = Snap(std::clamp(x, space_.x.min, space_.x.max), space_.x.min, space_.x.max, divisions);
     const f32 ny = space_.dimensions == 2 ? Snap(std::clamp(y, space_.y.min, space_.y.max), space_.y.min, space_.y.max, divisions) : 0.0f;
+    const auto& sample = space_.samples[index];
+    // Pointer movement inside the same snap cell is not an edit.
+    if (sample.x == nx && sample.y == ny) return true;
     Edit("Move sample", [&](BlendSpace& s) { s.samples[index].x = nx; s.samples[index].y = ny; }, merge_key);
     return true;
 }

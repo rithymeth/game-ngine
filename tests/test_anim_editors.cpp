@@ -248,6 +248,27 @@ AETHER_TEST(AnimEditors_BlendSpaceEditing) {
     AETHER_CHECK(editor.PreviewWeights().size() == 2);
 }
 
+AETHER_TEST(AnimEditors_BlendSpaceUnchangedSnappedMoveLeavesHistoryAlone) {
+    BlendSpace space;
+    space.dimensions = 2;
+    space.x = {"Right", -1, 1};
+    space.y = {"Forward", 0, 2};
+    BlendSpaceDocument doc(space);
+    const usize sample = doc.AddSample("Stand", 1.0f, 1.0f);
+    doc.MarkSaved();
+    for (int i = 0; i < 3; ++i) {
+        AETHER_CHECK(doc.MoveSample(sample, 1.2f, 1.1f, 4, "drag"));
+    }
+    AETHER_CHECK(!doc.Dirty() && !doc.CanUndo());
+    AETHER_CHECK(doc.Get().samples[sample].x == 1.0f && doc.Get().samples[sample].y == 1.0f);
+
+    AETHER_CHECK(doc.MoveSample(sample, 0.4f, 1.0f, 4, "drag") && doc.Dirty());
+    AETHER_CHECK(doc.Get().samples[sample].x == 0.5f);
+    AETHER_CHECK(doc.Undo() && doc.Get().samples[sample].x == 1.0f && doc.CanRedo());
+    AETHER_CHECK(doc.MoveSample(sample, 0.9f, 1.1f, 4, "drag") && doc.CanRedo());
+    AETHER_CHECK(doc.Redo() && doc.Get().samples[sample].x == 0.5f);
+}
+
 AETHER_TEST(AnimEditors_ClipViewerPlaybackAndNotifies) {
     Skeleton s;
     s.bones = {{"root", -1, {}, Mat4::Identity()}, {"arm", 0, {}, Mat4::Identity()}};
