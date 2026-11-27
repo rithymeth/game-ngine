@@ -1713,6 +1713,47 @@ AETHER_TEST(TilemapEditor_ProjectSwitchProtectsAndClearsOldMap) {
     CHECK(ws.OpenAsset("Tiles/Level1.atilemap", &error) && ws.Tilemap().TilemapFile() != old_map);
 }
 
+AETHER_TEST(TilemapEditor_AutotileMaskUndoKeepsUnrelatedTilesetStorage) {
+    TilemapData map;
+    map.Resize(3, 3);
+    map.AddLayer("Ground");
+    Tileset tiles;
+    tiles.texture_width = tiles.texture_height = 32;
+    tiles.SetSolid(3, true);
+    std::array<i32, 16> river;
+    river.fill(kEmpty);
+    river[kEast] = 1;
+    std::array<i32, 16> road;
+    road.fill(0);
+    const auto river_rule = tiles.AddAutotile("River", river);
+    const auto road_rule = tiles.AddAutotile("Road", road);
+    map.Set(0, 1, 1, AutotileCell(river_rule));
+    TilemapEditDocument doc(std::move(map), std::move(tiles));
+    const auto* rules = doc.GetTileset().autotiles.data();
+    const auto* solid = doc.GetTileset().solid.data();
+    const auto assert_unchanged = [&] {
+        CHECK(doc.GetTileset().autotiles.data() == rules && doc.GetTileset().solid.data() == solid);
+        CHECK(doc.GetTileset().autotiles[road_rule].tiles == road && doc.GetTileset().IsSolid(3));
+        CHECK(doc.Map().Get(0, 1, 1) == AutotileCell(river_rule));
+    };
+
+    CHECK(doc.SetAutotileTile(river_rule, kNorth, 3));
+    auto changed = river;
+    changed[kNorth] = 3;
+    CHECK(doc.FillEmptyAutotileMasks(river_rule, 2));
+    auto complete = changed;
+    std::replace(complete.begin(), complete.end(), kEmpty, 2);
+    CHECK(doc.GetTileset().autotiles[river_rule].tiles == complete);
+    assert_unchanged();
+    CHECK(doc.Undo() && doc.GetTileset().autotiles[river_rule].tiles == changed);
+    assert_unchanged();
+    CHECK(doc.Undo() && !doc.dirty() && doc.GetTileset().autotiles[river_rule].tiles == river);
+    assert_unchanged();
+    CHECK(doc.Redo() && doc.GetTileset().autotiles[river_rule].tiles == changed);
+    CHECK(doc.Redo() && doc.GetTileset().autotiles[river_rule].tiles == complete);
+    assert_unchanged();
+}
+
 AETHER_TEST(TilemapEditor_RenamesAutotileRulesWithoutChangingPaintedCells) {
     HeadlessImGui ui;
     TilemapData map;

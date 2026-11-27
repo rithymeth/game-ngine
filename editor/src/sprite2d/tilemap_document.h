@@ -103,6 +103,10 @@ private:
         usize rule;
         std::string name;
     };
+    struct AutotileMasks {
+        usize rule;
+        std::array<i32, 16> tiles;
+    };
     struct LayerProperties {
         usize layer;
         std::string name;
@@ -123,12 +127,14 @@ private:
         std::vector<std::vector<i32>> cropped_rows;
     };
     struct HistoryEntry {
-        std::variant<sprite2d::TilemapData, BrushEdit, LayerProperties, LayerMove, sprite2d::Tileset, LayerPresence, HeightEdit, AutotileName> edit;
+        std::variant<sprite2d::TilemapData, BrushEdit, LayerProperties, LayerMove, sprite2d::Tileset,
+                     LayerPresence, HeightEdit, AutotileName, AutotileMasks> edit;
         u64 state;
     };
     bool Travel(std::vector<HistoryEntry>& from, std::vector<HistoryEntry>& to);
     void RecordLayerProperties(usize layer);
     void RecordTileset();
+    void RecordAutotileMasks(usize rule);
     LayerPresence& RecordLayerPresence(usize index);
     void RotateLayers(usize from, usize to);
     void SwapHeight(HeightEdit& edit);

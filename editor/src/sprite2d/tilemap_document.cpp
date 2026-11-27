@@ -96,6 +96,13 @@ void TilemapEditDocument::RecordTileset() {
     Changed();
 }
 
+void TilemapEditDocument::RecordAutotileMasks(usize rule) {
+    EndStroke();
+    undo_.push_back({AutotileMasks{rule, tileset_.autotiles[rule].tiles}, state_});
+    redo_.clear();
+    Changed();
+}
+
 TilemapEditDocument::LayerPresence& TilemapEditDocument::RecordLayerPresence(usize index) {
     EndStroke();
     undo_.push_back({LayerPresence{index, active_layer, std::nullopt}, state_});
@@ -349,6 +356,8 @@ bool TilemapEditDocument::Travel(std::vector<HistoryEntry>& from, std::vector<Hi
         std::swap(map_, *opposite_map);
     } else if (auto* rule_name = std::get_if<AutotileName>(&step.edit)) {
         std::swap(tileset_.autotiles[rule_name->rule].name, rule_name->name);
+    } else if (auto* masks = std::get_if<AutotileMasks>(&step.edit)) {
+        std::swap(tileset_.autotiles[masks->rule].tiles, masks->tiles);
     } else if (auto* properties = std::get_if<LayerProperties>(&step.edit)) {
         auto& layer = map_.layers[properties->layer];
         std::swap(layer.name, properties->name);
@@ -578,7 +587,7 @@ bool TilemapEditDocument::SetAutotileTile(usize autotile, u8 mask, i32 tile) {
         const u32 count = tileset_.TileCount();
         if (count != 0 && static_cast<u32>(tile) >= count) return false;
     }
-    RecordTileset();
+    RecordAutotileMasks(autotile);
     tileset_.autotiles[autotile].tiles[mask] = tile;
     return true;
 }
@@ -588,7 +597,7 @@ bool TilemapEditDocument::FillEmptyAutotileMasks(usize autotile, i32 tile) {
         static_cast<u32>(tile) >= tileset_.TileCount()) return false;
     auto& variants = tileset_.autotiles[autotile].tiles;
     if (std::find(variants.begin(), variants.end(), kEmpty) == variants.end()) return false;
-    RecordTileset();
+    RecordAutotileMasks(autotile);
     std::replace(variants.begin(), variants.end(), kEmpty, tile);
     return true;
 }
