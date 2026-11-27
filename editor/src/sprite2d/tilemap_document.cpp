@@ -297,6 +297,8 @@ bool TilemapEditDocument::Travel(std::vector<HistoryEntry>& from, std::vector<Hi
             map_.layers.erase(where);
         }
         std::swap(active_layer, presence->selection);
+    } else if (auto* height = std::get_if<HeightEdit>(&step.edit)) {
+        SwapHeight(*height);
     } else {
         for (auto& [key, value] : std::get<CellEdits>(step.edit))
             std::swap(map_.layers[key.first].cells[key.second], value);
@@ -386,10 +388,42 @@ bool TilemapEditDocument::CanResize(u32 width, u32 height) const {
            (width != map_.width || height != map_.height);
 }
 
+void TilemapEditDocument::SwapHeight(HeightEdit& edit) {
+    const usize cell_count = static_cast<usize>(map_.width) * edit.height;
+    if (edit.height < map_.height) {
+        // A height-only crop removes a contiguous tail from each layer.
+        edit.cropped_rows.resize(map_.layers.size());
+        for (usize i = 0; i < map_.layers.size(); ++i) {
+            auto& cells = map_.layers[i].cells;
+            edit.cropped_rows[i].assign(cells.begin() + static_cast<std::ptrdiff_t>(cell_count), cells.end());
+        }
+        for (auto& layer : map_.layers) layer.cells.resize(cell_count);
+    } else {
+        for (usize i = 0; i < map_.layers.size(); ++i) {
+            auto& cells = map_.layers[i].cells;
+            if (edit.cropped_rows.empty()) cells.resize(cell_count, kEmpty);
+            else cells.insert(cells.end(), edit.cropped_rows[i].begin(), edit.cropped_rows[i].end());
+        }
+        edit.cropped_rows.clear();
+    }
+    std::swap(map_.height, edit.height);
+}
+
 bool TilemapEditDocument::Resize(u32 width, u32 height) {
     if (!CanResize(width, height)) return false;
-    Record();
-    map_.Resize(width, height);
+    const u64 old_count = static_cast<u64>(map_.width) * map_.height;
+    if (width == map_.width && std::all_of(map_.layers.begin(), map_.layers.end(),
+                                        [old_count](const TileLayer& layer) { return layer.cells.size() == old_count; })) {
+        undo_.push_back({HeightEdit{height, {}}, state_});
+        SwapHeight(std::get<HeightEdit>(undo_.back().edit));
+        redo_.clear();
+        Changed();
+    } else {
+        // Width changes re-stride every row; preserve the full state for these
+        // edits and for malformed in-memory layers.
+        Record();
+        map_.Resize(width, height);
+    }
     return true;
 }
 

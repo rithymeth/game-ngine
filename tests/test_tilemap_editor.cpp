@@ -13,6 +13,7 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -1892,6 +1893,33 @@ AETHER_TEST(TilemapEditor_ResizeDialogOpensWithoutChangingTheMap) {
     ui.Frame(draw);
     CHECK(!open);
     CHECK(doc.Map().width == 6 && doc.Map().height == 5 && !doc.dirty() && !doc.CanUndo());
+}
+
+AETHER_TEST(TilemapEditor_HeightResizeRestoresOnlyCroppedRows) {
+    TilemapData map;
+    map.Resize(4, 4);
+    map.AddLayer("Ground");
+    map.AddLayer("Upper");
+    map.Set(0, 1, 1, 3);
+    map.Set(0, 3, 3, 5);
+    map.Set(1, 2, 2, AutotileCell(0));
+    TilemapEditDocument doc(std::move(map), {});
+    const auto ground = reinterpret_cast<std::uintptr_t>(doc.Map().layers[0].cells.data());
+    doc.active_layer = 1;
+    CHECK(doc.Resize(4, 2) && doc.Map().height == 2);
+    CHECK(doc.Map().Get(0, 1, 1) == 3 && reinterpret_cast<std::uintptr_t>(doc.Map().layers[0].cells.data()) == ground);
+    CHECK(doc.Undo() && !doc.dirty() && doc.Map().height == 4 && doc.active_layer == 1);
+    CHECK(doc.Map().Get(0, 3, 3) == 5 && doc.Map().Get(1, 2, 2) == AutotileCell(0));
+    CHECK(reinterpret_cast<std::uintptr_t>(doc.Map().layers[0].cells.data()) == ground);
+    CHECK(doc.Redo() && doc.Map().height == 2);
+
+    CHECK(doc.Resize(4, 3) && doc.Map().Get(1, 2, 2) == kEmpty);
+    doc.brush = 8;
+    doc.Apply(2, 2);
+    CHECK(doc.Map().Get(1, 2, 2) == 8);
+    CHECK(doc.Undo() && doc.Undo() && doc.Map().height == 2);
+    CHECK(doc.Redo() && doc.Map().height == 3 && doc.Map().Get(1, 2, 2) == kEmpty);
+    CHECK(doc.Redo() && doc.Map().Get(1, 2, 2) == 8 && doc.Map().Get(0, 1, 1) == 3);
 }
 
 AETHER_TEST(TilemapEditor_ResizePreservesOverlapAndUndoRestoresCroppedLayers) {

@@ -102,8 +102,12 @@ private:
         // Engaged only while the layer is absent from the live map.
         std::optional<sprite2d::TileLayer> removed;
     };
+    struct HeightEdit {
+        u32 height;
+        std::vector<std::vector<i32>> cropped_rows;
+    };
     struct HistoryEntry {
-        std::variant<Snapshot, CellEdits, LayerProperties, LayerMove, sprite2d::Tileset, LayerPresence> edit;
+        std::variant<Snapshot, CellEdits, LayerProperties, LayerMove, sprite2d::Tileset, LayerPresence, HeightEdit> edit;
         u64 state;
     };
     bool Travel(std::vector<HistoryEntry>& from, std::vector<HistoryEntry>& to);
@@ -112,6 +116,7 @@ private:
     void RecordTileset();
     LayerPresence& RecordLayerPresence(usize index);
     void RotateLayers(usize from, usize to);
+    void SwapHeight(HeightEdit& edit);
     void Changed();
     void ClampActive();
     bool PaintCell(i32 x, i32 y, i32 value);
