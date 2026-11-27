@@ -81,6 +81,23 @@ AETHER_TEST(TimeOfDay_ClockAdvancesWrapsAndCountsDays) {
     CHECK(Near(clock.Hour(), 5.0));
 }
 
+AETHER_TEST(TimeOfDay_ClockSaturatesTheDayCounterAndKeepsTheHourValid) {
+    const i64 last_day = std::numeric_limits<i64>::max();
+    WorldClock clock;
+    CHECK(clock.SetDay(last_day - 1) && clock.SetHour(23.0));
+    clock.Advance(clock.DayLength() + 100.0); // pass midnight twice, landing at 01:00
+    CHECK(clock.Day() == last_day && Near(clock.Hour(), 1.0));
+    clock.Advance(clock.DayLength()); // reaching the limit must not stop the hour
+    CHECK(clock.Day() == last_day && Near(clock.Hour(), 1.0));
+
+    // This is an exact multiple of the two-second day, even though dt * scale overflows.
+    CHECK(clock.SetDay(0) && clock.SetHour(7.0) && clock.SetDayLength(16.0) && clock.SetScale(8.0));
+    clock.Advance(std::numeric_limits<f64>::max());
+    CHECK(clock.Day() == last_day && Near(clock.Hour(), 7.0));
+    clock.Advance(1.0);
+    CHECK(clock.Day() == last_day && Near(clock.Hour(), 19.0));
+}
+
 AETHER_TEST(TimeOfDay_ClockTextPreservesExactMinutes) {
     WorldClock clock;
     for (int m = 0; m < 24 * 60; ++m) {

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 
 namespace aether::tod {
 
@@ -30,13 +31,24 @@ void WorldClock::MakeActive() { g_active = this; }
 
 void WorldClock::Advance(f64 dt) {
     if (!(dt > 0.0) || !std::isfinite(dt) || scale_ <= 0.0) return;
-    hour_ += dt * scale_ / day_length_ * 24.0;
-    if (hour_ >= 24.0) {
-        const f64 days = std::floor(hour_ / 24.0);
-        hour_ -= days * 24.0;
-        if (hour_ < 0.0 || hour_ >= 24.0) hour_ = 0.0; // rounding at the edge
-        day_ += static_cast<i64>(days);
+    const f64 next = hour_ + dt * scale_ / day_length_ * 24.0;
+    if (next < 24.0) {
+        hour_ = next;
+        return;
     }
+    constexpr i64 kLastDay = std::numeric_limits<i64>::max();
+    const f64 days = std::floor(next / 24.0);
+    if (days >= 0x1p63) {
+        // Do not cast an out-of-range (possibly infinite) day count. Keep the
+        // time of day by reducing dt before converting it to in-game hours.
+        const f64 period = day_length_ / scale_;
+        hour_ = std::fmod(hour_ + std::fmod(dt, period) / period * 24.0, 24.0);
+        day_ = kLastDay;
+        return;
+    }
+    hour_ = next - days * 24.0;
+    if (hour_ < 0.0 || hour_ >= 24.0) hour_ = 0.0; // rounding at the edge
+    day_ += std::min(static_cast<i64>(days), kLastDay - day_);
 }
 
 Phase WorldClock::CurrentPhase() const {
