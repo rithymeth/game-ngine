@@ -130,6 +130,15 @@ void SaveInspectorPanel::Draw() {
         Refresh();
     }
     ImGui::SameLine();
+    ImGui::BeginDisabled(!doc_.HasBackup());
+    if (ImGui::Button("Open backup")) {
+        auto backup = doc_.File();
+        backup += ".bak";
+        doc_.Open(backup);
+        message_.clear();
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
     ImGui::BeginDisabled(doc_.IsBackupFile());
     if (ImGui::Button("Delete...")) confirm_delete_ = true;
     ImGui::EndDisabled();

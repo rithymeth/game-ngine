@@ -38,7 +38,7 @@ bool SaveInspectorDocument::HasBackup() const {
     stdfs::path backup = file_;
     backup += ".bak";
     std::error_code ec;
-    return stdfs::exists(backup, ec);
+    return stdfs::is_regular_file(backup, ec);
 }
 
 bool SaveInspectorDocument::Open(const stdfs::path& file) {

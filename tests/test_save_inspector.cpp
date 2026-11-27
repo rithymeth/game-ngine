@@ -294,6 +294,56 @@ AETHER_TEST(SaveInspector_RescuesAnOrphanedBackupThroughCopyAs) {
     CHECK(doc.IsOpen() && doc.File() == orphan && Slurp(orphan) == original);
 }
 
+AETHER_TEST(SaveInspector_OpensPairedBackupOfADamagedPrimary) {
+    const auto dir = Dir("panel_paired_backup");
+    SaveSystem saves(dir);
+    SaveBag bag;
+    bag.SetInt("coins", 17);
+    CHECK(saves.Save("paired", bag).ok);
+    bag.SetInt("coins", 99);
+    CHECK(saves.Save("paired", bag).ok);
+    const auto primary = dir / "paired.asav";
+    const auto backup = dir / "paired.asav.bak";
+    const auto original = Slurp(backup);
+    CHECK(!original.empty());
+    Spit(primary, "damaged primary");
+
+    HeadlessImGui ui;
+    SaveInspectorDocument doc;
+    SaveInspectorPanel panel(doc);
+    panel.SetDirectory(dir);
+    CHECK(!doc.Open(primary));
+    ImVec2 button{};
+    const auto draw = [&] {
+        // Open backup follows Refresh and Reload on the toolbar.
+        const auto origin = ImGui::GetCursorScreenPos();
+        const auto& style = ImGui::GetStyle();
+        const auto width = [&](const char* label) {
+            return ImGui::CalcTextSize(label).x + 2 * style.FramePadding.x;
+        };
+        button = {origin.x + width("Refresh") + width("Reload") + 2 * style.ItemSpacing.x + width("Open backup") / 2,
+                  origin.y + ImGui::GetFrameHeight() / 2};
+        panel.Draw();
+    };
+    ui.Frame(draw);
+    auto& io = ImGui::GetIO();
+    io.AddMousePosEvent(button.x, button.y);
+    ui.Frame(draw);
+    io.AddMouseButtonEvent(0, true);
+    ui.Frame(draw);
+    io.AddMouseButtonEvent(0, false);
+    ui.Frame(draw);
+    if (doc.File() != backup) { CHECK(doc.File() == backup); return; }
+    CHECK(doc.IsBackupFile() && doc.Info().checksum_ok);
+    CHECK(panel.CopyOpen("rescued"));
+    CHECK(!stdfs::exists(dir / "rescued.asav.bak"));
+    CHECK(!panel.DeleteOpen());
+    CHECK(Slurp(primary) == "damaged primary" && Slurp(backup) == original);
+    SaveBag recovered;
+    const auto loaded = saves.Load("rescued", recovered);
+    CHECK(loaded.ok && loaded.warnings.empty() && recovered.GetInt("coins") == 17);
+}
+
 AETHER_TEST(SaveInspector_CopyErrorIsVisibleInsideTheModal) {
     HeadlessImGui ui;
     const auto file = MakeBagSave(Dir("panel_copy_error"));
