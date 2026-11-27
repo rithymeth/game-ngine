@@ -320,6 +320,7 @@ AETHER_TEST(Checkpoints_TheKitAddsItsStageAndSystem) {
     }
 }
 
+#if AETHER_TEST_HAS_SCRIPTING
 namespace {
 
 nlohmann::json AssetEntry(const char* path, const char* importer) {
@@ -393,7 +394,6 @@ AETHER_TEST(Checkpoints_PlayerReachesCheckpointsThroughASceneChange) {
     CHECK(system->Respawn(visitor) == Result::NotInScene); // the last checkpoint is in the other scene
 }
 
-#if AETHER_TEST_HAS_SCRIPTING
 AETHER_TEST(Checkpoints_LuauTableActsOnTheSystem) {
     Rig r;
     script::LuauHost host;

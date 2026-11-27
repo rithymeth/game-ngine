@@ -376,6 +376,7 @@ AETHER_TEST(Spawner_TheKitAddsItsStageAndSystem) {
     CHECK(made == 2);
 }
 
+#if AETHER_TEST_HAS_SCRIPTING
 namespace {
 
 nlohmann::json AssetEntry(const char* path, const char* importer) {
@@ -445,7 +446,6 @@ AETHER_TEST(Spawner_PlayerSpawnsPackagePrefabsAndTellsTheScript) {
     CHECK(ghost_warnings == 1); // a prefab that is not there: one warning, however often the spawner tried
 }
 
-#if AETHER_TEST_HAS_SCRIPTING
 AETHER_TEST(Spawner_LuauTableActsOnTheSystem) {
     Rig r;
     script::LuauHost host;

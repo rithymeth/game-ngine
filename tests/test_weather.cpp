@@ -323,6 +323,7 @@ AETHER_TEST(Weather_TheKitAddsItsStageAndAdvancesTheWeather) {
     CHECK(Near(w.Time(), 15.0, 0.05));
 }
 
+#if AETHER_TEST_HAS_SCRIPTING
 namespace {
 
 nlohmann::json AssetEntry(const char* path, const char* importer) {
@@ -372,7 +373,6 @@ AETHER_TEST(Weather_PlayerRunsTheWeatherThroughASceneChange) {
     CHECK(Near(weather->Time(), 4.0, 0.1) && weather->Wetness() > 0.05f); // four seconds of the frame's dt, scene change and all
 }
 
-#if AETHER_TEST_HAS_SCRIPTING
 AETHER_TEST(Weather_LuauTableActsOnTheWeather) {
     World world;
     WeatherSystem weather;

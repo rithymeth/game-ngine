@@ -115,6 +115,7 @@ AETHER_TEST(TimeOfDay_TheKitAddsItsStageAndAdvancesTheClock) {
     CHECK(Near(clock.Hour(), 1.2, 1e-5));
 }
 
+#if AETHER_TEST_HAS_SCRIPTING
 namespace {
 
 nlohmann::json AssetEntry(const char* path, const char* importer) {
@@ -165,7 +166,6 @@ AETHER_TEST(TimeOfDay_PlayerRunsTheClockThroughASceneChange) {
     CHECK(Near(clock->Hour(), 8.0 + 4.0 / 1200.0 * 24.0, 1e-4)); // four seconds of the frame's dt, scene change and all
 }
 
-#if AETHER_TEST_HAS_SCRIPTING
 AETHER_TEST(TimeOfDay_LuauTableActsOnTheClock) {
     World world;
     WorldClock clock;

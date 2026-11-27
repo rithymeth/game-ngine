@@ -187,6 +187,7 @@ AETHER_TEST(Achievements_TheKitLoadsGoalsAndReportsBadOnes) {
     }
 }
 
+#if AETHER_TEST_HAS_SCRIPTING
 namespace {
 
 nlohmann::json AssetEntry(const char* path, const char* importer) {
@@ -246,7 +247,6 @@ AETHER_TEST(Achievements_PlayerKeepsProgressInTheSaveBagThroughASceneChange) {
     CHECK(after != nullptr && after->Progress("Salvager") == 3 && game.Saves()->Bag().GetInt("achievement.Salvager") == 3); // the scene change left it alone
 }
 
-#if AETHER_TEST_HAS_SCRIPTING
 AETHER_TEST(Achievements_LuauTableActsOnTheSystem) {
     Rig r;
     World world;
