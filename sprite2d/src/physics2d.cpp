@@ -380,8 +380,9 @@ bool CircleCastAabb(Vec2 origin, Vec2 dir, f32 radius, Vec2 lo, Vec2 hi, f32 max
         if (discriminant < 0.0 || a <= 1e-18) continue;
         const f64 root = std::sqrt(discriminant);
         const f64 distance = (-(ox * vx + oy * vy) - root) / a;
-        if (!(distance >= 0.0 && distance <= max_t)) continue;
+        if (!(distance >= 0.0 && distance <= std::numeric_limits<f32>::max())) continue;
         const f32 t = static_cast<f32>(distance);
+        // best is already rounded to hit-distance precision, including ties.
         if (t > best) continue;
 
         // Reconstruct the local contact from its parallel and perpendicular

@@ -1643,6 +1643,30 @@ AETHER_TEST(Physics2D_LongQueriesAgainstCirclesPreserveLateralDistance) {
     CHECK(hit.distance == 0.0f && hit.normal.x == 0.0f && hit.normal.y == 1.0f);
 }
 
+AETHER_TEST(Physics2D_RoundedCornerCastsKeepInclusiveDistanceAndEntityTies) {
+    World world;
+    // Reserve the lower ID first, but insert its collider into the archetype last.
+    const Entity lower = world.CreateEntity();
+    const Vec3 position{100000.0f, 1.2f, 0.0f};
+    const Entity higher = Box(world, position, {1, 1}, BodyType2D::Static, false);
+    Physics2D physics(world);
+    constexpr Vec2 origin{0, 0}, direction{1, 0};
+    RayHit2D hit;
+    if (!physics.CircleCast(origin, direction, 0.5f, 110000.0f, hit)) { CHECK(false); return; }
+    CHECK(hit.entity == higher);
+    const f32 reported = hit.distance;
+    CHECK(physics.CircleCast(origin, direction, 0.5f, reported, hit));
+    CHECK(hit.entity == higher && hit.distance == reported);
+    CHECK(!physics.CircleCast(origin, direction, 0.5f, std::nextafter(reported, 0.0f), hit));
+
+    world.AddComponent<Transform>(lower, Transform{position, Quaternion::Identity()});
+    Collider2D collider;
+    collider.half_extents = {1, 1};
+    world.AddComponent<Collider2D>(lower, collider);
+    CHECK(physics.CircleCast(origin, direction, 0.5f, 110000.0f, hit));
+    CHECK(hit.entity == lower && hit.distance == reported);
+}
+
 AETHER_TEST(Physics2D_CastsHitClosedTileEdges) {
     World world;
     Tileset tiles;
