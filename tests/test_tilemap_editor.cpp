@@ -2117,6 +2117,30 @@ AETHER_TEST(TilemapEditor_ResizeDialogOpensWithoutChangingTheMap) {
     CHECK(doc.Map().width == 6 && doc.Map().height == 5 && !doc.dirty() && !doc.CanUndo());
 }
 
+AETHER_TEST(TilemapEditor_ExistingOversizedMapsCanBeCroppedWithoutGrowingAnAxis) {
+    TilemapData map;
+    constexpr u32 width = 4096;
+    constexpr u32 height = 1026; // just above the editor's usual 4 Mi-cell budget
+    map.Resize(width, height);
+    map.AddLayer("Imported ground");
+    map.Set(0, 6, 0, 2);
+    map.Set(0, 6, height - 2, 3);
+    map.Set(0, 6, height - 1, 4);
+    TilemapEditDocument doc(std::move(map), Doc().GetTileset());
+
+    CHECK(!doc.CanResize(width, height + 1));
+    CHECK(!doc.CanResize(width + 1, height - 1)); // lower area alone does not permit a wider map
+    CHECK(!doc.Resize(width, height + 1) && !doc.CanUndo() && !doc.dirty());
+    CHECK(doc.CanResize(width - 1, height)); // a width-only crop is allowed too
+    if (!doc.Resize(width, height - 1)) { CHECK(false); return; }
+    CHECK(doc.Map().width == width && doc.Map().height == height - 1 && doc.dirty());
+    CHECK(doc.Map().Get(0, 6, 0) == 2 && doc.Map().Get(0, 6, height - 2) == 3 &&
+          doc.Map().Get(0, 6, height - 1) == kEmpty);
+    CHECK(!doc.CanResize(width, height)); // cannot regrow past the budget through Resize
+    CHECK(doc.Undo() && !doc.dirty() && doc.Map().height == height && doc.Map().Get(0, 6, height - 1) == 4);
+    CHECK(doc.Redo() && doc.dirty() && doc.Map().height == height - 1);
+}
+
 AETHER_TEST(TilemapEditor_HeightResizeRestoresOnlyCroppedRows) {
     TilemapData map;
     map.Resize(4, 4);

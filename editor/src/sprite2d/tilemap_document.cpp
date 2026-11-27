@@ -432,8 +432,12 @@ bool TilemapEditDocument::SetLayerCollides(usize layer, bool collides) {
 }
 
 bool TilemapEditDocument::CanResize(u32 width, u32 height) const {
-    return !in_stroke_ && width > 0 && height > 0 && static_cast<u64>(width) * height <= 4u * 1024u * 1024u &&
-           (width != map_.width || height != map_.height);
+    if (in_stroke_ || width == 0 || height == 0 || (width == map_.width && height == map_.height))
+        return false;
+    // Loaded assets can exceed the editor's growth budget. Let authors crop
+    // those maps without having to discard enough tiles to reach the cap at once.
+    return static_cast<u64>(width) * height <= 4u * 1024u * 1024u ||
+           (width <= map_.width && height <= map_.height);
 }
 
 void TilemapEditDocument::SwapHeight(HeightEdit& edit) {

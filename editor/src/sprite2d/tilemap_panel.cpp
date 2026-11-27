@@ -369,7 +369,7 @@ void TilemapPanel::DrawResizeDialog() {
     const u32 height = positive ? static_cast<u32>(resize_height_) : 0;
     const bool allowed = doc_.CanResize(width, height);
     if (!positive || ((width != map.width || height != map.height) && !allowed))
-        ImGui::TextDisabled("Enter positive dimensions totaling at most 4,194,304 cells.");
+        ImGui::TextWrapped("Enter positive dimensions. Above 4,194,304 cells, only cropping is allowed.");
     else if (width < map.width || height < map.height)
         ImGui::TextUnformatted("Cells beyond the new top and right edges will be removed. Undo restores them.");
     else
