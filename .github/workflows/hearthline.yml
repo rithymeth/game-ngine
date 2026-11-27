@@ -1,0 +1,29 @@
+name: Hearthline standalone validation
+
+on:
+  push:
+    paths:
+      - "games/HEARTHLINE/**"
+      - ".github/workflows/hearthline.yml"
+  pull_request:
+    paths:
+      - "games/HEARTHLINE/**"
+      - ".github/workflows/hearthline.yml"
+  workflow_dispatch:
+
+jobs:
+  gameplay:
+    name: Build and test Hearthline
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Configure standalone game
+        run: cmake -S games/HEARTHLINE -B build/hearthline -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+      - name: Compile with warnings
+        run: cmake --build build/hearthline --parallel 2
+      - name: Run expedition regressions
+        run: ctest --test-dir build/hearthline --output-on-failure
+      - name: Smoke test CLI
+        run: printf 'x\n' | build/hearthline/hearthline_sim 7
