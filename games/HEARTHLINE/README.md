@@ -1,32 +1,47 @@
 # HEARTHLINE — First Expedition
 
-Prototype for a top-down survival-adventure built alongside the Aether Engine.
+Top-down 2D exploration, combat, building, survival, and beacon puzzle prototype.
 
-## Scope
-- A deterministic **512 x 512** terrain simulation, with a **128 x 128** authored expedition area and three conceptual map layers.
-- Gather wood, stone, energy, and food.
-- Bridge a river, fight a guardian, place light relays, activate a beacon, build a campfire, and survive the night.
-- Fixed-time action simulation and three seeded regression expeditions.
+## Play the graphical prototype (native SDL2)
 
-## Build and test
+Requires CMake 3.21+, C++20 compiler, SDL2 development libraries, and a graphical desktop.
 
 ```sh
-cmake -S games/HEARTHLINE -B build/hearthline -DBUILD_TESTING=ON
+cmake -S games/HEARTHLINE -B build/hearthline -DHEARTHLINE_BUILD_VISUAL=ON -DBUILD_TESTING=ON
 cmake --build build/hearthline
 ctest --test-dir build/hearthline --output-on-failure
+./build/hearthline/hearthline_visual
 ```
 
-For now, `hearthline_sim` is a **terminal-driven simulation**, not the earlier described full SDL/WebAssembly playable release. The engine-independent core is intended to be integrated with the existing SDL and Aether renderer before shipping. No assets are imported or copied from another game.
+On Ubuntu, install SDL2 with `sudo apt-get install libsdl2-dev`. The visual executable is opt-in so ordinary simulation-only builds have no SDL2 dependency. For a noninteractive SDL test:
+```sh
+SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software ./build/hearthline/hearthline_visual --smoke --seed 7
+```
 
-## Current constraints
-- The relay puzzle is a fixed two-node arrangement (105,64) and (107,64) facing east, not a generalized circuit solver.
-- The world is generated as a dense in-memory tile grid. World streaming, save/load, pathfinding, and visual rendering are pending.
-- Survival and enemy behaviors are simplified to deterministic turn actions for reproducible tests.
-- Interactive graphical playtesting and FPS benchmarking have not yet happened.
+## Game objectives
 
-## Key controls for terminal simulation
-`w a s d`: move, `g`: gather, `b`: bridge, `k`: attack,
-`v`: dodge, `p`/`q`: place relays, `e`: activate beacon,
-`f`: build fire, `r`: refuel, `h`: heal, `x`: quit.
+Collect resources around the opening camp, build the bridge at x=62, cross the river, defeat the guardian near x=90, place two east-facing relays at x=105 and x=107, then activate the beacon at x=108. Build a campfire and survive 24 action turns, replenishing firewood as needed.
 
-This branch intentionally does not alter the engine or other games, so it does not resolve unrelated pull-request merge conflicts.
+| Key | Action |
+| --- | --- |
+| Arrow keys / WASD | Move one tile |
+| G | Gather nearby resource |
+| B | Build bridge at crossing |
+| K / V | Attack / dodge guardian |
+| P / Q | Place relay at fixed first / second puzzle socket |
+| E | Activate solved beacon |
+| F / R | Build campfire / refuel |
+| H | Heal using food |
+| 1 / 2 | Build wall to east / rotate adjacent eastern relay |
+| Escape | Pause |
+| Ctrl+N or F5 after win/loss | Restart |
+
+The window title gives the current objective and exact inventory quantities; the HUD shows health, inventory bars, night progress, and fuel. The visuals currently use colored tile primitives, not production sprites or text rendering.
+
+## Implementation and limitations
+
+- Deterministic **512 x 512** tile terrain with a designated **128 x 128** expedition area. `kLayerCount = 3` is reserved, but the current terrain grid is a single array and not yet three independently authored tile layers.
+- Shared gameplay simulation in `src/game.cpp`; the SDL2 host in `src/visual_main.cpp` draws only visible tiles around the player and sends keyboard actions to the same core.
+- Three seeded regression expeditions run in CTest; CI also verifies SDL2 headless startup.
+- This is a **native graphical prototype**, not yet a WebAssembly/browser export, Aether sprite-batch renderer, or tested commercial-quality experience.
+- No sprites, sounds, save/load, world streaming, generalized relay solver, or benchmarked 60 FPS guarantee.
