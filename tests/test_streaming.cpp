@@ -270,6 +270,18 @@ AETHER_TEST(Streaming_FilesAndFloatingOrigin) {
     std::filesystem::remove_all(dir);
 }
 
+AETHER_TEST(Streaming_FileLoaderRejectsNonFilesAndPreservesOutput) {
+    const auto dir = std::filesystem::temp_directory_path() / "streaming_invalid_cell";
+    std::filesystem::create_directories(CellFile(dir, {1, 0}));
+    auto load = WorldStreamer::FileLoader(dir);
+    const std::vector<u8> sentinel{0xAA, 0x00, 0xFF};
+    auto out = sentinel;
+    CHECK(!load({0, 0}, out)); // missing file
+    CHECK(out == sentinel);
+    CHECK(!load({1, 0}, out)); // an unreadable cell must not throw out of an async task
+    CHECK(out == sentinel);
+}
+
 namespace {
 // A manual-step executor: tasks queue until the test runs them, standing in for a worker thread.
 struct ManualExecutor {
