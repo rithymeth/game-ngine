@@ -427,6 +427,10 @@ void TilemapPanel::DrawLayers() {
 
 void TilemapPanel::DrawPalette() {
     const Tileset& ts = doc_.GetTileset();
+    const auto pick_brush = [&](i32 tile) {
+        doc_.brush = tile;
+        if (doc_.tool == TileTool::Erase) doc_.tool = TileTool::Paint;
+    };
     ImGui::SeparatorText("Tiles");
     if (!sheet_status_.empty()) ImGui::TextWrapped("%s", sheet_status_.c_str());
     const f32 cell = 28.0f;
@@ -446,10 +450,7 @@ void TilemapPanel::DrawPalette() {
                 if (i != first) ImGui::SameLine(0.0f, 2.0f);
                 ImGui::PushID(static_cast<int>(i));
                 const ImVec2 p = ImGui::GetCursorScreenPos();
-                if (ImGui::InvisibleButton("##tile", ImVec2(cell, cell))) {
-                    doc_.brush = static_cast<i32>(i);
-                    if (doc_.tool == TileTool::Erase) doc_.tool = TileTool::Paint;
-                }
+                if (ImGui::InvisibleButton("##tile", ImVec2(cell, cell))) pick_brush(static_cast<i32>(i));
                 const ImVec2 end(p.x + cell, p.y + cell);
                 dl->AddRectFilled(p, end, IM_COL32(30, 30, 36, 255));
                 if (!DrawTileArt(dl, p, end, static_cast<i32>(i))) {
@@ -475,7 +476,7 @@ void TilemapPanel::DrawPalette() {
         ImGui::PushID(static_cast<int>(1000 + i));
         const bool active = doc_.brush == AutotileCell(i);
         if (ImGui::Selectable(ts.autotiles[i].name.c_str(), active)) {
-            doc_.brush = AutotileCell(i);
+            pick_brush(AutotileCell(i));
             selected_autotile_ = static_cast<int>(i);
         }
         ImGui::PopID();
@@ -483,7 +484,7 @@ void TilemapPanel::DrawPalette() {
     if (ImGui::SmallButton("Add autotile")) {
         const usize n = doc_.AddAutotile("Autotile " + std::to_string(ts.autotiles.size() + 1));
         selected_autotile_ = static_cast<int>(n);
-        doc_.brush = AutotileCell(n);
+        pick_brush(AutotileCell(n));
     }
     if (selected_autotile_ >= 0 && static_cast<usize>(selected_autotile_) < ts.autotiles.size() && doc_.brush >= 0) {
         // Assigns the brush tile to a neighbour mask of the selected autotile.

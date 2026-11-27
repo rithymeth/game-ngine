@@ -11,6 +11,7 @@
 #include "workspace/editor_workspace.h"
 
 #include <imgui.h>
+#include <imgui_internal.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -691,6 +692,68 @@ AETHER_TEST(TilemapEditor_PanelDrawsHeadless) {
         doc.tool = t;
         ui.Frame([&] { panel.Draw(); });
     }
+}
+
+AETHER_TEST(TilemapEditor_ChoosingAnAutotileLeavesEraseMode) {
+    HeadlessImGui ui;
+    auto doc = Doc();
+    const usize ground = doc.AddAutotile("Ground");
+    doc.brush = 3;
+    doc.Apply(0, 0);
+    doc.brush = kEmpty;
+    doc.tool = TileTool::Erase;
+    TilemapPanel panel(doc);
+    ImGuiWindow* palette = nullptr;
+    ImVec2 canvas_origin;
+    const auto draw = [&] {
+        const ImGuiID palette_id = ImGui::GetID("##left");
+        const ImGuiWindow* parent = ImGui::GetCurrentWindowRead();
+        panel.Draw();
+        for (ImGuiWindow* child : parent->DC.ChildWindows)
+            if (child->ChildId == palette_id) palette = child;
+        const auto& padding = ImGui::GetStyle().WindowPadding;
+        canvas_origin = {ImGui::GetItemRectMin().x + padding.x + 8.0f,
+                         ImGui::GetItemRectMax().y - padding.y - 8.0f};
+    };
+    auto& io = ImGui::GetIO();
+    const auto click = [&] {
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+        ui.Frame(draw);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+        ui.Frame(draw);
+    };
+    const auto click_palette_item = [&](ImGuiID item) {
+        // Find the actual interactive row without baking in a font or panel layout.
+        const ImRect clip = palette->InnerClipRect;
+        for (f32 y = clip.Min.y + 2.0f; y < clip.Max.y; y += 4.0f) {
+            io.AddMousePosEvent(clip.Min.x + 16.0f, y);
+            ui.Frame(draw);
+            if (ImGui::GetHoveredID() == item) {
+                click();
+                return true;
+            }
+        }
+        return false;
+    };
+
+    ui.Frame(draw);
+    if (!palette) { CHECK(false); return; }
+    const u64 revision = doc.Revision();
+    const ImGuiID ground_id = ImHashStr("Ground", 0, palette->GetID(1000));
+    CHECK(click_palette_item(ground_id));
+    CHECK(doc.tool == TileTool::Paint && doc.brush == AutotileCell(ground));
+    CHECK(doc.Revision() == revision); // selecting a rule is not an edit
+    io.AddMousePosEvent(canvas_origin.x + panel.zoom * 0.5f, canvas_origin.y - panel.zoom * 0.5f);
+    ui.Frame(draw);
+    click();
+    CHECK(doc.Map().Get(0, 0, 0) == AutotileCell(ground));
+    CHECK(doc.Undo() && doc.Map().Get(0, 0, 0) == 3);
+
+    doc.tool = TileTool::Erase;
+    CHECK(click_palette_item(palette->GetID("Add autotile")));
+    CHECK(doc.GetTileset().autotiles.size() == 2);
+    CHECK(doc.tool == TileTool::Paint && doc.brush == AutotileCell(1));
+    CHECK(doc.Undo() && doc.GetTileset().autotiles.size() == 1);
 }
 
 AETHER_TEST(TilemapEditor_WheelZoomKeepsTheHoveredCellUnderTheCursor) {
