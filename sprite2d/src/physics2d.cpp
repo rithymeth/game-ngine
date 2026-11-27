@@ -1168,21 +1168,32 @@ std::vector<Entity> Physics2D::OverlapOrientedBox(Vec2 center, Vec2 half, f32 ra
 std::vector<Entity> Physics2D::OverlapCapsule(Vec2 point_a, Vec2 point_b, f32 radius, u32 mask) const {
     std::vector<Entity> result;
     if (!IsFinite(point_a) || !IsFinite(point_b) || !std::isfinite(radius) || radius < 0.0f) return result;
-    const Vec2 segment = point_b - point_a;
-    const f32 segment_length_sq = segment.Dot(segment);
-    auto distance_sq_to_segment = [&](Vec2 point) {
-        const f32 t = segment_length_sq > 0.0f
-                          ? std::clamp((point - point_a).Dot(segment) / segment_length_sq, 0.0f, 1.0f)
-                          : 0.0f;
-        const Vec2 delta = point - (point_a + segment * t);
-        return delta.Dot(delta);
+    // Canonicalize the endpoints so even boundary rounding is order independent.
+    if (point_a.x > point_b.x || (point_a.x == point_b.x && point_a.y > point_b.y)) std::swap(point_a, point_b);
+    const f64 sx = static_cast<f64>(point_b.x) - point_a.x;
+    const f64 sy = static_cast<f64>(point_b.y) - point_a.y;
+    const f64 length_sq = sx * sx + sy * sy;
+    const auto distance_sq_to_segment = [&](Vec2 point) {
+        const f64 dx = static_cast<f64>(point.x) - point_a.x;
+        const f64 dy = static_cast<f64>(point.y) - point_a.y;
+        const f64 projection = dx * sx + dy * sy;
+        if (length_sq == 0.0 || projection <= 0.0) return dx * dx + dy * dy;
+        if (projection >= length_sq) {
+            const f64 end_dx = static_cast<f64>(point.x) - point_b.x;
+            const f64 end_dy = static_cast<f64>(point.y) - point_b.y;
+            return end_dx * end_dx + end_dy * end_dy;
+        }
+        // Compute perpendicular distance locally, without reconstructing a
+        // rounded world-space point on a long segment.
+        const f64 cross = dx * sy - dy * sx;
+        return cross * cross / length_sq;
     };
-    auto point_box_distance_sq = [](Vec2 point, Vec2 box_center, Vec2 half) {
-        const f32 dx = std::max(std::fabs(point.x - box_center.x) - half.x, 0.0f);
-        const f32 dy = std::max(std::fabs(point.y - box_center.y) - half.y, 0.0f);
+    const auto point_box_distance_sq = [](Vec2 point, Vec2 box_center, Vec2 half) {
+        const f64 dx = std::max(std::fabs(static_cast<f64>(point.x) - box_center.x) - half.x, 0.0);
+        const f64 dy = std::max(std::fabs(static_cast<f64>(point.y) - box_center.y) - half.y, 0.0);
         return dx * dx + dy * dy;
     };
-    const f32 radius_sq = radius * radius;
+    const f64 radius_sq = static_cast<f64>(radius) * radius;
     EachEntity(world_, [&](Entity e) {
         const Transform* transform = world_.GetComponent<Transform>(e);
         const Collider2D* collider = world_.GetComponent<Collider2D>(e);
@@ -1190,7 +1201,7 @@ std::vector<Entity> Physics2D::OverlapCapsule(Vec2 point_a, Vec2 point_b, f32 ra
         const Vec2 center{transform->position.x + collider->offset.x,
                           transform->position.y + collider->offset.y};
         if (collider->shape == Shape2D::Circle) {
-            const f32 combined_radius = radius + collider->radius;
+            const f64 combined_radius = static_cast<f64>(radius) + collider->radius;
             if (distance_sq_to_segment(center) <= combined_radius * combined_radius) result.push_back(e);
             return;
         }
@@ -1202,17 +1213,17 @@ std::vector<Entity> Physics2D::OverlapCapsule(Vec2 point_a, Vec2 point_b, f32 ra
         const f32 min_y = std::min(point_a.y, point_b.y), max_y = std::max(point_a.y, point_b.y);
         bool intersects_box = max_x >= lo.x && min_x <= hi.x && max_y >= lo.y && min_y <= hi.y;
         if (intersects_box) {
-            f32 t_min = 0.0f, t_max = 1.0f;
-            auto clip_axis = [&](f32 start, f32 delta, f32 min_value, f32 max_value) {
+            f64 t_min = 0.0, t_max = 1.0;
+            auto clip_axis = [&](f64 start, f64 delta, f64 min_value, f64 max_value) {
                 if (std::fabs(delta) < 1e-9f) return start >= min_value && start <= max_value;
-                f32 t0 = (min_value - start) / delta, t1 = (max_value - start) / delta;
+                f64 t0 = (min_value - start) / delta, t1 = (max_value - start) / delta;
                 if (t0 > t1) std::swap(t0, t1);
                 t_min = std::max(t_min, t0);
                 t_max = std::min(t_max, t1);
                 return t_min <= t_max;
             };
-            intersects_box = clip_axis(point_a.x, segment.x, lo.x, hi.x) &&
-                             clip_axis(point_a.y, segment.y, lo.y, hi.y);
+            intersects_box = clip_axis(point_a.x, sx, lo.x, hi.x) &&
+                             clip_axis(point_a.y, sy, lo.y, hi.y);
         }
         if (intersects_box || point_box_distance_sq(point_a, center, half) <= radius_sq ||
             point_box_distance_sq(point_b, center, half) <= radius_sq ||

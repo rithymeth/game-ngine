@@ -1828,6 +1828,33 @@ AETHER_TEST(Physics2D_RoundedCornerCastsKeepInclusiveDistanceAndEntityTies) {
     CHECK(hit.entity == lower && hit.distance == reported);
 }
 
+AETHER_TEST(Physics2D_LongCapsuleOverlapIsIndependentOfEndpointOrder) {
+    World world;
+    const Entity circle = Box(world, Vec3(32791.0f, 0.5f, 0), {0.25f, 0.25f}, BodyType2D::Static, false);
+    auto* orb = world.GetComponent<Collider2D>(circle);
+    orb->shape = Shape2D::Circle;
+    orb->radius = 0.25f;
+    Box(world, Vec3(32792.0f, std::nextafter(0.5f, 1.0f), 0), {0.25f, 0.25f}, BodyType2D::Static, false);
+    const Entity miss = Box(world, Vec3(32790.0f, std::nextafter(0.5f, 1.0f), 0),
+                            {0.25f, 0.25f}, BodyType2D::Static, false);
+    auto* miss_collider = world.GetComponent<Collider2D>(miss);
+    miss_collider->shape = Shape2D::Circle;
+    miss_collider->radius = 0.25f;
+    const Entity tangent_box = Box(world, Vec3(32791.125f, -0.5f, 0), {0.125f, 0.25f}, BodyType2D::Static, false);
+    const Entity endpoint = Box(world, Vec3(100000.5f, 0, 0), {0.25f, 0.25f}, BodyType2D::Static, false);
+    world.GetComponent<Collider2D>(endpoint)->layer = 2;
+    Physics2D physics(world);
+
+    const std::vector<Entity> expected{circle, tangent_box, endpoint};
+    CHECK(physics.OverlapCapsule({0, 0}, {100000, 0}, 0.25f) == expected);
+    CHECK(physics.OverlapCapsule({100000, 0}, {0, 0}, 0.25f) == expected);
+    CHECK(physics.OverlapCapsule({32790, 0}, {32793, 0}, 0.25f, 1u) ==
+          (std::vector<Entity>{circle, tangent_box}));
+    CHECK(physics.OverlapCapsule({100000, 0}, {0, 0}, 0.25f, 2u) == (std::vector<Entity>{endpoint}));
+    CHECK(physics.OverlapCapsule({32791, 0}, {32791, 0}, 0.25f, 1u) ==
+          physics.OverlapCircle({32791, 0}, 0.25f, 1u));
+}
+
 AETHER_TEST(Physics2D_CastsHitClosedTileEdges) {
     World world;
     Tileset tiles;
