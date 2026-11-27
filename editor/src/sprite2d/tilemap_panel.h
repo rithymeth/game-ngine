@@ -17,8 +17,15 @@ namespace aether::editor {
 // drag to pan). Art comes from the authored tileset texture when readable,
 // with numbered swatches as the fallback.
 class TilemapPanel {
+#if defined(__APPLE__)
+    static constexpr bool kNativeCommand = true;
+#else
+    static constexpr bool kNativeCommand = false;
+#endif
+
 public:
-    explicit TilemapPanel(TilemapEditDocument& document) : doc_(document) {}
+    explicit TilemapPanel(TilemapEditDocument& document, bool native_command = kNativeCommand)
+        : doc_(document), native_command_(native_command) {}
     void Draw();
     bool FindNextInvalidPaint();
     bool FocusCell(usize layer, i32 x, i32 y);
@@ -41,6 +48,7 @@ private:
     bool JumpProofCellMatchesMap() const;
 
     TilemapEditDocument& doc_;
+    bool native_command_;
     assets::ImageData pending_sheet_;
     ImageTexture sheet_;
     std::string sheet_status_;

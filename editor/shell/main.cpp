@@ -381,8 +381,8 @@ int main(int argc, char** argv) {
         ImGuiIO& io = ImGui::GetIO();
         io.IniFilename = nullptr; // set below, once it is known whether this run remembers anything
         io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-        // Shortcuts use Ctrl everywhere: the engine's key set has no Cmd key
-        // yet, so ImGui's macOS Ctrl/Cmd swap would leave none reachable.
+        // Keep physical Ctrl for shared editor commands. Panels with native
+        // macOS shortcuts can bind Command locally without swapping all keys.
         io.ConfigMacOSXBehaviors = false;
         ApplyEditorTheme();
         ImGuiVulkanHost host(*device, *swap_chain);
