@@ -1702,6 +1702,41 @@ AETHER_TEST(Physics2D_CircleOverlapKeepsTriggersMasksAndLiveColliderEdits) {
     CHECK(physics.OverlapCircle({0, 0}, 1.0f, 1u).empty());
 }
 
+AETHER_TEST(Physics2D_LastClearedSolidFlagMatchesReloadedTilemap) {
+    World world;
+    Tileset tiles;
+    tiles.texture_width = tiles.texture_height = 64;
+    tiles.SetSolid(3, true);
+    tiles.SetSolid(7, true);
+    tiles.SetSolid(7, false);
+    CHECK(tiles.IsSolid(3) && !tiles.IsSolid(7) && tiles.solid.size() == 4);
+    tiles.SetSolid(3000, false);
+    CHECK(tiles.solid.size() == 4); // clearing an implicit zero shouldn't grow the table
+
+    TilemapData map;
+    map.Resize(4, 1);
+    map.AddLayer("Wall");
+    map.Set(0, 2, 0, 3);
+    TilemapRenderer renderer;
+    renderer.pixels_per_unit = 16.0f;
+    world.CreateEntity(Transform{Vec3(0, 0, 0), Quaternion::Identity()}, renderer);
+    Resolvers2D resolvers;
+    resolvers.tilemaps = [&](const assets::AssetGuid&) { return &map; };
+    resolvers.tilesets = [&](const assets::AssetGuid&) { return &tiles; };
+    Physics2D physics(world, resolvers);
+    const auto cast = [&] {
+        RayHit2D hit;
+        return physics.CircleCast({0, 0.5f}, {1, 0}, 0.25f, 4.0f, hit) && hit.tile && hit.tile_x == 2;
+    };
+    CHECK(cast());
+    tiles.SetSolid(3, false);
+    CHECK(tiles.solid.empty() && !cast());
+    Tileset reloaded;
+    CHECK(TilesetFromJson(TilesetToJson(tiles), reloaded) && reloaded.solid == tiles.solid);
+    tiles.SetSolid(3, true);
+    CHECK(cast());
+}
+
 AETHER_TEST(Physics2D_RaycastsAndOverlaps) {
     World world;
     Tileset ts;

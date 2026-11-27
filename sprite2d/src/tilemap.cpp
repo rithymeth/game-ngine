@@ -81,8 +81,16 @@ bool Tileset::Uv(i32 tile, f32 out[4]) const {
 
 void Tileset::SetSolid(i32 tile, bool value) {
     if (tile < 0) return;
-    if (static_cast<usize>(tile) >= solid.size()) solid.resize(static_cast<usize>(tile) + 1, 0);
-    solid[static_cast<usize>(tile)] = value ? 1 : 0;
+    const auto index = static_cast<usize>(tile);
+    if (value) {
+        if (index >= solid.size()) solid.resize(index + 1, 0);
+        solid[index] = 1;
+    } else if (index < solid.size()) {
+        solid[index] = 0;
+        // Missing entries already mean non-solid. Match the representation
+        // obtained after loading, including an empty table after the last clear.
+        while (!solid.empty() && solid.back() == 0) solid.pop_back();
+    }
 }
 
 usize Tileset::AddAutotile(const std::string& name, const std::array<i32, 16>& tiles) {
