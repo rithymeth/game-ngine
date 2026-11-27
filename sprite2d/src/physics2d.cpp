@@ -1021,31 +1021,28 @@ bool Physics2D::BoxCast(Vec2 origin, Vec2 half, Vec2 dir, f32 max_distance, RayH
         return true;
     };
 
-    EachEntity(world_, [&](Entity e) {
-        const Transform* transform = world_.GetComponent<Transform>(e);
-        const Collider2D* collider = world_.GetComponent<Collider2D>(e);
-        if (!transform || !collider || !IsValidCollider(*collider, *transform) || collider->trigger ||
-            (collider->layer & mask) == 0) return;
-        const Vec2 center{transform->position.x + collider->offset.x,
-                          transform->position.y + collider->offset.y};
+    EachCollider(world_, [&](Entity e, const Transform& transform, const Collider2D& collider) {
+        if (!IsValidCollider(collider, transform) || collider.trigger || (collider.layer & mask) == 0) return;
+        const Vec2 center{transform.position.x + collider.offset.x,
+                          transform.position.y + collider.offset.y};
         f32 t = 0.0f;
         Vec2 normal{}, point{};
-        if (collider->shape == Shape2D::Box) {
-            if (!sweep_box_target({center.x - collider->half_extents.x, center.y - collider->half_extents.y},
-                                  {center.x + collider->half_extents.x, center.y + collider->half_extents.y},
+        if (collider.shape == Shape2D::Box) {
+            if (!sweep_box_target({center.x - collider.half_extents.x, center.y - collider.half_extents.y},
+                                  {center.x + collider.half_extents.x, center.y + collider.half_extents.y},
                                   best, t, normal, point)) return;
         } else {
-            if (!CircleCastAabb(origin, dir, collider->radius,
+            if (!CircleCastAabb(origin, dir, collider.radius,
                                 {center.x - half.x, center.y - half.y},
                                 {center.x + half.x, center.y + half.y}, best, t, normal, point)) return;
-            point = center + normal * collider->radius;
+            point = center + normal * collider.radius;
         }
         set_hit(t, point, normal, e, false, 0, 0);
     });
 
     if (tiles_.tilemaps && tiles_.tilesets && (mask & 1u) != 0) {
         const Vec2 end = origin + dir * best;
-        EachEntity(world_, [&](Entity e) {
+        EachTilemapEntity(world_, [&](Entity e) {
             const TilemapRenderer* renderer = world_.GetComponent<TilemapRenderer>(e);
             const Transform* transform = world_.GetComponent<Transform>(e);
             if (!renderer || !transform) return;

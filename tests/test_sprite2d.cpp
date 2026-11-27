@@ -1737,7 +1737,7 @@ AETHER_TEST(Physics2D_LastClearedSolidFlagMatchesReloadedTilemap) {
     CHECK(cast());
 }
 
-AETHER_TEST(Physics2D_CircleCastChunkTraversalKeepsMixedHitSelection) {
+AETHER_TEST(Physics2D_ShapeCastChunkTraversalKeepsMixedHitSelection) {
     World world;
     TilemapData map;
     map.Resize(4, 1);
@@ -1749,6 +1749,7 @@ AETHER_TEST(Physics2D_CircleCastChunkTraversalKeepsMixedHitSelection) {
     renderer.pixels_per_unit = 16.0f;
     world.CreateEntity(Transform{Vec3(0, 0, 0), Quaternion::Identity()}, renderer);
     world.CreateEntity(renderer);
+    world.CreateEntity(Collider2D{});
     world.CreateEntity(Transform{Vec3(0.25f, 0.5f, 0), Quaternion::Identity()});
 
     const auto crate = Box(world, Vec3(2.5f, 0.5f, 0), {0.5f, 0.5f}, BodyType2D::Static, false);
@@ -1765,15 +1766,31 @@ AETHER_TEST(Physics2D_CircleCastChunkTraversalKeepsMixedHitSelection) {
     resolvers.tilemaps = [&](const assets::AssetGuid&) { ++resolutions; return &map; };
     resolvers.tilesets = [&](const assets::AssetGuid&) { return &tiles; };
     Physics2D physics(world, resolvers);
-    const auto cast = [&](u32 mask, RayHit2D& hit) { return physics.CircleCast({0, 0.5f}, {1, 0}, 0.25f, 5, hit, mask); };
-    RayHit2D hit;
-    CHECK(cast(1u, hit) && !hit.tile && hit.entity == crate && hit.distance == 1.75f);
-    CHECK(cast(2u, hit) && !hit.tile && hit.entity == orb && hit.distance == 0.75f && resolutions == 1);
-
+    const auto check_casts = [&](u32 mask, int expected_resolutions, const auto& check_hit) {
+        for (bool box : {false, true}) {
+            RayHit2D hit;
+            resolutions = 0;
+            const bool found = box ? physics.BoxCast({0, 0.5f}, {0.25f, 0.125f}, {1, 0}, 5, hit, mask)
+                                   : physics.CircleCast({0, 0.5f}, {1, 0}, 0.25f, 5, hit, mask);
+            CHECK(resolutions == expected_resolutions);
+            check_hit(found, hit);
+        }
+    };
+    check_casts(1u, 1, [&](bool found, const RayHit2D& hit) {
+        CHECK(found && !hit.tile && hit.entity == crate && hit.distance == 1.75f);
+        CHECK(hit.point.x == 2.0f && hit.normal.x == -1.0f);
+    });
+    check_casts(2u, 0, [&](bool found, const RayHit2D& hit) {
+        CHECK(found && !hit.tile && hit.entity == orb && hit.distance == 0.75f);
+        CHECK(hit.point.x == 1.0f && hit.normal.x == -1.0f);
+    });
     world.RemoveComponent<Collider2D>(crate);
-    CHECK(cast(1u, hit) && hit.tile && hit.tile_x == 2 && hit.distance == 1.75f);
+    check_casts(1u, 1, [](bool found, const RayHit2D& hit) {
+        CHECK(found && hit.tile && hit.tile_x == 2 && hit.distance == 1.75f);
+        CHECK(hit.point.x == 2.0f && hit.normal.x == -1.0f);
+    });
     map.layers[0].collides = false;
-    CHECK(!cast(1u, hit) && resolutions == 3);
+    check_casts(1u, 1, [](bool found, const RayHit2D&) { CHECK(!found); });
 }
 
 AETHER_TEST(Physics2D_RaycastsAndOverlaps) {
