@@ -112,6 +112,32 @@ AETHER_TEST(Interaction_InteractAppliesActionsAndStartsCooldown) {
     CHECK(r.sys.Interact(r.hero, r.Make(Vec3(0, 1, 0), locked)) == Reason::ActionFailed);
 }
 
+AETHER_TEST(Interaction_MissingEffectsDoesNotConsumeAOneShot) {
+    Rig r;
+    r.ab.Grant(r.hero, "OpenDoor");
+    Interactable i;
+    i.effect = "Heal";
+    i.ability = "OpenDoor";
+    i.one_shot = true;
+    i.cooldown = 2.0f;
+    const Entity target = r.Make(Vec3(1, 0, 0), i);
+    {
+        InteractionSystem missing_effects(r.world, nullptr, &r.ab);
+        CHECK(missing_effects.Interact(r.hero, target) == Reason::ActionFailed);
+        CHECK(missing_effects.Events().size() == 1 && missing_effects.Events()[0].kind == InteractionEvent::Kind::Failed &&
+              missing_effects.Events()[0].reason == Reason::ActionFailed);
+        const auto* state = r.world.GetComponent<Interactable>(target);
+        CHECK(state && !state->used && Near(state->remaining, 0.0f));
+        CHECK(!r.ab.IsActive(r.hero, "OpenDoor") && Near(r.attrs.Get(r.hero, "Health"), 50));
+        const Entity plain = r.Make(Vec3(1, 0, 0));
+        CHECK(missing_effects.Interact(r.hero, plain) == Reason::None);
+    }
+    r.sys.MakeActive();
+    CHECK(r.sys.Interact(r.hero, target) == Reason::None);
+    CHECK(r.ab.IsActive(r.hero, "OpenDoor") && Near(r.attrs.Get(r.hero, "Health"), 60));
+    CHECK(r.sys.Interact(r.hero, target) == Reason::Used);
+}
+
 AETHER_TEST(Interaction_OneShotAndReset) {
     Rig r;
     Interactable i;

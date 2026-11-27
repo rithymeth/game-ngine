@@ -137,10 +137,12 @@ Reason InteractionSystem::Interact(Entity interactor, Entity target) {
     if (reason != Reason::None) return fail(reason);
     // Copy what is needed first: applying effects can add components, which moves the target's data.
     const Interactable snapshot = *world_.GetComponent<Interactable>(target);
+    // A configured effect is required; fail before activating any other action.
+    if (!snapshot.effect.empty() && effects_ == nullptr) return fail(Reason::ActionFailed);
     if (!snapshot.ability.empty()) {
         if (abilities_ == nullptr || abilities_->TryActivate(interactor, snapshot.ability).handle == 0) return fail(Reason::ActionFailed);
     }
-    if (!snapshot.effect.empty() && effects_ != nullptr) {
+    if (!snapshot.effect.empty()) {
         if (effects_->Apply(interactor, snapshot.effect, target).status == gas::EffectSystem::Status::Rejected) return fail(Reason::ActionFailed);
     }
     Interactable* i = world_.GetComponent<Interactable>(target);
