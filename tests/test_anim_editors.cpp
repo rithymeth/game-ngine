@@ -363,11 +363,13 @@ AETHER_TEST(AnimEditors_BlendSpaceSeparateDragsUndoSeparately) {
         io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
         frame(); // Final motion and release arrive in the same input batch.
     };
+    editor.grid_divisions = 0; // Snapping must not hide a mistaken edit during a click.
     press(1.0f, 3.0f);
     queue_pos(1.0f, 5.0f); // Small pointer motion inside a normal click.
     io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
     frame();
     AETHER_CHECK(editor.Selected() == 0 && doc.Get().samples[0].x == 1.0f && !doc.CanUndo() && !doc.Dirty());
+    editor.grid_divisions = 8;
 
     press(1.0f);
     queue_pos(1.5f);
