@@ -306,6 +306,41 @@ AETHER_TEST(WorldEditor_PanelsHeadless) {
     ui.Frame([&] { map.Draw(); });
 }
 
+AETHER_TEST(WorldEditor_PartitionMarkerKeepsLocalPrecisionAtLargeOrigins) {
+    HeadlessImGui ui;
+    RegisterStreamingComponents();
+    World game;
+    game.CreateEntity(Transform{Vec3(96, 0, 48), Quaternion::Identity()}, StreamingSource{0.0f, true});
+    constexpr f32 far = 1073741824.0f; // one float step at this scale exceeds a cell
+    WorldIndex index;
+    index.settings.origin = Vec3(far, 0, -far);
+    index.settings.cell_size = 64.0f;
+    for (i32 x = 0; x < 3; ++x) index.cells.push_back({{x, 0}, 1, {}, {}});
+    WorldStreamer streamer(game, std::move(index), {});
+    streamer.SetOriginOffset({far, 0, -far});
+    WorldPartitionPanel panel(streamer, &game);
+
+    ui.Frame([&] {
+        panel.Draw();
+        const ImVec2 map_min = ImGui::GetItemRectMin();
+        ImVec2 low(1e6f, 1e6f), high(-1e6f, -1e6f);
+        usize vertices = 0;
+        for (const ImDrawVert& vertex : ImGui::GetWindowDrawList()->VtxBuffer) {
+            if (vertex.col != IM_COL32(80, 200, 255, 255)) continue; // enabled source marker
+            low.x = std::min(low.x, vertex.pos.x);
+            low.y = std::min(low.y, vertex.pos.y);
+            high.x = std::max(high.x, vertex.pos.x);
+            high.y = std::max(high.y, vertex.pos.y);
+            ++vertices;
+        }
+        CHECK(vertices > 0);
+        const ImVec2 center((low.x + high.x) * 0.5f, (low.y + high.y) * 0.5f);
+        CHECK(std::fabs(center.x - (map_min.x + 36.0f)) < 1.0f);
+        CHECK(std::fabs(center.y - (map_min.y + 18.0f)) < 1.0f);
+        CHECK(panel.CellAt(center.x, center.y) == CellCoord{1, 0});
+    });
+}
+
 // Stage 6: terrain and foliage are assets. Save writes one, Load reads it back, and Dirty says whether what is on
 // screen is on disk.
 
