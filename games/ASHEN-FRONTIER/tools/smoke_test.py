@@ -214,6 +214,29 @@ def craft(work, headless=False):
     check("Generator powered" not in text, "the backup recovery run does not interact with the generator")
 
 
+    # Seed an isolated profile with valid save envelopes from a newer version.
+    # Ordinary actions must not replace either file when the older game cannot load them.
+    protected_saves = work / "user_save_too_new" / "Saves"
+    protected_saves.mkdir(parents=True)
+    envelope = json.loads(backup.read_text(encoding="utf-8"))
+    envelope["type_version"] += 1
+    primary_bytes = json.dumps(envelope).encode("utf-8")
+    backup_bytes = primary_bytes + b"\n"
+    primary = protected_saves / "autosave.asav"
+    protected_backup = protected_saves / backup.name
+    primary.write_bytes(primary_bytes)
+    protected_backup.write_bytes(backup_bytes)
+    result, text = run_player(work, "Scenes/CraftTest.ascene", "user_save_too_new", headless=headless)
+    check(result.returncode == 0 and "Autosave could not be loaded; saving disabled:" in text, "failed loading is reported and disables saving")
+    check("Crafted Generator Core" in text, "crafting still runs in the read-only session")
+    check(primary.is_file() and primary.read_bytes() == primary_bytes and
+          protected_backup.is_file() and protected_backup.read_bytes() == backup_bytes, "failed load and ordinary gameplay preserve both save files")
+    result, text = run_player(work, "Scenes/CraftTest.ascene", "user_save_too_new", press="F9", frames=80, headless=headless)
+    check(result.returncode == 0 and "New game: progress cleared" in text, "explicit New Game can still reset an unreadable save")
+    check((not primary.exists() or primary.read_bytes() != primary_bytes) and
+          (not protected_backup.exists() or protected_backup.read_bytes() != backup_bytes), "explicit reset removes both incompatible files")
+
+
 def run_player(work, scene, user, press="E", frames=80, headless=False):
     command = [str(PLAYER_EXE), "--pak", str(work / "cooked"), "--scene", scene, "--frames", str(frames), "--size", "320x180",
                "--press", press, "--report", "--user-dir", str(work / user)]

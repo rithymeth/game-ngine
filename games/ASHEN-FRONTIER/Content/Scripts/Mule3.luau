@@ -70,13 +70,17 @@ function Mule:OnUpdate(dt)
                 if have >= self.repair_cost then
                     Inventory.Remove(self.player, "Component", self.repair_cost)
                     SaveGames.CaptureWorld() -- the pack is saved with Kael
-                    SaveGames.SaveToSlot("autosave")
+                    if not SaveGames.GetBool("session.autosave_blocked") then
+                        SaveGames.SaveToSlot("autosave")
+                    end
                     UI.SetText("ComponentText", string.format("COMPONENTS  %d", have - self.repair_cost))
                     self.state = "follow"
                     SaveGames.SetNumber("mule.repaired", 1)
                     Achievements.Unlock("PackMule")
                     SaveGames.CaptureWorld()
-                    SaveGames.SaveToSlot("autosave")
+                    if not SaveGames.GetBool("session.autosave_blocked") then
+                        SaveGames.SaveToSlot("autosave")
+                    end
                     Sfx("repair")
                     print("MULE-3 repaired: it follows Kael")
                 else

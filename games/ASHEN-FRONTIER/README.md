@@ -51,6 +51,9 @@ python games/ASHEN-FRONTIER/tools/smoke_test.py                       # layout c
 games/ASHEN-FRONTIER/tools/render.sh Scenes/OpenWorld.ascene out.png   # one frame (cooks first)
 ```
 
+If an existing autosave cannot be loaded, Ashen Frontier disables autosaving for that session and shows a warning
+in the HUD. Existing save files are left intact unless you deliberately start a new game with F9.
+
 For Linux systems without a graphics backend, the progression-only smoke cooks the project and checks
 checkpoint recovery and crafting across player restarts, including inventory recovery from a rotated save backup. It needs an engine build with physics, and does
 not test rendering or the other windowed smoke scenarios. It uses only Python's standard library and

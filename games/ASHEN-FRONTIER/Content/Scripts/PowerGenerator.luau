@@ -52,7 +52,9 @@ function Generator:OnUpdate(dt)
         if Input.IsTriggered("Interact") then
             SaveGames.SetNumber("power.outpost", 1)
             Achievements.Unlock("LightsOn")
-            SaveGames.SaveToSlot("autosave")
+            if not SaveGames.GetBool("session.autosave_blocked") then
+                SaveGames.SaveToSlot("autosave")
+            end
             Camera.Shake(0.4)
             Sfx("power_up")
             self.prompt = nil

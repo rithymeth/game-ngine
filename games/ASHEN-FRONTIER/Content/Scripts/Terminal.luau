@@ -54,7 +54,9 @@ function Terminal:OnUpdate(dt)
         if Input.IsTriggered("Interact") then
             SaveGames.SetNumber("mission.assembly", 1)
             Achievements.Unlock("AssemblyLine")
-            SaveGames.SaveToSlot("autosave")
+            if not SaveGames.GetBool("session.autosave_blocked") then
+                SaveGames.SaveToSlot("autosave")
+            end
             Camera.Shake(0.4)
             Sfx("power_up")
             self.prompt = nil

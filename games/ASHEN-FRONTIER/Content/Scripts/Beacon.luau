@@ -21,7 +21,9 @@ function Beacon:OnUpdate(dt)
     if dx * dx + dz * dz <= self.radius * self.radius then
         SaveGames.SetNumber("mission.relay", 1)
         Achievements.Unlock("DistressCall")
-        SaveGames.SaveToSlot("autosave")
+        if not SaveGames.GetBool("session.autosave_blocked") then
+            SaveGames.SaveToSlot("autosave")
+        end
         Camera.Shake(0.35)
         Sfx("relay")
         print("Distress relay reached")

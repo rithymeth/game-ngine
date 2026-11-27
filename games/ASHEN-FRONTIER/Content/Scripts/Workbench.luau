@@ -45,7 +45,9 @@ function Workbench:OnUpdate(dt)
                 SaveGames.SetNumber("crafted.generator_core", 1)
                 Achievements.Unlock("Fabricator")
                 SaveGames.CaptureWorld() -- the pack is saved with Kael
-                SaveGames.SaveToSlot("autosave")
+                if not SaveGames.GetBool("session.autosave_blocked") then
+                    SaveGames.SaveToSlot("autosave")
+                end
                 UI.SetText("ScrapText", string.format("SCRAP  %d", Inventory.Count(self.player, "Scrap")))
                 UI.SetText("ComponentText", string.format("COMPONENTS  %d", Inventory.Count(self.player, "Component")))
                 Camera.Shake(0.25)

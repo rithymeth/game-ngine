@@ -47,7 +47,9 @@ function Sentinel:OnUpdate(dt)
         if self.player ~= nil then Inventory.Add(self.player, "Component", self.reward) end
         Achievements.Add("Scrapper") -- 3 sentinels disabled; saved with the drop just below
         SaveGames.CaptureWorld() -- the pack is saved with Kael
-        SaveGames.SaveToSlot("autosave")
+        if not SaveGames.GetBool("session.autosave_blocked") then
+            SaveGames.SaveToSlot("autosave")
+        end
         UI.SetText("ComponentText", string.format("COMPONENTS  %d", self.player ~= nil and Inventory.Count(self.player, "Component") or 0))
         Camera.Shake(0.2)
         Sfx("sentinel_down")

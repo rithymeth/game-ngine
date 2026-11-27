@@ -31,7 +31,9 @@ local function Get(kind) return owner ~= nil and Inventory.Count(owner, ITEM[kin
 -- The pack is saved with Kael: capture him into the bag, then write the slot.
 local function Persist()
     SaveGames.CaptureWorld()
-    SaveGames.SaveToSlot("autosave")
+    if not SaveGames.GetBool("session.autosave_blocked") then
+        SaveGames.SaveToSlot("autosave")
+    end
 end
 
 local function Give(kind, amount)
@@ -90,8 +92,13 @@ function Interactor:OnCreate()
     owner = self.player
     -- the first scene of a run: pick the saved game up (the bag, then Kael's pack with it); a later scene finds the pack already on Kael
     if not SaveGames.HasKey("pack.init") and SaveGames.DoesSaveExist("autosave") then
-        SaveGames.LoadFromSlot("autosave")
-        if SaveGames.HasKey("pack.init") then SaveGames.RestoreWorld() end
+        if SaveGames.LoadFromSlot("autosave") then
+            if SaveGames.HasKey("pack.init") then SaveGames.RestoreWorld() end
+        else
+            -- Session-only flag: protect the existing files across scene changes.
+            SaveGames.SetBool("session.autosave_blocked", true)
+            print("Autosave could not be loaded; saving disabled: " .. SaveGames.GetLastError())
+        end
     end
     if not SaveGames.HasKey("pack.init") then
         SaveGames.SetNumber("pack.init", 1)
@@ -119,6 +126,9 @@ end
 
 -- The mission line: what to do next, from what has been done (all of it in SaveGames, so it survives a door and a restart).
 local function Objective()
+    if SaveGames.GetBool("session.autosave_blocked") then
+        return "Autosave could not be loaded. Progress will not be saved."
+    end
     local function done(key) return SaveGames.GetNumber(key, 0) > 0 end
     if not done("crafted.generator_core") then return "Salvage scrap and components, craft a Generator Core." end
     if not done("power.outpost") then return "Install the Generator Core at the generator." end
@@ -142,8 +152,11 @@ end
 
 -- Everything the first chapter saves, cleared for a new game (F9).
 local function NewGame()
-    SaveGames.CreateSaveObject() -- the whole bag: the chapter, Kael's health and every sentinel's
-    SaveGames.DeleteSave("autosave")
+    if SaveGames.DoesSaveExist("autosave") and not SaveGames.DeleteSave("autosave") then
+        print("Could not reset autosave: " .. SaveGames.GetLastError())
+        return
+    end
+    SaveGames.CreateSaveObject() -- the whole bag, including the session's autosave guard
     if owner ~= nil then -- and the pack, which the scene change would otherwise carry into the new game
         for _, item in ipairs(ALL_ITEMS) do
             local have = Inventory.Count(owner, item)

@@ -43,7 +43,9 @@ function Console:OnUpdate(dt)
             SaveGames.SetNumber("mission.dome", 1)
             Achievements.Unlock("GreenThumb")
             SaveGames.CaptureWorld() -- the pack is saved with Kael
-            SaveGames.SaveToSlot("autosave")
+            if not SaveGames.GetBool("session.autosave_blocked") then
+                SaveGames.SaveToSlot("autosave")
+            end
             UI.SetText("SamplesText", string.format("SEED SAMPLES  %d / 3", have - self.samples_needed))
             Camera.Shake(0.4)
             Sfx("power_up")
