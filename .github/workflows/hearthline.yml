@@ -34,7 +34,7 @@ jobs:
 
   browser:
     name: Build Hearthline WebAssembly
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Checkout
@@ -51,6 +51,21 @@ jobs:
         run: |
           test -s build/hearthline-web/index.html
           grep -q 'HEARTHLINE' build/hearthline-web/index.html
+      - name: Install browser test runner
+        run: |
+          npm install --no-save --no-package-lock playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Test browser gameplay in Chromium
+        run: |
+          python3 -m http.server 8765 --directory build/hearthline-web > /tmp/hearthline-http.log 2>&1 &
+          node games/HEARTHLINE/tests/browser_smoke.mjs
+      - name: Upload browser test screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hearthline-browser-screenshots
+          path: /tmp/hearthline-*.png
+          if-no-files-found: ignore
       - name: Upload standalone browser game
         uses: actions/upload-artifact@v4
         with:
