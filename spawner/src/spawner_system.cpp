@@ -60,6 +60,10 @@ std::vector<Entity> SpawnerSystem::Spawners() const {
 void SpawnerSystem::Prune(Entity spawner) {
     const auto it = alive_.find(spawner);
     if (it == alive_.end()) return;
+    if (!world_.IsAlive(spawner) || !world_.HasComponent<Spawner>(spawner)) {
+        alive_.erase(it);
+        return;
+    }
     auto& list = it->second;
     list.erase(std::remove_if(list.begin(), list.end(), [&](Entity e) { return !world_.IsAlive(e); }), list.end());
     if (list.empty()) alive_.erase(it);
@@ -122,6 +126,10 @@ i32 SpawnerSystem::SpawnNow(Entity spawner, i32 count) {
 
 void SpawnerSystem::Update(f32 dt) {
     if (!(dt > 0.0f) || !std::isfinite(dt)) return;
+    // Forget tracking for gone spawners, but leave their spawned entities alive.
+    std::erase_if(alive_, [&](const auto& entry) {
+        return !world_.IsAlive(entry.first) || !world_.HasComponent<Spawner>(entry.first);
+    });
     for (const Entity e : Spawners()) {
         if (!world_.IsAlive(e)) continue;
         Spawner* s = world_.GetComponent<Spawner>(e);

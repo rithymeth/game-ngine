@@ -46,7 +46,7 @@ end
 | Call | Result |
 | --- | --- |
 | `Spawner.SpawnNow(spawner [, count])` | how many appeared: up to `count` (1 to 100; default 1) right now, never past `max_alive` or `total`. It works on a switched-off spawner too; it gives 0 for an entity that is no spawner, has no prefab, or is full |
-| `Spawner.AliveCount(spawner)` | how many of its spawns are alive now |
+| `Spawner.AliveCount(spawner)` | how many of its spawns are alive now; 0 for a destroyed spawner or an entity without a Spawner component |
 | `Spawner.TotalSpawned(spawner)` | how many it has made in all |
 
 The component's fields are ordinary reflected fields, so a script changes them like any component's (`entity:Get("Spawner")`): switch `enabled`,

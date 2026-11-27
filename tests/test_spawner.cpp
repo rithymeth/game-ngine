@@ -246,6 +246,31 @@ AETHER_TEST(Spawner_SpawnNowSkipsTheTimerNotTheLimits) {
     CHECK(!r.prefabs_asked.empty() && r.prefabs_asked.front() == "Prefabs/Wolf.aprefab");
 }
 
+AETHER_TEST(Spawner_DropsTrackingWhenTheSpawnerIsRemoved) {
+    Rig r;
+    Spawner config = Basic();
+    config.max_alive = 1;
+    const Entity first = r.MakeSpawner(config);
+    CHECK(r.system.SpawnNow(first) == 1 && r.system.AliveCount(first) == 1);
+    if (r.system.Events().empty()) return;
+    const Entity first_child = r.system.Events().back().spawned;
+    r.world.DestroyEntity(first);
+    CHECK(r.world.IsAlive(first_child));
+    CHECK(r.system.AliveCount(first) == 0);
+
+    const Entity second = r.MakeSpawner(config);
+    CHECK(r.system.SpawnNow(second) == 1);
+    if (r.system.Events().back().spawner != second) return;
+    const Entity second_child = r.system.Events().back().spawned;
+    r.world.RemoveComponent<Spawner>(second);
+    r.system.Update(0.1f); // forget the removed instance without needing an AliveCount query
+    r.world.AddComponent<Spawner>(second, config);
+    CHECK(r.world.IsAlive(second_child)); // tracking goes away, not the spawned entity
+    CHECK(r.system.AliveCount(second) == 0 && r.system.SpawnNow(second) == 1);
+    r.world.RemoveComponent<Spawner>(second);
+    CHECK(r.system.AliveCount(second) == 0); // querying between updates also observes removal
+}
+
 AETHER_TEST(Spawner_TimerCarriesFractionalFrameRemainder) {
     Spawner s = Basic();
     s.start_delay = s.interval = 0.12f;
