@@ -232,6 +232,46 @@ AETHER_TEST(TilemapEditor_DenseStrokeRestoresOriginalsAndPreservesRedoWhenRevert
           doc.Map().Get(0, 50, 50) == 9 && doc.Map().Get(1, 7, 7) == 12);
 }
 
+AETHER_TEST(TilemapEditor_DenseStrokeLeavesSparseAndUntouchedLayerStorageInPlace) {
+    TilemapData map;
+    map.Resize(48, 48);
+    map.AddLayer("Dense");
+    map.AddLayer("Sparse");
+    map.AddLayer("Untouched");
+    TilemapEditDocument doc(std::move(map), {});
+    const auto* sparse = doc.Map().layers[1].cells.data();
+    const auto* untouched = doc.Map().layers[2].cells.data();
+    doc.BeginStroke();
+    doc.tool = TileTool::Fill;
+    doc.brush = 4;
+    doc.Apply(0, 0); // Promotes the first layer.
+    doc.active_layer = 1;
+    doc.tool = TileTool::Paint;
+    doc.brush = 8;
+    doc.Apply(2, 3);
+    doc.EndStroke();
+    CHECK(doc.Undo() && !doc.dirty());
+    CHECK(doc.Map().Get(0, 47, 47) == kEmpty && doc.Map().Get(1, 2, 3) == kEmpty);
+    CHECK(doc.Map().layers[1].cells.data() == sparse && doc.Map().layers[2].cells.data() == untouched);
+    CHECK(doc.Redo() && doc.Map().Get(0, 47, 47) == 4 && doc.Map().Get(1, 2, 3) == 8);
+
+    const auto* first = doc.Map().layers[0].cells.data();
+    doc.BeginStroke();
+    doc.active_layer = 0;
+    doc.tool = TileTool::Fill;
+    doc.brush = 6;
+    doc.Apply(0, 0);
+    doc.brush = 4;
+    doc.Apply(0, 0); // This layer has no remaining changes.
+    doc.active_layer = 1;
+    doc.tool = TileTool::Paint;
+    doc.brush = 9;
+    doc.Apply(2, 3);
+    doc.EndStroke();
+    CHECK(doc.Undo() && doc.Map().Get(1, 2, 3) == 8);
+    CHECK(doc.Map().layers[0].cells.data() == first);
+}
+
 AETHER_TEST(TilemapEditor_RectangleFillAndPick) {
     TilemapEditDocument doc = Doc();
     doc.brush = 7;

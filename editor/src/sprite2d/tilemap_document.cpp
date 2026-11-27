@@ -119,14 +119,13 @@ void TilemapEditDocument::EndStroke() {
     if (!in_stroke_) return;
     in_stroke_ = false;
     if (stroke_changed_cells_ != 0) {
-        if (stroke_start_) undo_.push_back({std::move(*stroke_start_), state_});
-        else undo_.push_back({std::move(stroke_cells_), state_});
+        std::erase_if(stroke_, [](const auto& entry) { return entry.second.changed == 0; });
+        undo_.push_back({std::move(stroke_), state_});
         stroke_changed_cells_ = 0;
         redo_.clear();
         Changed();
     }
-    stroke_start_.reset();
-    stroke_cells_.clear();
+    stroke_.clear();
 }
 
 bool TilemapEditDocument::PaintCell(i32 x, i32 y, i32 value) {
@@ -140,29 +139,32 @@ bool TilemapEditDocument::PaintCellAt(usize index, i32 value) {
     auto& cells = map_.layers[active_layer].cells;
     auto& cell = cells[index];
     if (cell == value) return false;
-    if (!stroke_start_) {
-        const auto address = std::pair{active_layer, index};
-        auto it = stroke_cells_.find(address);
-        // Bound node overhead for broad fills. On promotion retain the start
-        // of the gesture, not the partially painted state.
+    auto& layer = stroke_[active_layer];
+    i32 original = cell;
+    if (auto* sparse = std::get_if<SparseCells>(&layer.cells)) {
+        const auto it = sparse->find(index);
         const usize sparse_limit = std::clamp<usize>(cells.size() / 16, 32, 4096);
-        if (it == stroke_cells_.end() && stroke_cells_.size() >= sparse_limit) {
-            stroke_start_ = Snapshot{map_, tileset_};
-            for (const auto& [key, original] : stroke_cells_)
-                stroke_start_->map.layers[key.first].cells[key.second] = original;
-            stroke_cells_.clear();
+        if (it == sparse->end() && sparse->size() >= sparse_limit) {
+            // Promote only this layer and reconstruct its pre-stroke values.
+            auto snapshot = cells;
+            for (const auto& [offset, old] : *sparse) snapshot[offset] = old;
+            layer.cells = std::move(snapshot);
+        } else if (it == sparse->end()) {
+            sparse->emplace(index, cell);
         } else {
-            if (it == stroke_cells_.end()) stroke_cells_.emplace(address, cell);
-            else if (it->second == value) stroke_cells_.erase(it);
-            cell = value;
-            stroke_changed_cells_ = stroke_cells_.size();
-            return true;
+            original = it->second;
+            if (original == value) sparse->erase(it);
         }
+    } else {
+        original = std::get<std::vector<i32>>(layer.cells)[index];
     }
-
-    const i32 original = stroke_start_->map.layers[active_layer].cells[index];
-    if (cell == original) ++stroke_changed_cells_;
-    else if (value == original) --stroke_changed_cells_;
+    if (cell == original) {
+        ++layer.changed;
+        ++stroke_changed_cells_;
+    } else if (value == original) {
+        --layer.changed;
+        --stroke_changed_cells_;
+    }
     cell = value;
     return true;
 }
@@ -300,8 +302,15 @@ bool TilemapEditDocument::Travel(std::vector<HistoryEntry>& from, std::vector<Hi
     } else if (auto* height = std::get_if<HeightEdit>(&step.edit)) {
         SwapHeight(*height);
     } else {
-        for (auto& [key, value] : std::get<CellEdits>(step.edit))
-            std::swap(map_.layers[key.first].cells[key.second], value);
+        for (auto& [layer, edit] : std::get<BrushEdit>(step.edit)) {
+            auto& cells = map_.layers[layer].cells;
+            if (auto* dense = std::get_if<std::vector<i32>>(&edit.cells)) {
+                cells.swap(*dense);
+            } else {
+                for (auto& [offset, value] : std::get<SparseCells>(edit.cells))
+                    std::swap(cells[offset], value);
+            }
+        }
     }
     std::swap(state_, step.state);
     ClampActive();
@@ -498,8 +507,7 @@ bool TilemapEditDocument::Load(const std::filesystem::path& tilemap_file, const 
     undo_.clear();
     redo_.clear();
     in_stroke_ = false;
-    stroke_start_.reset();
-    stroke_cells_.clear();
+    stroke_.clear();
     stroke_changed_cells_ = 0;
     active_layer = 0;
     tool = TileTool::Paint;

@@ -86,7 +86,12 @@ private:
         sprite2d::TilemapData map;
         sprite2d::Tileset tileset;
     };
-    using CellEdits = std::map<std::pair<usize, usize>, i32>; // (layer, cell) -> opposite value
+    using SparseCells = std::map<usize, i32>; // cell offset -> opposite value
+    struct LayerStroke {
+        std::variant<SparseCells, std::vector<i32>> cells;
+        usize changed = 0;
+    };
+    using BrushEdit = std::map<usize, LayerStroke>; // layer -> opposite cell data
     struct LayerProperties {
         usize layer;
         std::string name;
@@ -107,7 +112,7 @@ private:
         std::vector<std::vector<i32>> cropped_rows;
     };
     struct HistoryEntry {
-        std::variant<Snapshot, CellEdits, LayerProperties, LayerMove, sprite2d::Tileset, LayerPresence, HeightEdit> edit;
+        std::variant<Snapshot, BrushEdit, LayerProperties, LayerMove, sprite2d::Tileset, LayerPresence, HeightEdit> edit;
         u64 state;
     };
     bool Travel(std::vector<HistoryEntry>& from, std::vector<HistoryEntry>& to);
@@ -128,8 +133,7 @@ private:
     std::filesystem::path tilemap_file_;
     std::filesystem::path tileset_file_;
     bool in_stroke_ = false;
-    std::optional<Snapshot> stroke_start_; // populated only if a stroke becomes dense
-    CellEdits stroke_cells_;
+    BrushEdit stroke_;
     usize stroke_changed_cells_ = 0;
     std::vector<HistoryEntry> undo_, redo_;
     u64 revision_ = 1;
