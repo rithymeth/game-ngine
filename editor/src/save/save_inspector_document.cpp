@@ -98,16 +98,26 @@ bool SaveInspectorDocument::CopyTo(const std::string& name, std::string* error) 
     if (file_.empty()) return fail("nothing is open");
     if (!save::SaveSystem::ValidSlotName(name)) return fail("'" + name + "' isn't a valid name (1-64 of A-Z a-z 0-9 _ -)");
     const stdfs::path target = file_.parent_path() / (name + file_.extension().string());
+    stdfs::path target_backup = target;
+    target_backup += ".bak";
     std::error_code ec;
-    if (stdfs::exists(target, ec)) return fail("'" + name + "' already exists");
-    stdfs::copy_file(file_, target, ec);
-    if (ec) return fail("couldn't copy: " + ec.message());
+    // An orphaned backup already owns the name: the game can load it.
+    for (const stdfs::path& path : {target, target_backup}) {
+        const auto status = stdfs::symlink_status(path, ec);
+        if (ec && ec != std::errc::no_such_file_or_directory) return fail("couldn't check destination: " + ec.message());
+        if (stdfs::exists(status)) return fail("'" + path.filename().string() + "' already exists");
+    }
     stdfs::path backup = file_;
     backup += ".bak";
-    if (stdfs::exists(backup, ec)) {
-        stdfs::path target_backup = target;
-        target_backup += ".bak";
-        stdfs::copy_file(backup, target_backup, ec);
+    const auto backup_status = stdfs::symlink_status(backup, ec);
+    if (ec && ec != std::errc::no_such_file_or_directory) return fail("couldn't check source backup: " + ec.message());
+    if (!stdfs::copy_file(file_, target, ec)) return fail("couldn't copy: " + ec.message());
+    if (stdfs::exists(backup_status) && !stdfs::copy_file(backup, target_backup, ec)) {
+        const std::string why = "couldn't copy backup: " + ec.message();
+        std::error_code cleanup;
+        stdfs::remove(target, cleanup); // remove only the primary this operation created
+        if (cleanup) return fail(why + "; couldn't remove the incomplete copy: " + cleanup.message());
+        return fail(why);
     }
     return true;
 }

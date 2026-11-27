@@ -175,6 +175,42 @@ AETHER_TEST(SaveInspector_CopyValidatesTheName) {
     CHECK(!doc.CopyTo("slot2", &error)); // never overwrites
 }
 
+AETHER_TEST(SaveInspector_CopyPreservesBackupOnlyDestinations) {
+    const auto dir = Dir("copy_backup_only");
+    const auto source = MakeBagSave(dir);
+    const auto target_backup = dir / "slot2.asav.bak";
+    SaveSystem saves(dir);
+    SaveBag original;
+    original.SetInt("coins", 84);
+    if (!saves.Save("slot2", original).ok) { CHECK(false); return; }
+    stdfs::rename(dir / "slot2.asav", target_backup);
+    const auto bytes = Slurp(target_backup);
+
+    SaveInspectorDocument doc;
+    CHECK(doc.Open(source));
+    std::string error;
+    CHECK(!doc.CopyTo("slot2", &error) && !error.empty());
+    CHECK(!stdfs::exists(dir / "slot2.asav") && Slurp(target_backup) == bytes);
+    CHECK(doc.IsOpen() && doc.File() == source);
+}
+
+AETHER_TEST(SaveInspector_CopyReportsBackupFailureWithoutLeavingAPrimary) {
+    const auto dir = Dir("copy_failed_backup");
+    const auto source = MakeBagSave(dir);
+    const auto backup = dir / "slot1.asav.bak";
+    const auto source_bytes = Slurp(source);
+    stdfs::remove(backup);
+    stdfs::create_directory(backup);
+    Spit(backup / "keep.txt", "not a backup");
+    SaveInspectorDocument doc;
+    CHECK(doc.Open(source));
+    std::string error;
+    CHECK(!doc.CopyTo("slot2", &error) && error.find("backup") != std::string::npos);
+    CHECK(!stdfs::exists(dir / "slot2.asav") && !stdfs::exists(dir / "slot2.asav.bak"));
+    CHECK(Slurp(source) == source_bytes && Slurp(backup / "keep.txt") == "not a backup");
+    CHECK(doc.IsOpen() && doc.File() == source);
+}
+
 AETHER_TEST(SaveInspector_PanelListsAndDraws) {
     HeadlessImGui ui;
     const stdfs::path dir = Dir("panel");
