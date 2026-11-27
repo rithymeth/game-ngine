@@ -2116,6 +2116,47 @@ AETHER_TEST(TilemapEditor_FindsMissingAutotileRulesEvenWithoutTexture) {
     CHECK(!panel.FindNextInvalidPaint());
 }
 
+AETHER_TEST(TilemapEditor_FindsInvalidVariantsInUnusedAutotileRules) {
+    HeadlessImGui ui;
+    TilemapData map;
+    map.Resize(6, 5);
+    map.AddLayer("Ground");
+    map.Set(0, 0, 0, AutotileCell(0));
+    Tileset tiles;
+    tiles.texture = assets::NewAssetGuid();
+    tiles.texture_width = 48;
+    tiles.texture_height = 32;
+    tiles.AddAutotile("Intentional empty", Autotile().tiles);
+    auto variants = Autotile().tiles;
+    variants[3] = 6;
+    const auto river = tiles.AddAutotile("River", variants); // no painted cell references it
+    TilemapEditDocument doc(std::move(map), std::move(tiles));
+    TilemapPanel panel(doc);
+    doc.brush = 5;
+    const u64 revision = doc.Revision();
+
+    const auto capture = [&](const char* name) {
+        const auto file = std::filesystem::temp_directory_path() / name;
+        ui.Frame([&] { ImGui::LogToFile(0, file.string().c_str()); panel.Draw(); ImGui::LogFinish(); });
+        std::ifstream in(file);
+        return std::string(std::istreambuf_iterator<char>{in}, {});
+    };
+    CHECK(!panel.FindNextInvalidPaint()); // no canvas cell to focus
+    const auto found = capture("tilemap-invalid-variant-found.txt");
+    CHECK(found.find("Invalid autotile: River, mask 3 uses tile 6 (grid has 6 tiles)") != std::string::npos);
+    CHECK(found.find("Editing masks: River") != std::string::npos);
+    CHECK(found.find("No invalid painted tiles") == std::string::npos);
+    CHECK(doc.Revision() == revision && doc.brush == 5 && !doc.CanUndo());
+
+    CHECK(doc.SetAutotileTile(river, 3, 5));
+    const auto stale = capture("tilemap-invalid-variant-stale.txt");
+    CHECK(stale.find("Invalid autotile:") == std::string::npos);
+    CHECK(!panel.FindNextInvalidPaint());
+    const auto clean = capture("tilemap-invalid-variant-clean.txt");
+    CHECK(clean.find("Invalid autotile:") == std::string::npos);
+    CHECK(clean.find("No invalid painted tiles") != std::string::npos);
+}
+
 AETHER_TEST(TilemapEditor_LargeMapOnlyDrawsVisibleGridLines) {
     HeadlessImGui ui;
     auto doc = Doc();

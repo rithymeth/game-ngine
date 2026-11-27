@@ -251,9 +251,25 @@ bool TilemapPanel::FindNextInvalidPaint() {
     const u32 count = tiles.texture.IsNull() ? 0 : tiles.TileCount();
     if (invalid_search_revision_ != doc_.Revision()) invalid_paint_cell_.reset();
     invalid_search_revision_ = doc_.Revision();
+    invalid_autotile_mask_.reset();
+    // Strict cooking checks every variant, even in rules not painted on this map.
+    for (usize rule = 0; count != 0 && rule < tiles.autotiles.size() && !invalid_autotile_mask_; ++rule) {
+        const auto& variants = tiles.autotiles[rule].tiles;
+        for (usize mask = 0; mask < variants.size(); ++mask) {
+            const i32 tile = variants[mask];
+            if (tile >= 0 && static_cast<u32>(tile) >= count) {
+                invalid_autotile_mask_ = InvalidAutotileMask{rule, mask, tile, count};
+                break;
+            }
+        }
+    }
+    const auto focus_rule = [&] {
+        if (invalid_autotile_mask_) selected_autotile_ = static_cast<i32>(invalid_autotile_mask_->rule);
+        return false; // there is no canvas cell to focus
+    };
     const auto previous = invalid_paint_cell_;
     invalid_paint_cell_.reset();
-    if (map.width == 0 || map.height == 0) return false;
+    if (map.width == 0 || map.height == 0) return focus_rule();
     const auto scan_layer = [&](usize layer, usize begin, usize end) {
         const auto& cells = map.layers[layer].cells;
         for (usize index = begin; index < end; ++index) {
@@ -276,7 +292,7 @@ bool TilemapPanel::FindNextInvalidPaint() {
             if (scan_layer(layer, 0, end)) break;
         }
     }
-    if (!invalid_paint_cell_) return false;
+    if (!invalid_paint_cell_) return focus_rule();
     const auto hit = *invalid_paint_cell_;
     return FocusCell(hit.layer, static_cast<i32>(hit.index % map.width), static_cast<i32>(hit.index / map.width));
 }
@@ -345,8 +361,14 @@ void TilemapPanel::DrawTools() {
                 ImGui::Text("Invalid paint: %s (%zu, %zu), missing autotile rule %zu", name, x, y, AutotileIndex(hit.tile));
             else
                 ImGui::Text("Invalid paint: %s (%zu, %zu), tile %d", name, x, y, hit.tile);
-        } else {
-            ImGui::TextDisabled("No invalid painted tiles.");
+        } else if (!invalid_autotile_mask_) {
+            ImGui::TextDisabled("No invalid painted tiles or autotile masks.");
+        }
+        if (invalid_autotile_mask_) {
+            const auto& hit = *invalid_autotile_mask_;
+            const auto& name = doc_.GetTileset().autotiles[hit.rule].name;
+            ImGui::TextWrapped("Invalid autotile: %s, mask %zu uses tile %d (grid has %u tiles).",
+                               name.c_str(), hit.mask, hit.tile, hit.grid_count);
         }
     }
 }
