@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
+import { mkdir } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { chromium } from 'playwright';
-const browser = await chromium.launch({headless:true});
+const artifacts = process.env.HEARTHLINE_ARTIFACTS ?? tmpdir();
+await mkdir(artifacts,{recursive:true});
+const executablePath = process.env.HEARTHLINE_CHROMIUM || undefined;
+const browser = await chromium.launch({headless:true,executablePath});
 const base = process.env.HEARTHLINE_URL ?? 'http://127.0.0.1:8765';
 let failures=0;
 async function check(name, viewport, hasTouch) {
@@ -14,7 +20,7 @@ async function check(name, viewport, hasTouch) {
     const status=page.locator('#status');
     async function contains(value) { await page.waitForFunction(v=>document.querySelector('#status')?.textContent?.includes(v),value,{timeout:10000}); }
     await contains('pos 20,64');
-    await page.locator('#canvas').screenshot({path:'/tmp/hearthline-'+name+'.png'});
+    await page.locator('#canvas').screenshot({path:join(artifacts,'hearthline-'+name+'.png')});
     async function button(key){const b=page.locator('[data-key="'+key+'"]'); if(hasTouch) await b.tap(); else await b.click();}
     await button(103);
     await contains('wood 4');
@@ -53,7 +59,7 @@ async function check(name, viewport, hasTouch) {
     await contains('MAP - M');
     await button(100);
     assert.match(await status.textContent(),/pos 20,64/);
-    await page.locator('#canvas').screenshot({path:'/tmp/hearthline-map-'+name+'.png'});
+    await page.locator('#canvas').screenshot({path:join(artifacts,'hearthline-map-'+name+'.png')});
     await button(109);
     await page.waitForFunction(()=>!document.querySelector('#status')?.textContent?.includes('MAP - M'));
     if(!hasTouch) {
@@ -140,15 +146,15 @@ async function check(name, viewport, hasTouch) {
       await press('f'); await press('r');
       await press('Space',9); await press('r'); await press('Space',15);
       await contains('VICTORY');
-      await page.locator('#canvas').screenshot({path:'/tmp/hearthline-victory.png'});
+      await page.locator('#canvas').screenshot({path:join(artifacts,'hearthline-victory.png')});
     }
     const box=await page.locator('#canvas').boundingBox();
     assert(box && box.width>50 && box.height>50);
     assert.deepEqual(errors,[]);
-    console.log('PASS '+name+' browser boot, keyboard, touch, pause, reset');
+    console.log('PASS '+name+' Chromium: boot, inputs, pause, save/reload, reset, map'+(hasTouch?'':', focus loss, combat and victory'));
   } catch(e) {
     failures++; console.error('FAIL '+name+': '+(e.stack ?? e));
-    try { await page.screenshot({path:'/tmp/hearthline-'+name+'-failure.png',fullPage:true}); } catch {}
+    try { await page.screenshot({path:join(artifacts,'hearthline-'+name+'-failure.png'),fullPage:true}); } catch {}
   } finally { await page.close(); }
 }
 await check('desktop',{width:1280,height:900},false);

@@ -69,7 +69,23 @@ The browser game is a **single-file HTML** export at `build/hearthline-web/index
 
 The page includes a responsive canvas, current objectives/inventory text, touchscreen action and movement buttons, and fullscreen control. Keyboard focus is attached to the canvas. The browser build runs an Emscripten animation-frame callback rather than the native blocking event loop.
 
-GitHub Actions is disabled by the repository owner. Build and test the browser game locally; the legacy workflow is not used or dispatched. A passing WebAssembly compile check does **not** substitute for testing gameplay interactively across actual browsers and mobile devices.
+### Test the browser build locally
+
+Serve the build from the repository root:
+
+```sh
+python3 -m http.server 8765 --bind 127.0.0.1 --directory build/hearthline-web
+```
+
+With Playwright and its Chromium browser installed, run this in another terminal from the repository root:
+
+```sh
+node games/HEARTHLINE/tests/browser_smoke.mjs
+```
+
+Set `HEARTHLINE_URL` if you used a different address, `HEARTHLINE_CHROMIUM` to use an existing compatible Chromium executable, or `HEARTHLINE_ARTIFACTS` to choose where screenshots are written (the system temporary directory by default).
+
+The headless Chromium test covers save/reload and core controls at desktop and mobile viewport sizes. The desktop run also checks simulated focus loss during combat and plays through to victory. This does not replace testing other browsers or physical devices. GitHub Actions is disabled by the repository owner; these checks can run locally without changing repository settings.
 
 
 ## Publish the browser game
@@ -89,6 +105,6 @@ The deployment workflow is deliberately **manual** until Pages is configured, to
 
 - Deterministic **512 x 512** tile terrain with a designated **128 x 128** expedition area. Three dense byte-sized runtime grids hold terrain, constructed objects and persistent discovery (786,432 cells total, 768 KiB of cell data). These are not yet Aether tilemap assets.
 - Shared gameplay simulation in `src/game.cpp`; the SDL2 host in `src/visual_main.cpp` draws only visible tiles around the player and sends keyboard actions to the same core.
-- 64 seeded regression expeditions, 64 exploration scenarios and 64 construction/persistence scenarios exercise all four cache routes, one-time loot, natural resource depletion, combat timing, idle death, timed and mistimed dodges, cooldowns, healing, retreat, discovery, bridge placement, relay rotation, and survival. Local Release CMake/CTest and strict-warning undefined-behavior sanitizer builds passed the core tests; the browser test script now also checks reload persistence, but the current graphical/WebAssembly changes have not been compiled or run locally. GitHub Actions is disabled by repository owner; this milestone does not enable or dispatch it.
+- 64 seeded regression expeditions, 64 exploration scenarios and 64 construction/persistence scenarios exercise all four cache routes, one-time loot, natural resource depletion, combat timing, idle death, timed and mistimed dodges, cooldowns, healing, retreat, discovery, bridge placement, relay rotation, and survival. Local Release CMake/CTest and strict-warning undefined-behavior sanitizer builds passed the core tests. The WebAssembly build passed the headless Chromium smoke at desktop and mobile viewport sizes, including save/reload.
 - This is a native SDL2 graphical prototype with an experimental Emscripten browser export; it is not yet an Aether sprite-batch renderer or a tested commercial-quality experience.
 - Guardian attack markers, health bars, slash, evasion and damage feedback use procedural animations. Movement is still tile-stepped; there are no imported sprite sheets, sounds, recurring day/night cycles, nighttime enemy waves, world streaming, generalized relay solver, or benchmarked 60 FPS guarantee.
