@@ -33,6 +33,7 @@ private:
     BlendSpaceCanvas canvas_;
     i32 selected_ = -1;
     i32 dragging_ = -1;
+    u64 drag_id_ = 0;
     bool dragging_preview_ = false;
 };
 

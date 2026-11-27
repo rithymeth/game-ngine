@@ -269,6 +269,45 @@ AETHER_TEST(AnimEditors_BlendSpaceUnchangedSnappedMoveLeavesHistoryAlone) {
     AETHER_CHECK(doc.Redo() && doc.Get().samples[sample].x == 0.5f);
 }
 
+AETHER_TEST(AnimEditors_BlendSpaceSeparateDragsUndoSeparately) {
+    HeadlessImGui imgui;
+    BlendSpace space;
+    space.dimensions = 1;
+    space.x = {"Speed", 0, 4};
+    BlendSpaceDocument doc(space);
+    doc.AddSample("Walk", 1.0f, 0.0f);
+    doc.MarkSaved();
+    BlendSpaceEditor editor(doc);
+    editor.grid_divisions = 8;
+    const auto frame = [&] { imgui.Frame([&] { editor.Draw(); }); };
+    frame();
+    frame();
+    ImGuiIO& io = ImGui::GetIO();
+    const auto move = [&](f32 x) {
+        f32 sx, sy;
+        editor.Canvas().ParamToScreen(doc.Get(), x, 0.0f, sx, sy);
+        io.AddMousePosEvent(sx, sy);
+        frame();
+    };
+    const auto drag = [&](f32 start, f32 through, f32 end) {
+        move(start);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+        frame();
+        move(through);
+        move(end);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+        frame();
+    };
+    drag(1.0f, 1.5f, 2.0f);
+    AETHER_CHECK(editor.Selected() == 0 && doc.Get().samples[0].x == 2.0f);
+    drag(2.0f, 2.5f, 3.0f);
+    AETHER_CHECK(doc.Get().samples[0].x == 3.0f);
+    AETHER_CHECK(doc.Undo() && doc.Get().samples[0].x == 2.0f);
+    AETHER_CHECK(doc.Undo() && doc.Get().samples[0].x == 1.0f && !doc.CanUndo());
+    AETHER_CHECK(doc.Redo() && doc.Get().samples[0].x == 2.0f);
+    AETHER_CHECK(doc.Redo() && doc.Get().samples[0].x == 3.0f && !doc.CanRedo());
+}
+
 AETHER_TEST(AnimEditors_ClipViewerPlaybackAndNotifies) {
     Skeleton s;
     s.bones = {{"root", -1, {}, Mat4::Identity()}, {"arm", 0, {}, Mat4::Identity()}};

@@ -93,11 +93,15 @@ void BlendSpaceEditor::DrawGrid() {
     if (ImGui::IsItemActivated() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
         dragging_ = canvas_.HitTest(s, mouse.x, mouse.y);
         dragging_preview_ = dragging_ < 0;
-        if (dragging_ >= 0) selected_ = dragging_;
+        if (dragging_ >= 0) {
+            selected_ = dragging_;
+            ++drag_id_;
+        }
     }
     if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
         if (dragging_ >= 0) {
-            doc_.MoveSample(static_cast<usize>(dragging_), px, py, grid_divisions, "drag:" + std::to_string(dragging_));
+            // Coalesce the frames of this gesture, not every drag of this sample.
+            doc_.MoveSample(static_cast<usize>(dragging_), px, py, grid_divisions, "drag:" + std::to_string(drag_id_));
         } else if (dragging_preview_) {
             preview_x = std::clamp(px, s.x.min, s.x.max);
             preview_y = s.dimensions == 2 ? std::clamp(py, s.y.min, s.y.max) : 0.0f;
