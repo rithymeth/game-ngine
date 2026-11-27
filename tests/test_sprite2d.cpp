@@ -1868,6 +1868,63 @@ AETHER_TEST(Lights2D_LightMapShadowsAndWalls) {
     CHECK(BuildLightMap(tw.world, tw.resolvers, {5, 5}, {5, 9}, 1.0f).cells.empty());
 }
 
+AETHER_TEST(Lights2D_VisualTilemapsRespondToLiveCollisionEdits) {
+    TileWorld tw;
+    tw.map.Fill(0, 10, 0, 12, 9, 1); // thick enough to have an interior sample
+    tw.map.layers[0].collides = false;
+    const usize empty_layer = tw.map.AddLayer("Unpopulated collision layer");
+    tw.map.layers[empty_layer].cells.clear();
+
+    Light2D ambient;
+    ambient.type = Light2DType::Global;
+    ambient.intensity = 0.125f;
+    LightAtPos(tw.world, Vec3(0, 0, 0), ambient);
+    Light2D lamp;
+    lamp.radius = 20.0f;
+    LightAtPos(tw.world, Vec3(6.5f, 5.5f, 0), lamp);
+
+    std::string resolve_order;
+    tw.resolvers.tilemaps = [&](const assets::AssetGuid&) {
+        resolve_order += 'm';
+        return &tw.map;
+    };
+    tw.resolvers.tilesets = [&](const assets::AssetGuid&) {
+        resolve_order += 's';
+        return &tw.ts;
+    };
+    const auto build = [&] {
+        resolve_order.clear();
+        auto map = BuildLightMap(tw.world, tw.resolvers, {0, 0}, {20, 10}, 1.0f);
+        CHECK(resolve_order == "msms");
+        return map;
+    };
+    const auto edges = [&] { return GatherOccluders(tw.world, tw.resolvers, {0, 0}, {20, 10}); };
+    CHECK(edges().empty());
+    const auto visual = build();
+    CHECK(visual.At(11, 5).r > ambient.intensity && visual.At(14, 5).r > ambient.intensity);
+
+    // Enabling collision on the same live layer restores both tile shadows
+    // and the wall interior mask, without replacing either asset.
+    tw.map.layers[0].collides = true;
+    CHECK(edges().size() == 26);
+    const auto solid = build();
+    CHECK(solid.At(11, 5).r == 0.0f && solid.At(14, 5).r == ambient.intensity);
+
+    tw.ts.solid.clear();
+    CHECK(edges().empty());
+    const auto no_solid_tiles = build();
+    CHECK(no_solid_tiles.cells.size() == visual.cells.size());
+    if (no_solid_tiles.cells.size() == visual.cells.size()) {
+        for (usize i = 0; i < visual.cells.size(); ++i) {
+            const auto& a = no_solid_tiles.cells[i];
+            const auto& b = visual.cells[i];
+            CHECK(a.r == b.r && a.g == b.g && a.b == b.b);
+        }
+    }
+    tw.ts.SetSolid(1, true);
+    CHECK(edges().size() == 26 && build().At(11, 5).r == 0.0f);
+}
+
 AETHER_TEST(Lights2D_VisibilityPolygon) {
     // No occluders: the square round the light (rays stop at it).
     std::vector<Vec2> poly = VisibilityPolygon({0, 0}, 5.0f, {});

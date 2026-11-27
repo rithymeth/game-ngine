@@ -71,6 +71,14 @@ LightTileRange GetLightTileRange(f32 world_min, f32 world_max, f32 origin, f32 c
     return {index(grid_min), index(grid_max)};
 }
 
+bool CanOccludeLight(const TilemapData& map, const Tileset& tileset) {
+    // The live collision flags, not what gets drawn, determine whether a map
+    // contributes to either the occluder edges or the solid sample mask.
+    return map.width != 0 && map.height != 0 && !tileset.solid.empty() &&
+           std::any_of(map.layers.begin(), map.layers.end(),
+                       [](const TileLayer& layer) { return layer.collides && !layer.cells.empty(); });
+}
+
 bool LightTileGeometry(const Tileset& tileset, f32 pixels_per_unit, Vec2& cell_size) {
     if (!std::isfinite(pixels_per_unit) || pixels_per_unit <= 0.0f ||
         tileset.tile_width == 0 || tileset.tile_height == 0) return false;
@@ -133,7 +141,7 @@ std::vector<Segment2D> GatherOccluders(const World& world, const Resolvers2D& ti
         if (!r || !tiles.tilemaps || !tiles.tilesets || !std::isfinite(t->position.x) || !std::isfinite(t->position.y)) return;
         const TilemapData* map = tiles.tilemaps(r->tilemap.guid);
         const Tileset* ts = map ? tiles.tilesets(map->tileset) : nullptr;
-        if (!map || !ts) return;
+        if (!map || !ts || !CanOccludeLight(*map, *ts)) return;
         Vec2 cell;
         if (!LightTileGeometry(*ts, r->pixels_per_unit, cell)) return;
         const LightTileRange xr = GetLightTileRange(region_min.x, region_max.x, t->position.x, cell.x, map->width);
@@ -258,7 +266,7 @@ LightMap BuildLightMap(const World& world, const Resolvers2D& tiles, Vec2 region
             !std::isfinite(t->position.y)) return;
         const TilemapData* tm = tiles.tilemaps(r->tilemap.guid);
         const Tileset* ts = tm ? tiles.tilesets(tm->tileset) : nullptr;
-        if (!tm || !ts) return;
+        if (!tm || !ts || !CanOccludeLight(*tm, *ts)) return;
         Vec2 cell;
         if (!LightTileGeometry(*ts, r->pixels_per_unit, cell)) return;
         for (u32 y = 0; y < map.height; ++y) {
