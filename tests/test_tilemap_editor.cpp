@@ -14,6 +14,7 @@
 #include <imgui_internal.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -902,24 +903,40 @@ AETHER_TEST(TilemapEditor_WheelZoomKeepsTheHoveredCellUnderTheCursor) {
     io.AddMousePosEvent(bottom_left.x + 5.5f * panel.zoom, bottom_left.y - 4.5f * panel.zoom);
     ui.Frame(draw);
     const f32 starting_zoom = panel.zoom;
-    io.AddMouseWheelEvent(0.0f, 1.0f);
-    ui.Frame(draw);
-    CHECK(panel.zoom > starting_zoom && !doc.dirty() && !doc.CanUndo());
-    io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
-    ui.Frame(draw);
-    io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
-    ui.Frame(draw);
-    CHECK(doc.Map().Get(0, 5, 4) == 3);
-    CHECK(doc.Map().Get(0, 4, 3) == kEmpty);
+    const auto wheel = [&](f32 delta) {
+        io.AddMouseWheelEvent(0.0f, delta);
+        ui.Frame(draw);
+    };
+    const auto click = [&] {
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+        ui.Frame(draw);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+        ui.Frame(draw);
+    };
+    const u64 revision = doc.Revision();
+    wheel(1.0f);
+    wheel(1.0f);
+    const f32 two_notches = panel.zoom;
+    CHECK(std::abs(two_notches - starting_zoom * 1.15f * 1.15f) < 0.01f);
+    wheel(-2.0f);
+    CHECK(std::abs(panel.zoom - starting_zoom) < 0.01f);
+    wheel(2.0f);
+    CHECK(std::abs(panel.zoom - two_notches) < 0.01f);
+    wheel(-2.0f);
+    wheel(0.25f);
+    CHECK(std::abs(panel.zoom - starting_zoom * std::pow(1.15f, 0.25f)) < 0.01f);
+    CHECK(doc.Revision() == revision && !doc.dirty() && !doc.CanUndo());
+    click();
+    CHECK(doc.Map().Get(0, 5, 4) == 3 && doc.Map().Get(0, 4, 3) == kEmpty);
     CHECK(doc.Undo() && doc.Map().Get(0, 5, 4) == kEmpty && !doc.CanUndo());
 
-    io.AddMouseWheelEvent(0.0f, -1.0f);
-    ui.Frame(draw);
-    CHECK(panel.zoom < starting_zoom + 0.01f && !doc.dirty());
-    io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
-    ui.Frame(draw);
-    io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
-    ui.Frame(draw);
+    wheel(-0.25f);
+    CHECK(std::abs(panel.zoom - starting_zoom) < 0.01f);
+    wheel(100.0f);
+    CHECK(panel.zoom == 64.0f);
+    wheel(-100.0f);
+    CHECK(panel.zoom == 6.0f && !doc.dirty() && !doc.CanUndo() && doc.CanRedo());
+    click();
     CHECK(doc.Map().Get(0, 5, 4) == 3);
 }
 
