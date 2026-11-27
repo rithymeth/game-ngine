@@ -278,8 +278,31 @@ void TilemapEditDocument::Rectangle(i32 x0, i32 y0, i32 x1, i32 y1) {
     if (left > right || bottom > top) return;
     BeginStroke();
     const i32 value = tool == TileTool::Erase ? kEmpty : brush;
-    for (i32 y = bottom; y <= top; ++y) {
-        for (i32 x = left; x <= right; ++x) PaintCell(x, y, value);
+    if (active_layer < map_.layers.size()) {
+        auto& cells = map_.layers[active_layer].cells;
+        auto& edit = stroke_[active_layer];
+        for (i32 y = bottom; y <= top; ++y) {
+            const u64 base = static_cast<u64>(y) * map_.width;
+            const u64 first = base + static_cast<u32>(left);
+            if (first >= cells.size()) break;
+            // Public layers can have a truncated backing array.
+            const usize stop = static_cast<usize>(std::min<u64>(cells.size(), base + static_cast<u32>(right) + 1));
+            usize i = static_cast<usize>(first);
+            while (i < stop && std::holds_alternative<SparseCells>(edit.cells)) PaintCellAt(i++, value);
+            if (i == stop) continue;
+
+            // Count the live and replacement differences against the original
+            // before writing this dense span, including already-matching cells.
+            const auto& original = std::get<std::vector<i32>>(edit.cells);
+            usize before = 0, after = 0;
+            for (usize offset = i; offset < stop; ++offset) {
+                before += cells[offset] != original[offset];
+                after += value != original[offset];
+            }
+            edit.changed = edit.changed - before + after;
+            stroke_changed_cells_ = stroke_changed_cells_ - before + after;
+            std::fill_n(cells.data() + i, stop - i, value);
+        }
     }
     EndStroke();
 }

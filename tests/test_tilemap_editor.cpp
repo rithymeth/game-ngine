@@ -354,6 +354,46 @@ AETHER_TEST(TilemapEditor_FloodPaintMatchesRegionThroughNarrowConnections) {
     CHECK(doc.Redo() && doc.Map().layers[1].cells == expected);
 }
 
+AETHER_TEST(TilemapEditor_DenseRectangleKeepsRedoAfterAClippedNetZeroStroke) {
+    TilemapData map;
+    map.Resize(72, 48);
+    map.AddLayer("Ground");
+    map.Fill(0, 0, 0, 35, 47, 4);
+    const auto initial = map.layers[0].cells;
+    TilemapEditDocument doc(std::move(map), {});
+    doc.brush = 9;
+    doc.Apply(0, 47);
+    CHECK(doc.Undo() && !doc.dirty() && doc.CanRedo());
+    const auto revision = doc.Revision();
+
+    doc.BeginStroke();
+    doc.brush = 4;
+    for (i32 y = 0; y < 48; ++y) for (i32 x = 36; x < 72; ++x) doc.Apply(x, y);
+    CHECK(doc.dirty());
+    doc.tool = TileTool::Erase;
+    doc.Rectangle(99, 99, 36, -5); // Bulk restore; clipped edges and reversed corners.
+    CHECK(doc.Map().layers[0].cells == initial && !doc.dirty());
+    CHECK(doc.Revision() == revision && !doc.CanUndo() && doc.CanRedo());
+    CHECK(doc.Redo() && doc.Map().Get(0, 0, 47) == 9);
+
+    doc.tool = TileTool::Rectangle;
+    doc.brush = 4;
+    doc.Rectangle(0, 0, 71, 47); // Mixes matching and changed cells.
+    CHECK(doc.Map().Get(0, 0, 47) == 4 && doc.Map().Get(0, 71, 47) == 4);
+    CHECK(doc.Undo() && doc.Map().Get(0, 0, 47) == 9 && doc.Map().Get(0, 71, 47) == kEmpty);
+
+    TilemapData truncated;
+    truncated.Resize(6, 8);
+    truncated.AddLayer("Short");
+    truncated.layers[0].cells.resize(33); // Part of the sixth row is missing.
+    TilemapEditDocument short_doc(std::move(truncated), {});
+    short_doc.brush = 8;
+    short_doc.Rectangle(0, 0, 5, 7);
+    CHECK(short_doc.Map().layers[0].cells.size() == 33);
+    CHECK(short_doc.Map().Get(0, 2, 5) == 8 && short_doc.Map().Get(0, 3, 5) == kEmpty);
+    CHECK(short_doc.Undo() && short_doc.Map().Get(0, 2, 5) == kEmpty);
+}
+
 AETHER_TEST(TilemapEditor_DenseFillCountsNewAndRevertedCellsInTheSameRun) {
     TilemapData map;
     map.Resize(90, 28);
