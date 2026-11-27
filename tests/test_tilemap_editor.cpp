@@ -1020,6 +1020,59 @@ AETHER_TEST(TilemapEditor_WheelZoomKeepsTheHoveredCellUnderTheCursor) {
     CHECK(doc.Map().Get(0, 5, 4) == 3);
 }
 
+AETHER_TEST(TilemapEditor_ZoomSliderKeepsTheFocusedCellInView) {
+    HeadlessImGui ui;
+    TilemapData map;
+    map.Resize(128, 96);
+    map.AddLayer("Ground");
+    TilemapEditDocument doc(std::move(map), {});
+    doc.brush = 3;
+    TilemapPanel panel(doc);
+    ImVec2 canvas_center;
+    ImGuiID zoom_id = 0;
+    ImVec2 toolbar;
+    f32 canvas_top = 0;
+    const auto draw = [&] {
+        const auto* parent = ImGui::GetCurrentWindowRead();
+        const auto id = ImGui::GetID("##canvas");
+        zoom_id = ImGui::GetID("Zoom");
+        toolbar = ImGui::GetCursorScreenPos();
+        panel.Draw();
+        canvas_top = ImGui::GetItemRectMin().y;
+        for (const auto* child : parent->DC.ChildWindows) {
+            if (child->ChildId != id) continue;
+            const auto start = child->DC.CursorStartPos;
+            canvas_center = {(start.x + child->WorkRect.Max.x) * 0.5f, (start.y + child->WorkRect.Max.y) * 0.5f};
+        }
+    };
+    auto& io = ImGui::GetIO();
+    const auto move = [&](f32 x, f32 y) { io.AddMousePosEvent(x, y); ui.Frame(draw); };
+    const auto click = [&] {
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+        ui.Frame(draw);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+        ui.Frame(draw);
+    };
+    CHECK(panel.FocusCell(0, 90, 70));
+    ui.Frame(draw);
+    bool found = false;
+    for (f32 y = toolbar.y + 4; !found && y < canvas_top; y += 8) {
+        for (f32 x = toolbar.x + 5; x < toolbar.x + 950; x += 12) {
+            move(x, y);
+            if (ImGui::GetHoveredID() != zoom_id) continue;
+            click();
+            found = true;
+            break;
+        }
+    }
+    CHECK(found && panel.zoom != 24.0f && !doc.dirty() && !doc.CanUndo());
+    move(canvas_center.x, canvas_center.y);
+    click();
+    CHECK(doc.Map().Get(0, 90, 70) == 3 && doc.CanUndo());
+    CHECK(doc.Map().Get(0, 89, 70) == kEmpty && doc.Map().Get(0, 91, 70) == kEmpty);
+    CHECK(doc.Undo() && !doc.dirty());
+}
+
 AETHER_TEST(TilemapEditor_ResetViewRestoresOriginWithoutChangingHistory) {
     HeadlessImGui ui;
     auto doc = Doc();

@@ -222,6 +222,7 @@ void TilemapPanel::ResetView() {
     zoom = kDefaultZoom;
     pan_x_ = pan_y_ = kDefaultPan;
     pending_focus_.reset();
+    zoom_before_slider_.reset();
 }
 
 void TilemapPanel::ResetForNewMap() {
@@ -390,7 +391,10 @@ void TilemapPanel::DrawTools() {
     ImGui::Checkbox("Solid", &show_solid);
     ImGui::SameLine();
     ImGui::SetNextItemWidth(100);
-    ImGui::SliderFloat("Zoom", &zoom, 6.0f, 64.0f, "%.0f px");
+    const f32 old_zoom = zoom;
+    if (ImGui::SliderFloat("Zoom", &zoom, 6.0f, 64.0f, "%.0f px") && !zoom_before_slider_)
+        zoom_before_slider_ = old_zoom;
+    ImGui::SetItemTooltip("Zoom around the center of the view.");
     ImGui::SameLine();
     if (ImGui::SmallButton("Reset view")) ResetView();
     ImGui::SetItemTooltip("Return to the lower-left corner at the default zoom.");
@@ -646,15 +650,21 @@ void TilemapPanel::DrawCanvas() {
                            ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
     const bool hovered = ImGui::IsItemHovered();
     ImGuiIO& io = ImGui::GetIO();
+    // Pan is measured from the canvas's bottom-left, with y pointing up.
+    const auto reanchor_zoom = [&](f32 from, f32 to, f64 x, f64 y) {
+        if (!std::isfinite(from) || !std::isfinite(to) || from <= 0.0f || from == to) return;
+        const f64 correction = 1.0 - static_cast<f64>(to) / from;
+        pan_x_ += (x - pan_x_) * correction;
+        pan_y_ += (y - pan_y_) * correction;
+    };
+    if (zoom_before_slider_) {
+        reanchor_zoom(*zoom_before_slider_, zoom, size.x * 0.5, size.y * 0.5);
+        zoom_before_slider_.reset();
+    }
     if (hovered && std::isfinite(io.MouseWheel) && io.MouseWheel != 0.0f) {
         const f32 next = std::clamp(zoom * std::pow(1.15f, io.MouseWheel), 6.0f, 64.0f);
-        if (zoom > 0.0f && next != zoom) {
-            // Keep the same map point under the pointer. Pan is measured
-            // from the canvas's bottom-left, with y pointing up.
-            const f64 correction = 1.0 - static_cast<f64>(next) / zoom;
-            pan_x_ += (static_cast<f64>(io.MousePos.x) - origin.x - pan_x_) * correction;
-            pan_y_ += (static_cast<f64>(origin.y) + size.y - io.MousePos.y - pan_y_) * correction;
-        }
+        reanchor_zoom(zoom, next, static_cast<f64>(io.MousePos.x) - origin.x,
+                      static_cast<f64>(origin.y) + size.y - io.MousePos.y);
         zoom = next;
     }
     if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Middle, 0.0f)) {

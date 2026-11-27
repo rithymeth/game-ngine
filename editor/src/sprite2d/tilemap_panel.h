@@ -67,6 +67,7 @@ private:
     std::optional<u64> invalid_search_revision_;
     struct PendingFocus { i32 x, y; u64 revision; };
     std::optional<PendingFocus> pending_focus_;
+    std::optional<f32> zoom_before_slider_;
     static constexpr f32 kDefaultZoom = 24.0f, kDefaultPan = 8.0f;
     f64 pan_x_ = kDefaultPan, pan_y_ = kDefaultPan;
     bool dragging_ = false;
