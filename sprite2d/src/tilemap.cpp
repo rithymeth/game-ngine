@@ -26,12 +26,17 @@ bool ReadUnsigned(const nlohmann::json& value, u32& out, u32 maximum = std::nume
 }
 
 bool ReadSigned(const nlohmann::json& value, i32& out) {
-    if (!value.is_number_integer() ||
-        (value.is_number_unsigned() && value.get<u64>() > static_cast<u64>(std::numeric_limits<i32>::max()))) return false;
-    const i64 n = value.get<i64>();
-    if (n < std::numeric_limits<i32>::min() || n > std::numeric_limits<i32>::max()) return false;
-    out = static_cast<i32>(n);
-    return true;
+    if (const auto* n = value.get_ptr<const nlohmann::json::number_integer_t*>()) {
+        if (*n < std::numeric_limits<i32>::min() || *n > std::numeric_limits<i32>::max()) return false;
+        out = static_cast<i32>(*n);
+        return true;
+    }
+    if (const auto* n = value.get_ptr<const nlohmann::json::number_unsigned_t*>()) {
+        if (*n > static_cast<u64>(std::numeric_limits<i32>::max())) return false;
+        out = static_cast<i32>(*n);
+        return true;
+    }
+    return false;
 }
 
 std::string LayerCellCountError(const TileLayer& layer, usize expected) {
@@ -327,6 +332,14 @@ public:
 
     bool Parse(int depth, nlohmann::json::parse_event_t event, const nlohmann::json& value) {
         using Event = nlohmann::json::parse_event_t;
+        if (depth == 4 && in_cells_) {
+            i32 cell = 0;
+            if (event != Event::value || !ReadSigned(value, cell)) throw Legacy{};
+            auto& cells = layers.back();
+            if (cells.size() >= kMaxTilemapCells) throw Limit{};
+            cells.push_back(cell);
+            return false; // Do not add the numeric node to the DOM.
+        }
         if (depth == 1 && event == Event::key) {
             layers_key_ = value == "layers";
             if (layers_key_ && seen_layers_) throw Legacy{};
@@ -349,12 +362,6 @@ public:
             in_cells_ = true;
         } else if (in_layers_ && depth == 3 && event == Event::array_end) {
             in_cells_ = false;
-        } else if (in_cells_ && depth == 4) {
-            i32 cell = 0;
-            if (event != Event::value || !ReadSigned(value, cell)) throw Legacy{};
-            if (layers.back().size() >= kMaxTilemapCells) throw Limit{};
-            layers.back().push_back(cell);
-            return false; // Do not add the numeric node to the DOM.
         }
         return true;
     }

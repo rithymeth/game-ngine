@@ -699,6 +699,17 @@ AETHER_TEST(Sprite2D_TilemapFileLoadPreservesLegacyJson) {
     CHECK(LoadTilemap(file, loaded, &error));
     CHECK(TilemapToJson(loaded) == TilemapToJson(expected) && loaded.Get(0, 0, 0) == 2);
 
+    // Legacy conversion also applies without duplicate keys when a cell
+    // falls outside the packed integer path's i32 range or uses a fraction.
+    for (const char* value : {"2147483648", "-2147483649", "2.5", "9223372036854775808"}) {
+        const std::string unusual = std::string(R"({"$type":"Tilemap","size":[1,1],"layers":[{"cells":[)") +
+                                    value + "]}]}";
+        write(unusual);
+        CHECK(TilemapFromJson(nlohmann::json::parse(unusual), expected, &error));
+        CHECK(LoadTilemap(file, loaded, &error));
+        CHECK(TilemapToJson(loaded) == TilemapToJson(expected));
+    }
+
     const auto previous = TilemapToJson(loaded);
     for (const auto invalid : {
              R"({"$type":"Tilemap","size":[3,1],"layers":[{"cells":[1,2)",
