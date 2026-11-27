@@ -105,6 +105,23 @@ AETHER_TEST(Loc_CsvReportsProblems) {
     CHECK(table.KeyCount() == 2 && *table.Find("fr", "b") == "abeille");
 }
 
+AETHER_TEST(Loc_CsvReportsDuplicateNormalizedLanguageColumns) {
+    StringTable table;
+    std::vector<std::string> errors;
+    CHECK(table.ImportCsv("key,pt_BR,PT-br,en\nplay,Jogar,Iniciar,Play\nquit,Sair,,Quit\n", &errors));
+    CHECK(errors.size() == 1);
+    if (!errors.empty()) {
+        CHECK(errors.front().find("Column 3") != std::string::npos);
+        CHECK(errors.front().find("pt-BR") != std::string::npos);
+        CHECK(errors.front().find("column 2") != std::string::npos);
+    }
+    const auto* play = table.Find("pt-BR", "play");
+    const auto* quit = table.Find("pt-BR", "quit");
+    CHECK(play != nullptr && *play == "Iniciar"); // later nonempty translation wins
+    CHECK(quit != nullptr && *quit == "Sair"); // an empty later cell is still no translation
+    CHECK((table.Languages() == std::vector<std::string>{"en", "pt-BR"}));
+}
+
 AETHER_TEST(Loc_PluralCategories) {
     CHECK(PluralCategory("en", 1) == "one" && PluralCategory("en", 0) == "other" && PluralCategory("en", 2) == "other");
     CHECK(PluralCategory("en", 1.5) == "other");

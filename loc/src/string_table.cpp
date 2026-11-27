@@ -131,11 +131,22 @@ bool StringTable::ImportCsv(std::string_view csv, std::vector<std::string>* erro
     const std::vector<std::string>& header = rows[0];
     if (header.empty() || header[0] != "key") return fail("The first header cell must be 'key'");
     std::vector<std::string> languages(header.size()); // empty: not a language column
+    std::map<std::string, usize> first_column;
     for (usize c = 1; c < header.size(); ++c) {
         if (header[c] == "comment") continue;
-        languages[c] = NormalizeLanguage(header[c]);
-        if (!languages[c].empty()) languages_.insert(languages[c]); // a column with no cells yet is still a language
-        if (languages[c].empty() && errors) errors->push_back("Column " + std::to_string(c + 1) + " has no language name and was skipped");
+        const std::string& language = languages[c] = NormalizeLanguage(header[c]);
+        if (language.empty()) {
+            if (errors) errors->push_back("Column " + std::to_string(c + 1) + " has no language name and was skipped");
+            continue;
+        }
+        languages_.insert(language); // a column with no cells yet is still a language
+        if (errors) {
+            const auto [first, inserted] = first_column.emplace(language, c + 1);
+            if (!inserted) {
+                errors->push_back("Column " + std::to_string(c + 1) + " repeats language '" + language + "' from column " +
+                                  std::to_string(first->second) + ": later nonempty translations take precedence");
+            }
+        }
     }
     std::set<std::string> seen;
     for (usize r = 1; r < rows.size(); ++r) {
