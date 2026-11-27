@@ -1,4 +1,5 @@
 #include "uidesign/ui_layout_document.h"
+#include "ui/staged_asset_write.h"
 
 #include "aether/ui/basic.h"
 #include "aether/ui/controls.h"
@@ -120,21 +121,15 @@ bool UILayoutDocument::Load(const std::filesystem::path& path, std::string* erro
 }
 
 bool UILayoutDocument::Save(std::string* error) {
-    if (path_.empty()) return Fail(error, "the layout has no file yet (Save As)");
-    std::ofstream f(path_, std::ios::binary | std::ios::trunc);
-    if (!f) return Fail(error, "can't write '" + path_.string() + "'");
-    f << Text();
-    if (!f) return Fail(error, "can't write '" + path_.string() + "'");
-    dirty_ = false;
-    return true;
+    return SaveAs(path_, error);
 }
 
 bool UILayoutDocument::SaveAs(const std::filesystem::path& path, std::string* error) {
-    const std::filesystem::path old = path_;
+    if (path.empty()) return Fail(error, "the layout has no file yet (Save As)");
+    if (!WriteStagedAsset(path, Text())) return Fail(error, "can't write '" + path.string() + "'");
     path_ = path;
-    if (Save(error)) return true;
-    path_ = old;
-    return false;
+    dirty_ = false;
+    return true;
 }
 void UILayoutDocument::MarkSaved() {
     dirty_ = false;

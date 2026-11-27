@@ -8070,6 +8070,7 @@
 [editor/src/ui/reflected_inspector.h] internal-tooling
 [editor/src/ui/script_inspector.h] internal-tooling
 [editor/src/ui/shell_layout.h] internal-tooling
+[editor/src/ui/staged_asset_write.h] internal-tooling
 [editor/src/uidesign/ui_designer.h] internal-tooling
 [editor/src/uidesign/ui_layout_document.h] internal-tooling
 [editor/src/vfx/vfx_document.h] internal-tooling

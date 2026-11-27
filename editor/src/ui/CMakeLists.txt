@@ -11,6 +11,7 @@ add_library(aether_editor_ui STATIC
     editor_theme.cpp
     image_texture.cpp
     shell_layout.cpp
+    staged_asset_write.cpp
     code_document.cpp
     code_editor.cpp
     ../graph/graph_view.cpp

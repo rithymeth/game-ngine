@@ -10,7 +10,14 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <functional>
+#include <iterator>
+
+#if defined(__linux__)
+#include <signal.h>
+#include <sys/resource.h>
+#endif
 
 using namespace aether;
 using namespace aether::editor;
@@ -221,6 +228,56 @@ AETHER_TEST(UIDesigner_LayoutDocument) {
     CHECK(!loaded.Load(file.string() + ".missing", &error) && error.find("can't open") != std::string::npos);
     std::filesystem::remove(file);
 }
+
+#if defined(__linux__)
+AETHER_TEST(UIDesigner_LayoutWriteFailureKeepsSavedFilesAndPendingEdits) {
+    namespace fs = std::filesystem;
+    const auto dir = fs::temp_directory_path() / "aether_layout_write_failure";
+    fs::create_directories(dir);
+    const auto original = dir / "Original.aui";
+    const auto other = dir / "Other.aui";
+    UILayoutDocument doc;
+    CHECK(doc.SaveAs(other) && doc.SaveAs(original));
+    const auto bytes = [](const fs::path& file) {
+        std::ifstream in(file, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(in), {});
+    };
+    const auto saved_bytes = bytes(original);
+    const auto other_bytes = bytes(other);
+    CHECK(!saved_bytes.empty() && !other_bytes.empty());
+    CHECK(doc.AddWidget("Button", {}).has_value() && doc.Dirty() && doc.CanUndo());
+    const auto pending = doc.Text();
+
+    // Fail the actual file write, including writes deferred until stream close.
+    struct rlimit previous_limit{};
+    struct sigaction previous_signal{}, ignore{};
+    ignore.sa_handler = SIG_IGN;
+    sigemptyset(&ignore.sa_mask);
+    const bool read_limit = getrlimit(RLIMIT_FSIZE, &previous_limit) == 0;
+    CHECK(read_limit);
+    if (!read_limit) return;
+    const bool changed_signal = sigaction(SIGXFSZ, &ignore, &previous_signal) == 0;
+    CHECK(changed_signal);
+    if (!changed_signal) return;
+    const struct rlimit blocked{0, previous_limit.rlim_max};
+    const bool limited = setrlimit(RLIMIT_FSIZE, &blocked) == 0;
+    std::string save_error, copy_error;
+    const bool saved = limited && doc.Save(&save_error);
+    const bool copied = limited && doc.SaveAs(other, &copy_error);
+    const bool restored = !limited || setrlimit(RLIMIT_FSIZE, &previous_limit) == 0;
+    const bool signal_restored = sigaction(SIGXFSZ, &previous_signal, nullptr) == 0;
+    CHECK(limited && restored && signal_restored);
+
+    CHECK(!saved && !save_error.empty() && !copied && !copy_error.empty());
+    CHECK(bytes(original) == saved_bytes && bytes(other) == other_bytes);
+    CHECK(doc.Path() == original && doc.Dirty() && doc.CanUndo() && doc.Text() == pending);
+    CHECK(std::distance(fs::directory_iterator(dir), fs::directory_iterator{}) == 2);
+    CHECK(doc.Save() && !doc.Dirty() && doc.CanUndo());
+    UILayoutDocument reloaded;
+    CHECK(reloaded.Load(original) && reloaded.Text() == pending && bytes(other) == other_bytes);
+    fs::remove_all(dir);
+}
+#endif
 
 AETHER_TEST(UIDesigner_Canvas) {
     HeadlessImGui imgui;
