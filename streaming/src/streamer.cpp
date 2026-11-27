@@ -140,6 +140,15 @@ void WorldStreamer::UnloadCell(const CellCoord& cell) {
     if (on_cell_) on_cell_(cell, false);
 }
 
+std::optional<Vec3> WorldStreamer::SourceLocalPosition(Entity source) const {
+    const Transform* transform = world_.GetComponent<Transform>(source);
+    if (transform == nullptr) return std::nullopt;
+    if (guids_ != nullptr && world_.HasComponent<Parent>(source)) {
+        return aether::WorldPosition(world_, *guids_, source);
+    }
+    return transform->position;
+}
+
 void WorldStreamer::Update() {
     events_.clear();
     struct Source {
@@ -153,14 +162,8 @@ void WorldStreamer::Update() {
             Entity* es = archetype.EntityArray(c);
             for (usize i = 0; i < archetype.ChunkEntityCount(c); ++i) {
                 const StreamingSource* s = world_.GetComponent<StreamingSource>(es[i]);
-                const Transform* t = world_.GetComponent<Transform>(es[i]);
-                if (s == nullptr || t == nullptr || !s->enabled) continue;
-                // A camera on a rig stores its transform relative to its
-                // parent. Resolve that hierarchy before the spatial query
-                // adds the floating origin's world offset.
-                const Vec3 position = guids_ != nullptr && world_.HasComponent<Parent>(es[i])
-                    ? aether::WorldPosition(world_, *guids_, es[i]) : t->position;
-                sources.push_back({position, s->radius});
+                if (s == nullptr || !s->enabled) continue;
+                if (auto position = SourceLocalPosition(es[i])) sources.push_back({*position, s->radius});
             }
         }
     });

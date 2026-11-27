@@ -5,6 +5,7 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <set>
 
 namespace aether::streaming {
@@ -40,6 +41,11 @@ public:
     static CellLoader FileLoader(std::filesystem::path dir);
 
     void Update();
+
+    // Source position relative to the floating origin. Indexed hierarchies
+    // are resolved first; without a GUID index, use the local Transform.
+    // Returns no position if the entity has no Transform.
+    std::optional<Vec3> SourceLocalPosition(Entity source) const;
 
     // Async loading (Phase 42 step 2): with an executor set, reading a cell's bytes (the CellLoader, which must then be
     // thread-safe) runs through it, e.g. a job system; Update() only applies finished reads to the world, so the
