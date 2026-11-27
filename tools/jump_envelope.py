@@ -109,6 +109,19 @@ def sweep(player, trials, root):
             "trials": [{"offset": offset, **outcomes[offset]} for offset in trials]}
 
 
+def lost_route_evidence(root, trials, lost):
+    offset = min(lost, key=lambda value: (abs(value), value))
+    before, _, _ = read_trace_details(root / "before" / f"trace-{offset}.txt")
+    after, _, _ = read_trace_details(root / "after" / f"trace-{offset}.txt")
+    tolerance = 0.01  # same default per-axis tolerance as Jump Proof comparison
+    divergence = {"xy_tolerance": tolerance, "first_frame": None}
+    for frame, (old, new) in enumerate(zip(before, after), 1):
+        if any(abs(old[axis] - new[axis]) > tolerance for axis in (0, 1)):
+            divergence.update(first_frame=frame, baseline_position=old, candidate_position=new)
+            break
+    return {"offset": offset, "route": trials[offset], "divergence": divergence}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--player", type=Path, required=True, help="trusted packaged player executable")
@@ -139,6 +152,7 @@ def main():
             players["candidate"] = args.candidate.resolve(strict=True)
         snapshots = ({label: evidence_fingerprints(player) for label, player in players.items()}
                      if args.capture_evidence else {})
+        lost_replay = None
         with tempfile.TemporaryDirectory(prefix="aether-jump-envelope-") as scratch:
             root = Path(scratch)
             before = report["baseline"] = sweep(players["baseline"], trials, root / "before")
@@ -147,7 +161,10 @@ def main():
             if args.candidate is not None:
                 after = report["candidate"] = sweep(players["candidate"], trials, root / "after")
                 old, new = set(before["pass_offsets"]), set(after["pass_offsets"])
-                report.update(lost_pass_offsets=sorted(old - new), gained_pass_offsets=sorted(new - old))
+                lost = sorted(old - new)
+                report.update(lost_pass_offsets=lost, gained_pass_offsets=sorted(new - old))
+                if args.capture_evidence and lost:
+                    lost_replay = lost_route_evidence(root, trials, lost)
         if args.require_preserved_offsets:
             report["gate"] = {"policy": "preserve-pass-offsets", "passed": not report["lost_pass_offsets"]}
         if args.capture_evidence:
@@ -156,10 +173,8 @@ def main():
                     raise ValueError(f"{player.name}: package files changed during the sweep")
             evidence = report["evidence"] = {f"{label}_sha256": files for label, files in snapshots.items()}
             evidence["reference_route"] = trials[0]
-            lost = report.get("lost_pass_offsets", [])
-            if lost:
-                offset = min(lost, key=lambda value: (abs(value), value))
-                evidence["nearest_lost_replay"] = {"offset": offset, "route": trials[offset]}
+            if lost_replay is not None:
+                evidence["nearest_lost_replay"] = lost_replay
         receipt = json.dumps(report, allow_nan=False)
         if args.output is None:
             print(receipt)
