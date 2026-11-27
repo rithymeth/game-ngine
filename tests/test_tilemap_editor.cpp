@@ -2593,6 +2593,40 @@ AETHER_TEST(TilemapEditor_GoToCellCentersDistantCoordinatesWithoutEditing) {
     CHECK(doc.active_layer == 1 && doc.Revision() == revision && !doc.dirty() && !doc.CanUndo());
 }
 
+AETHER_TEST(TilemapEditor_FindInvalidPaintUsesBothEncodingBoundaries) {
+    for (bool textured : {false, true}) {
+        HeadlessImGui ui;
+        Tileset tiles;
+        tiles.texture_width = tiles.texture_height = 32;
+        if (textured) tiles.texture = assets::NewAssetGuid(); // tiles 0 through 3
+        std::array<i32, 16> variants{};
+        tiles.AddAutotile("Grass", variants);
+        tiles.AddAutotile("River", variants);
+
+        TilemapData map;
+        map.Resize(5, 1);
+        map.AddLayer("Valid edges");
+        map.Set(0, 0, 0, 0);
+        map.Set(0, 1, 0, textured ? 3 : std::numeric_limits<i32>::max());
+        map.Set(0, 2, 0, AutotileCell(1)); // last existing rule
+        map.Set(0, 3, 0, AutotileCell(0));
+        map.AddLayer("Missing rule");
+        map.Set(1, 0, 0, std::numeric_limits<i32>::min());
+        map.AddLayer("Outside grid");
+        map.Set(2, 0, 0, 4);
+        TilemapEditDocument doc(std::move(map), std::move(tiles));
+        TilemapPanel panel(doc);
+        CHECK(panel.FindNextInvalidPaint() && doc.active_layer == 1);
+        doc.tool = TileTool::Erase;
+        doc.Apply(0, 0);
+        if (textured) {
+            CHECK(panel.FindNextInvalidPaint() && doc.active_layer == 2);
+            doc.Apply(0, 0);
+        }
+        CHECK(!panel.FindNextInvalidPaint());
+    }
+}
+
 AETHER_TEST(TilemapEditor_FindInvalidPaintCyclesWithinOneLayer) {
     HeadlessImGui ui;
     TilemapData map;

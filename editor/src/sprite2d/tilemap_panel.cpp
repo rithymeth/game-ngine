@@ -283,14 +283,23 @@ bool TilemapPanel::FindNextInvalidPaint() {
     const auto previous = invalid_paint_cell_;
     invalid_paint_cell_.reset();
     if (map.width == 0 || map.height == 0) return focus_rule();
+    // The valid encodings form one contiguous signed range: autotiles,
+    // empty, and concrete tiles. A single unsigned comparison tests it.
+    constexpr i32 lowest = std::numeric_limits<i32>::min();
+    const auto max_rules = static_cast<usize>(static_cast<i64>(kEmpty) - lowest);
+    const auto first_valid = static_cast<i32>(static_cast<i64>(kEmpty) - std::min(tiles.autotiles.size(), max_rules));
+    const auto last_valid = count == 0 ? std::numeric_limits<i32>::max() : static_cast<i32>(count - 1);
+    if (first_valid == lowest && last_valid == std::numeric_limits<i32>::max()) return focus_rule();
+    const u32 valid_start = static_cast<u32>(first_valid);
+    const u32 valid_span = static_cast<u32>(last_valid) - valid_start;
     const auto scan_layer = [&](usize layer, usize begin, usize end) {
         const auto& cells = map.layers[layer].cells;
-        for (usize index = begin; index < end; ++index) {
-            if (!IsInvalidPaint(cells[index], count, tiles.autotiles.size())) continue;
-            invalid_paint_cell_ = InvalidPaintCell{layer, index, cells[index]};
-            return true;
-        }
-        return false;
+        const auto stop = cells.begin() + static_cast<std::ptrdiff_t>(end);
+        const auto it = std::find_if(cells.begin() + static_cast<std::ptrdiff_t>(begin), stop,
+                                     [&](i32 tile) { return static_cast<u32>(tile) - valid_start > valid_span; });
+        if (it == stop) return false;
+        invalid_paint_cell_ = InvalidPaintCell{layer, static_cast<usize>(it - cells.begin()), *it};
+        return true;
     };
     // Resume after the last hit. Only visit the prefix when the search wraps.
     const usize start_layer = previous ? previous->layer : 0;
