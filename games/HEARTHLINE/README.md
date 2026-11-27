@@ -20,14 +20,15 @@ SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software ./build/hearthline/hearthline_v
 
 ## Game objectives
 
-Collect resources around the opening camp, build the bridge at x=62, cross the river, defeat the guardian near x=90, place two relays at x=105 and x=107 from an adjacent tile and rotate each east with 2, then activate the beacon at x=108. Build a campfire and survive 24 action turns, replenishing firewood as needed.
+Collect resources around the opening camp, build the bridge at x=62, cross the river, defeat the guardian near x=90, place two relays at x=105 and x=107 from an adjacent tile and rotate each east with 2, then activate the beacon at x=108. Build a campfire and survive 24 action turns, replenishing firewood as needed. Combat now runs at a fixed 20 Hz independent of movement or other actions. The guardian chases within a bounded eight-tile leash, navigates terrain, telegraphs its strike for 600 ms, and recovers for 600 ms. Attacks have a 400 ms cooldown; evasion grants 300 ms of strike immunity and has a one-second cooldown. Move away from the marked tiles or time the V key to avoid damage. Night survival remains turn-based for this prototype; use Space (or the Wait button) rather than V to wait. The terminal simulation advances five combat ticks per command; use . to wait.
 
 | Key | Action |
 | --- | --- |
 | Arrow keys / WASD | Move one tile |
 | G | Gather nearby resource |
 | B | Build bridge at crossing |
-| K / V | Attack / dodge guardian |
+| K / V | Attack / timed evasion (300 ms) |
+| Space | Wait one survival turn |
 | P / Q | Place relay at fixed first / second puzzle socket |
 | E | Activate solved beacon |
 | F / R | Build campfire / refuel |
@@ -72,6 +73,6 @@ The deployment workflow is deliberately **manual** until Pages is configured, to
 
 - Deterministic **512 x 512** tile terrain with a designated **128 x 128** expedition area. Three dense byte-sized runtime grids hold terrain, constructed objects and persistent discovery (786,432 cells total, 768 KiB of cell data). These are not yet Aether tilemap assets.
 - Shared gameplay simulation in `src/game.cpp`; the SDL2 host in `src/visual_main.cpp` draws only visible tiles around the player and sends keyboard actions to the same core.
-- Three seeded regression expeditions run in CTest with additional checks for discovery, local bridge placement, relay rotation and losing without fuel; CI also verifies SDL2 headless startup and Chromium input.
+- 64 seeded regression expeditions exercise combat timing, idle death, timed and mistimed dodges, cooldowns, healing, retreat, discovery, bridge placement, relay rotation, and survival. The browser test script also covers keyboard/touch input and complete expedition progression; run it locally with Playwright. GitHub Actions is disabled by repository owner; this milestone does not enable or dispatch it.
 - This is a native SDL2 graphical prototype with an experimental Emscripten browser export; it is not yet an Aether sprite-batch renderer or a tested commercial-quality experience.
-- No imported sprite assets, sounds, save/load, world streaming, generalized relay solver, or benchmarked 60 FPS guarantee.
+- Guardian attack markers, health bars, slash, evasion and damage feedback use procedural animations. Movement is still tile-stepped; there are no imported sprite sheets, sounds, save/load, world streaming, generalized relay solver, or benchmarked 60 FPS guarantee.

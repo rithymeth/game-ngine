@@ -37,6 +37,7 @@ Game::Game(std::uint32_t seed) : seed_(seed), terrain_(kMapSize * kMapSize),
         terrain_[static_cast<std::size_t>(y)*kMapSize+x] = static_cast<std::uint8_t>(tile);
     }
     state_.player=Camp();
+    state_.guardian=Guardian();
     Reveal();
 }
 Tile Game::Terrain(int x,int y) const {
@@ -88,15 +89,11 @@ bool Game::Walkable(int x,int y) const {
 bool Game::Adjacent(Point p) const { return Distance(state_.player,p)<=1; }
 void Game::AdvanceTurn() {
     if (state_.phase!=Phase::Playing) return;
-    if(attack_cooldown_>0) --attack_cooldown_;
-    if(enemy_cooldown_>0) --enemy_cooldown_;
-    if(dodge_turns_>0) --dodge_turns_;
     if(!state_.beacon || !state_.fire) return;
     ++state_.night_turns;
     if(state_.fuel>0) --state_.fuel;
     if((state_.fuel==0 || Distance(state_.player,FireSite())>4) && state_.night_turns%4==0) {
-        state_.health=std::max(0,state_.health-1);
-        if(state_.health==0) state_.phase=Phase::Lost;
+        Damage();
     }
     if(state_.night_turns>=24 && state_.health>0) state_.phase=Phase::Won;
 }
@@ -104,7 +101,7 @@ bool Game::Move(int dx,int dy) {
     if(state_.phase!=Phase::Playing || dx < -1 || dx > 1 || dy < -1 || dy > 1 || std::abs(dx)+std::abs(dy)!=1) return false;
     Point next{state_.player.x+dx,state_.player.y+dy};
     if(!Walkable(next.x,next.y)) return false;
-    if(!state_.guardian_defeated && Distance(next,Guardian())<=1) return false;
+    if(!state_.guardian_defeated && Distance(next,state_.guardian)==0) return false;
     state_.player=next;
     Reveal();
     AdvanceTurn();
@@ -161,17 +158,9 @@ bool Game::Act(Action action, Point at) {
             r.direction=(r.direction+1)%4; accepted=true; break;
         }
         break;
-    case Action::Attack:
-        if(!s.guardian_defeated && Distance(s.player,Guardian())<=3 && attack_cooldown_==0) {
-            --s.guard_health; attack_cooldown_=2; accepted=true;
-            if(s.guard_health<=0) s.guardian_defeated=true;
-            else if(dodge_turns_==0 && enemy_cooldown_==0) {
-                --s.health; enemy_cooldown_=2;
-                if(s.health<=0) s.phase=Phase::Lost;
-            }
-        }
-        break;
-    case Action::Dodge: dodge_turns_=3; accepted=true; break;
+    case Action::Attack: accepted=CombatAttack(); break;
+    case Action::Dodge: accepted=CombatDodge(); break;
+    case Action::Wait: accepted=true; break;
     case Action::Heal:
         if(s.inventory.food>0 && s.health<5) {
             --s.inventory.food; s.health=std::min(5,s.health+2); accepted=true;

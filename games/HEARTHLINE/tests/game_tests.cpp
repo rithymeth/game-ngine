@@ -22,6 +22,14 @@ void To(Game& g,int x,int y) {
     }
     CHECK(guard>0);
 }
+void Tick(Game& g,int ticks) {
+    for(int i=0;i<ticks;++i) g.TickCombat();
+}
+void Windup(Game& g) {
+    for(int i=0;i<120 && g.State().guard_mode!=GuardMode::Windup;++i) g.TickCombat();
+    CHECK(g.State().guard_mode==GuardMode::Windup);
+    CHECK(g.State().guard_ticks==kGuardWindupTicks);
+}
 void Test(unsigned seed) {
     Game g(seed);
     CHECK(g.State().player.x==20);
@@ -42,13 +50,64 @@ void Test(unsigned seed) {
     CHECK(g.ObjectAt(63,64)==Structure::Bridge);
     CHECK(g.Move(1,0));
     CHECK(g.Move(1,0));
-    To(g,87,64);
-    for(int i=0;i<3;++i) {
-        CHECK(g.Act(Action::Dodge));
-        CHECK(g.Act(Action::Attack));
-        if(i<2) CHECK(g.Act(Action::Dodge));
-    }
+    To(g,82,64);
+    CHECK(g.Act(Action::Attack)); // miss consumes cooldown
+    CHECK(g.State().guard_health==3);
+    CHECK(!g.Act(Action::Attack));
+    Windup(g);
+    CHECK(g.State().guardian.x==84 && g.State().guardian.y==64);
+    CHECK(g.State().guard_target.x==82 && g.State().guard_target.y==64);
+    CHECK(g.State().attack_ticks==0);
+
+    Game hit=g;
+    Tick(hit,kGuardWindupTicks-1);
+    CHECK(hit.State().health==5);
+    hit.TickCombat();
+    CHECK(hit.State().health==4);
+    CHECK(hit.State().guard_mode==GuardMode::Recovery);
+    CHECK(hit.Act(Action::Heal));
+    CHECK(hit.State().health==5 && hit.State().inventory.food==2);
+    Game evade=g;
+    Tick(evade,kGuardWindupTicks-2);
+    CHECK(evade.Act(Action::Dodge));
+    CHECK(!evade.Act(Action::Dodge));
+    Tick(evade,2);
+    CHECK(evade.State().health==5);
+    CHECK(evade.State().guard_mode==GuardMode::Recovery);
+    Tick(evade,kDodgeCooldownTicks-2);
+    CHECK(evade.State().dodge_cooldown==0);
+    CHECK(evade.Act(Action::Dodge));
+    Game early=g;
+    CHECK(early.Act(Action::Dodge));
+    Tick(early,kGuardWindupTicks);
+    CHECK(early.State().health==4); // mistimed dodge expires before impact
+    Game retreat=g;
+    To(retreat,79,64);
+    Tick(retreat,120);
+    CHECK(retreat.State().health==5);
+    CHECK(retreat.State().guardian.x==Game::Guardian().x);
+    CHECK(retreat.State().guard_mode==GuardMode::Idle);
+    Game idle=g;
+    Tick(idle,240);
+    CHECK(idle.State().phase==Phase::Lost); // enemy attacks even without input
+    const auto frozen=idle.State().combat_tick;
+    Tick(idle,10);
+    CHECK(idle.State().combat_tick==frozen);
+
+    CHECK(g.Act(Action::Attack));
+    CHECK(g.State().guard_health==2);
+    CHECK(!g.Act(Action::Attack));
+    Tick(g,kAttackCooldownTicks);
+    CHECK(g.Act(Action::Attack));
+    CHECK(g.State().guard_health==1);
+    CHECK(g.Act(Action::Dodge));
+    Tick(g,kAttackCooldownTicks);
+    CHECK(g.State().health==5);
+    CHECK(g.Act(Action::Attack));
     CHECK(g.State().guardian_defeated);
+    CHECK(g.State().guard_mode==GuardMode::Defeated);
+    Tick(g,100);
+    CHECK(g.State().health==5);
     To(g,104,64);
     CHECK(!g.Act(Action::PlaceRelay,{104,64}));
     CHECK(!g.Act(Action::PlaceRelay,{107,64}));
@@ -67,18 +126,21 @@ void Test(unsigned seed) {
     CHECK(g.Act(Action::BuildCampfire));
     CHECK(g.ObjectAt(Game::FireSite().x,Game::FireSite().y)==Structure::Campfire);
     Game cold=g;
-    for(int i=0;i<24 && cold.State().phase==Phase::Playing;++i) CHECK(cold.Act(Action::Dodge));
+    for(int i=0;i<24 && cold.State().phase==Phase::Playing;++i) CHECK(cold.Act(Action::Wait));
     CHECK(cold.State().phase==Phase::Lost);
+    const auto night=g.State().night_turns;
+    Tick(g,200);
+    CHECK(g.State().night_turns==night); // survival remains action-based
     constexpr int kMaxNightActions=24;
     for(int n=0; n<kMaxNightActions && g.State().phase==Phase::Playing; ++n) {
         if(g.State().fuel<3 && g.State().inventory.wood>0)
             CHECK(g.Act(Action::Refuel));
-        else CHECK(g.Act(Action::Dodge));
+        else CHECK(g.Act(Action::Wait));
     }
     CHECK(g.Complete());
 }
 int main(){
-    for(unsigned seed : {1u,7u,42u}) Test(seed);
+    for(unsigned seed=1;seed<=64;++seed) Test(seed);
     Game g(7);
     CHECK(g.Terrain(62,64)==Tile::Water);
     CHECK(g.Discovered(20,64));
@@ -91,5 +153,5 @@ int main(){
     CHECK(!g.Walkable(-1,64));
     CHECK(!g.Act(Action::BuildBridge));
     CHECK(!g.Act(Action::PlaceRelay,{105,64}));
-    std::cout<<"Hearthline three seeded expeditions passed\n";
+    std::cout<<"Hearthline 64 seeded expeditions and combat scenarios passed\n";
 }
