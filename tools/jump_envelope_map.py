@@ -6,7 +6,7 @@ from html import escape
 import json
 from pathlib import Path
 
-from jump_envelope import MAX_RADIUS
+from jump_envelope import MAX_RADIUS, serialize_tilemap_overlay
 from jump_proof_compare import finite_number, write_new_json
 
 MAX_RECEIPT = 16 * 1024 * 1024
@@ -126,18 +126,31 @@ def render(receipt):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("receipt", type=Path)
-    parser.add_argument("--output", type=Path, help="write a new SVG instead of stdout")
+    parser.add_argument("--tilemap-overlay", action="store_true",
+                        help="extract the embedded Jump Proof overlay JSON instead of drawing a map")
+    parser.add_argument("--output", type=Path, help="write a new file instead of stdout")
     args = parser.parse_args()
     try:
         with args.receipt.open("rb") as source:
             raw = source.read(MAX_RECEIPT + 1)
         if len(raw) > MAX_RECEIPT:
             raise ValueError("receipt exceeds 16 MiB")
-        svg = render(json.loads(raw.decode("utf-8")))
-        if args.output is None:
-            print(svg)
+        receipt = json.loads(raw.decode("utf-8"))
+        if args.tilemap_overlay:
+            if not isinstance(receipt, dict) or receipt.get("schema") != "aether.jump-envelope.experimental.v1":
+                raise ValueError("expected a Jump Envelope v1 receipt")
+            evidence = receipt.get("evidence")
+            replay = evidence.get("nearest_lost_replay") if isinstance(evidence, dict) else None
+            overlay = replay.get("tilemap_overlay") if isinstance(replay, dict) else None
+            if overlay is None:
+                raise ValueError("receipt has no lost-timing Tilemap overlay")
+            output = serialize_tilemap_overlay(overlay)
         else:
-            write_new_json(args.output, svg)
+            output = render(receipt)
+        if args.output is None:
+            print(output)
+        else:
+            write_new_json(args.output, output)
     except (OSError, ValueError, OverflowError, RecursionError) as exc:
         parser.error(str(exc))
 
