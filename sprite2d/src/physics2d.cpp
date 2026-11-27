@@ -820,23 +820,20 @@ std::vector<RayHit2D> Physics2D::RaycastAll(Vec2 origin, Vec2 dir, f32 max_dista
     if (max_hits == 0 || !IsFinite(origin) || !IsFinite(dir) || !std::isfinite(direction_length) ||
         !std::isfinite(max_distance) || direction_length < 1e-9f || max_distance < 0.0f) return hits;
     dir = dir * (1.0f / direction_length);
-    EachEntity(world_, [&](Entity e) {
-        const Transform* transform = world_.GetComponent<Transform>(e);
-        const Collider2D* collider = world_.GetComponent<Collider2D>(e);
-        if (!transform || !collider || !IsValidCollider(*collider, *transform) || collider->trigger ||
-            (collider->layer & mask) == 0) return;
-        const Vec2 center{transform->position.x + collider->offset.x,
-                          transform->position.y + collider->offset.y};
+    EachCollider(world_, [&](Entity e, const Transform& transform, const Collider2D& collider) {
+        if (!IsValidCollider(collider, transform) || collider.trigger || (collider.layer & mask) == 0) return;
+        const Vec2 center{transform.position.x + collider.offset.x,
+                          transform.position.y + collider.offset.y};
         f32 t = 0.0f;
         Vec2 normal{};
         bool did_hit = false;
-        if (collider->shape == Shape2D::Box) {
+        if (collider.shape == Shape2D::Box) {
             did_hit = SlabRay(origin, dir,
-                              {center.x - collider->half_extents.x, center.y - collider->half_extents.y},
-                              {center.x + collider->half_extents.x, center.y + collider->half_extents.y},
+                              {center.x - collider.half_extents.x, center.y - collider.half_extents.y},
+                              {center.x + collider.half_extents.x, center.y + collider.half_extents.y},
                               max_distance, t, normal);
         } else {
-            did_hit = SweepCircle(origin, dir, center, collider->radius, max_distance, t, normal);
+            did_hit = SweepCircle(origin, dir, center, collider.radius, max_distance, t, normal);
         }
         if (!did_hit || t < 0.0f || t > max_distance) return;
         RayHit2D hit;
@@ -849,7 +846,7 @@ std::vector<RayHit2D> Physics2D::RaycastAll(Vec2 origin, Vec2 dir, f32 max_dista
 
     if (tiles_.tilemaps && tiles_.tilesets && (mask & 1u) != 0) {
         const Vec2 end = origin + dir * max_distance;
-        EachEntity(world_, [&](Entity e) {
+        EachTilemapEntity(world_, [&](Entity e) {
             const TilemapRenderer* renderer = world_.GetComponent<TilemapRenderer>(e);
             const Transform* transform = world_.GetComponent<Transform>(e);
             if (!renderer || !transform) return;

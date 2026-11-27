@@ -1582,6 +1582,48 @@ AETHER_TEST(Physics2D_NearestTileRayKeepsResolverOrderAndLiveTransforms) {
     CHECK(calls == (std::vector<assets::AssetGuid>{first}));
 }
 
+AETHER_TEST(Physics2D_AllTileRaysKeepMixedHitsOrderedAndLimited) {
+    World world;
+    TilemapData map;
+    map.Resize(4, 1);
+    map.AddLayer("Floor");
+    map.Set(0, 0, 0, 1); // x = 3: ties with the leading box
+    map.Set(0, 2, 0, 1); // x = 5: after the circle
+    Tileset tiles;
+    tiles.SetSolid(1, true);
+    TilemapRenderer renderer;
+    renderer.pixels_per_unit = 16.0f;
+    world.CreateEntity(Transform{Vec3(3, 0, 0), Quaternion::Identity()}, renderer);
+    world.CreateEntity(renderer); // no transform: not a map candidate
+    world.CreateEntity(Transform{Vec3(1, 0.5f, 0), Quaternion::Identity()});
+    const Entity crate = Box(world, Vec3(3.5f, 0.5f, 0), {0.5f, 0.5f}, BodyType2D::Static, false);
+    const Entity orb = Box(world, Vec3(4.5f, 0.5f, 0), {0.5f, 0.5f}, BodyType2D::Static, false);
+    auto* ball = world.GetComponent<Collider2D>(orb);
+    ball->shape = Shape2D::Circle;
+    ball->radius = 0.25f;
+    Resolvers2D resolvers;
+    int map_lookups = 0;
+    resolvers.tilemaps = [&](const assets::AssetGuid&) { ++map_lookups; return &map; };
+    resolvers.tilesets = [&](const assets::AssetGuid&) { return &tiles; };
+    Physics2D physics(world, resolvers);
+
+    constexpr Vec2 origin{0, 0.5f}, dir{1, 0};
+    const auto all = physics.RaycastAll(origin, dir, 10);
+    CHECK(map_lookups == 1);
+    if (all.size() != 4) { CHECK(false); return; }
+    CHECK(!all[0].tile && all[0].entity == crate && all[0].distance == 3.0f);
+    CHECK(all[1].tile && all[1].tile_x == 0 && all[1].distance == 3.0f);
+    CHECK(!all[2].tile && all[2].entity == orb && all[2].distance == 4.25f);
+    CHECK(all[3].tile && all[3].tile_x == 2 && all[3].distance == 5.0f);
+    const auto limited = physics.RaycastAll(origin, dir, 10, 1u, 2);
+    CHECK(limited.size() == 2 && limited.front().entity == crate && limited.back().tile);
+    CHECK(physics.RaycastAll(origin, dir, 10, 2u).empty() && map_lookups == 2);
+
+    map.layers[0].collides = false;
+    const auto live = physics.RaycastAll(origin, dir, 10);
+    CHECK(live.size() == 2 && live.front().entity == crate && live.back().entity == orb && map_lookups == 3);
+}
+
 AETHER_TEST(Physics2D_RaycastsAndOverlaps) {
     World world;
     Tileset ts;
