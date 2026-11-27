@@ -481,6 +481,11 @@ bool TilemapEditDocument::Resize(u32 width, u32 height) {
 
 void TilemapEditDocument::SetSolid(i32 tile, bool solid) {
     if (tile < 0 || tileset_.IsSolid(tile) == solid) return;
+    // A stale flag from a resized sheet must still be removable.
+    if (solid && !tileset_.texture.IsNull()) {
+        const u32 count = tileset_.TileCount();
+        if (count != 0 && static_cast<u32>(tile) >= count) return;
+    }
     RecordTileset();
     tileset_.SetSolid(tile, solid);
 }

@@ -886,6 +886,85 @@ AETHER_TEST(TilemapEditor_InvalidPickedTileCannotBecomeAnAutotileVariant) {
     CHECK(doc.SetAutotileTile(river, mask, kEmpty) && doc.GetTileset().autotiles[river].tiles[mask] == kEmpty);
 }
 
+AETHER_TEST(TilemapEditor_OutOfGridBrushCannotDefineSolidTiles) {
+    HeadlessImGui ui;
+    TilemapData map;
+    map.Resize(6, 5);
+    map.AddLayer("Ground");
+    map.Set(0, 0, 0, 6); // stale paint after shrinking a six-tile sheet
+    map.Set(0, 1, 0, 5);
+    Tileset tiles;
+    tiles.texture = assets::NewAssetGuid();
+    tiles.texture_width = 48;
+    tiles.texture_height = 32;
+    TilemapEditDocument doc(std::move(map), std::move(tiles));
+    doc.tool = TileTool::Pick;
+    TilemapPanel panel(doc);
+
+    ImGuiWindow* palette = nullptr;
+    ImVec2 canvas_origin;
+    const auto draw = [&] {
+        const auto palette_id = ImGui::GetID("##left");
+        const auto* parent = ImGui::GetCurrentWindowRead();
+        panel.Draw();
+        for (auto* child : parent->DC.ChildWindows)
+            if (child->ChildId == palette_id) palette = child;
+        const auto& padding = ImGui::GetStyle().WindowPadding;
+        canvas_origin = {ImGui::GetItemRectMin().x + padding.x + 8.0f,
+                         ImGui::GetItemRectMax().y - padding.y - 8.0f};
+    };
+    auto& io = ImGui::GetIO();
+    const auto move = [&](ImVec2 p) {
+        io.AddMousePosEvent(p.x, p.y);
+        ui.Frame(draw);
+    };
+    const auto click = [&] {
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+        ui.Frame(draw);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+        ui.Frame(draw);
+    };
+    ui.Frame(draw);
+    if (!palette) { CHECK(false); return; }
+    const ImGuiID solid_id = palette->GetID("Tile blocks movement");
+    const ImRect clip = palette->InnerClipRect;
+    std::optional<ImVec2> solid_checkbox;
+    for (f32 y = clip.Min.y + 2.0f; y < clip.Max.y; y += 4.0f) {
+        move({clip.Min.x + 16.0f, y});
+        if (ImGui::GetHoveredID() == solid_id) { solid_checkbox = io.MousePos; break; }
+    }
+    if (!solid_checkbox) { CHECK(false); return; }
+    const auto pick = [&](i32 x) {
+        move({canvas_origin.x + (x + 0.5f) * panel.zoom, canvas_origin.y - 0.5f * panel.zoom});
+        click();
+    };
+    const auto revision = doc.Revision();
+    pick(0);
+    CHECK(doc.brush == 6);
+    move(*solid_checkbox);
+    click();
+    CHECK(!doc.GetTileset().IsSolid(6) && doc.Revision() == revision && !doc.CanUndo());
+    doc.SetSolid(6, true);
+    CHECK(doc.GetTileset().solid.empty() && doc.Revision() == revision);
+
+    pick(1);
+    CHECK(doc.brush == 5);
+    move(*solid_checkbox);
+    click();
+    CHECK(doc.GetTileset().IsSolid(5) && doc.dirty());
+    CHECK(doc.Undo() && doc.GetTileset().solid.empty() && !doc.dirty() && !doc.CanUndo());
+
+    auto stale_tiles = doc.GetTileset();
+    stale_tiles.SetSolid(6, true);
+    TilemapEditDocument stale(doc.Map(), std::move(stale_tiles));
+    stale.SetSolid(6, false);
+    CHECK(!stale.GetTileset().IsSolid(6) && stale.Undo() && stale.GetTileset().IsSolid(6));
+
+    auto paint_only = Doc();
+    paint_only.SetSolid(100, true); // texture-free numbered tiles keep working
+    CHECK(paint_only.GetTileset().IsSolid(100));
+}
+
 AETHER_TEST(TilemapEditor_WheelZoomKeepsTheHoveredCellUnderTheCursor) {
     HeadlessImGui ui;
     auto doc = Doc();

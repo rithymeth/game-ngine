@@ -488,9 +488,16 @@ void TilemapPanel::DrawPalette() {
             }
         }
     }
+    const bool outside_grid = doc_.brush >= 0 && !ts.texture.IsNull() && count != 0 &&
+                              static_cast<u32>(doc_.brush) >= count;
     if (doc_.brush >= 0) {
         bool solid = ts.IsSolid(doc_.brush);
+        ImGui::BeginDisabled(outside_grid && !solid);
         if (ImGui::Checkbox("Tile blocks movement", &solid)) doc_.SetSolid(doc_.brush, solid);
+        ImGui::EndDisabled();
+        if (outside_grid && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip(solid ? "Clear this collision flag: the tile is outside the current tileset."
+                                    : "Pick a tile from the palette to set collision.");
     }
 
     ImGui::SeparatorText("Autotiles");
@@ -525,7 +532,6 @@ void TilemapPanel::DrawPalette() {
         ImGui::EndDisabled();
         ImGui::SetItemTooltip("Use tile %d for every empty mask. Assigned tiles stay as they are.", doc_.brush);
         ImGui::TextDisabled("Or click one mask to assign it:");
-        const bool outside_grid = !ts.texture.IsNull() && count != 0 && static_cast<u32>(doc_.brush) >= count;
         ImGui::BeginDisabled(outside_grid);
         for (int m = 0; m < 16; ++m) {
             ImGui::PushID(2000 + m);
