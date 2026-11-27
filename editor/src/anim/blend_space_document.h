@@ -31,6 +31,7 @@ public:
     bool CanUndo() const { return history_.CanUndo(); }
     bool CanRedo() const { return history_.CanRedo(); }
     usize AddSample(const std::string& clip, f32 x, f32 y);
+    bool HasUsableAxes() const;
     bool MoveSample(usize index, f32 x, f32 y, u32 divisions = 0, const std::string& merge_key = {});
     bool RemoveSample(usize index);
     const std::vector<anim::BlendDiagnostic>& Diagnostics() const { return diagnostics_; }

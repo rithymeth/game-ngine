@@ -11,6 +11,7 @@
 #include <fstream>
 #include <functional>
 #include <iterator>
+#include <limits>
 #include <map>
 #include <type_traits>
 
@@ -331,6 +332,87 @@ AETHER_TEST(AnimEditors_BlendSpaceUnchangedSnappedMoveLeavesHistoryAlone) {
     AETHER_CHECK(doc.Undo() && doc.Get().samples[sample].x == 1.0f && doc.CanRedo());
     AETHER_CHECK(doc.MoveSample(sample, 0.9f, 1.1f, 4, "drag") && doc.CanRedo());
     AETHER_CHECK(doc.Redo() && doc.Get().samples[sample].x == 0.5f);
+}
+
+AETHER_TEST(AnimEditors_BlendSpaceRejectsMovesUntilInvalidAxesAreRepaired) {
+    BlendSpace space;
+    space.dimensions = 2;
+    space.samples = {{"Walk", 0.5f, 0.5f}};
+    const auto refuses_move = [&](BlendAxis x, BlendAxis y) {
+        auto invalid = space;
+        invalid.x = std::move(x);
+        invalid.y = std::move(y);
+        BlendSpaceDocument doc(invalid);
+        AETHER_CHECK(!doc.MoveSample(0, 0.75f, 0.75f, 4));
+        AETHER_CHECK(!doc.Dirty() && !doc.CanUndo());
+        AETHER_CHECK(doc.Get().samples[0].x == 0.5f && doc.Get().samples[0].y == 0.5f);
+        doc.Edit("Repair range", [](BlendSpace& edited) {
+            edited.x = {"X", 0.0f, 1.0f};
+            edited.y = {"Y", 0.0f, 1.0f};
+        });
+        AETHER_CHECK(doc.MoveSample(0, 0.76f, 0.76f, 4));
+        AETHER_CHECK(doc.Get().samples[0].x == 0.75f && doc.Get().samples[0].y == 0.75f);
+    };
+    const BlendAxis valid{"Axis", 0.0f, 1.0f}, inverted{"Axis", 1.0f, 0.0f};
+    refuses_move(inverted, valid);
+    refuses_move(valid, inverted);
+    refuses_move(valid, {"Y", 0.0f, 0.0f});
+    refuses_move({"X", 0.0f, std::numeric_limits<f32>::infinity()}, valid);
+
+    space.dimensions = 1;
+    space.x = valid;
+    space.y = inverted; // ignored by a one-dimensional blend space
+    BlendSpaceDocument line(space);
+    AETHER_CHECK(!line.MoveSample(0, std::numeric_limits<f32>::quiet_NaN(), 0.0f));
+    AETHER_CHECK(!line.Dirty() && !line.CanUndo());
+    AETHER_CHECK(line.MoveSample(0, 0.75f, 9.0f, 4));
+    AETHER_CHECK(line.Get().samples[0].x == 0.75f && line.Get().samples[0].y == 0.0f);
+}
+
+AETHER_TEST(AnimEditors_BlendSpacePreviewWaitsForValidAxes) {
+    HeadlessImGui imgui;
+    BlendSpace space;
+    space.dimensions = 2;
+    space.samples = {{"Idle", 0.0f, 0.0f}};
+    BlendSpaceDocument doc(space);
+    BlendSpaceEditor editor(doc);
+    editor.preview_x = editor.preview_y = 0.4f;
+    const auto frame = [&] { imgui.Frame([&] { editor.Draw(); }); };
+    frame();
+    frame();
+    ImGuiIO& io = ImGui::GetIO();
+    const BlendSpaceCanvas canvas = editor.Canvas();
+    const auto move = [&](f32 p) {
+        f32 sx, sy;
+        canvas.ParamToScreen(space, p, p, sx, sy);
+        io.AddMousePosEvent(sx, sy);
+        frame();
+    };
+    const auto drag_preview = [&] {
+        move(0.25f);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+        frame();
+        move(0.75f);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+        frame();
+    };
+    for (bool invert_x : {true, false}) {
+        doc.Edit("Reverse range", [&](BlendSpace& edited) {
+            edited.x = space.x;
+            edited.y = space.y;
+            BlendAxis& axis = invert_x ? edited.x : edited.y;
+            std::swap(axis.min, axis.max);
+        });
+        doc.MarkSaved();
+        frame();
+        drag_preview();
+        AETHER_CHECK(editor.preview_x == 0.4f && editor.preview_y == 0.4f);
+        AETHER_CHECK(!doc.Dirty() && !doc.CanUndo());
+    }
+    doc.Edit("Repair range", [&](BlendSpace& edited) { edited.x = space.x; edited.y = space.y; });
+    frame();
+    drag_preview();
+    AETHER_CHECK(std::fabs(editor.preview_x - 0.75f) < 0.01f && std::fabs(editor.preview_y - 0.75f) < 0.01f);
 }
 
 AETHER_TEST(AnimEditors_BlendSpaceSeparateDragsUndoSeparately) {

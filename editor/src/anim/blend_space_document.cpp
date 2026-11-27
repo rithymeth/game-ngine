@@ -92,10 +92,19 @@ usize BlendSpaceDocument::AddSample(const std::string& clip, f32 x, f32 y) {
     Edit("Add sample", [&](BlendSpace& s) { s.samples.push_back({clip, x, s.dimensions == 2 ? y : 0.0f, 1.0f}); });
     return space_.samples.size() - 1;
 }
+bool BlendSpaceDocument::HasUsableAxes() const {
+    const auto usable = [](const anim::BlendAxis& axis) {
+        return axis.min < axis.max && std::isfinite(axis.max - axis.min);
+    };
+    return usable(space_.x) && (space_.dimensions != 2 || usable(space_.y));
+}
+
 bool BlendSpaceDocument::MoveSample(usize index, f32 x, f32 y, u32 divisions, const std::string& merge_key) {
-    if (index >= space_.samples.size()) return false;
+    if (index >= space_.samples.size() || !HasUsableAxes() || !std::isfinite(x) ||
+        (space_.dimensions == 2 && !std::isfinite(y))) return false;
     const f32 nx = Snap(std::clamp(x, space_.x.min, space_.x.max), space_.x.min, space_.x.max, divisions);
     const f32 ny = space_.dimensions == 2 ? Snap(std::clamp(y, space_.y.min, space_.y.max), space_.y.min, space_.y.max, divisions) : 0.0f;
+    if (!std::isfinite(nx) || !std::isfinite(ny)) return false;
     const auto& sample = space_.samples[index];
     // Pointer movement inside the same snap cell is not an edit.
     if (sample.x == nx && sample.y == ny) return true;

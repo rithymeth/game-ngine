@@ -45,6 +45,12 @@ void BlendSpaceEditor::Draw() {
 }
 
 void BlendSpaceEditor::DrawGrid() {
+    if (!doc_.HasUsableAxes()) {
+        dragging_ = -1;
+        dragging_preview_ = drag_moved_ = false;
+        ImGui::TextDisabled("Use finite, increasing axis ranges to edit the grid.");
+        return;
+    }
     const BlendSpace& s = doc_.Get();
     const ImVec2 origin = ImGui::GetCursorScreenPos();
     const ImVec2 size = ImGui::GetContentRegionAvail();
