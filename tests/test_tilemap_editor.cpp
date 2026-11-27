@@ -504,7 +504,7 @@ AETHER_TEST(TilemapEditor_AppendingAutotileKeepsExistingTilesetStorage) {
     CHECK(doc.GetTileset().autotiles[added].name.data() == added_storage);
 
     CHECK(doc.RenameAutotile(added, "Renamed") && doc.SetAutotileTile(added, kNorth, 3));
-    doc.SetSolid(1, true); // intersects with existing snapshot-style history
+    doc.SetSolid(1, true); // exercise mixed tileset history
     CHECK(doc.Undo() && !doc.GetTileset().IsSolid(1));
     CHECK(doc.Undo() && doc.GetTileset().autotiles[added].tiles[kNorth] == kEmpty);
     CHECK(doc.Undo() && doc.GetTileset().autotiles[added].name == added_name);
@@ -516,6 +516,43 @@ AETHER_TEST(TilemapEditor_AppendingAutotileKeepsExistingTilesetStorage) {
     CHECK(doc.Undo() && doc.Undo() && doc.Undo() && doc.Undo());
     CHECK(doc.AddAutotile("Replacement") == added && !doc.CanRedo());
     CHECK(doc.GetTileset().autotiles[added].name == "Replacement");
+}
+
+AETHER_TEST(TilemapEditor_SolidHistoryRestoresByteAndTrimmedLength) {
+    TilemapData map;
+    map.Resize(2, 2);
+    Tileset tiles;
+    const std::vector<u8> original{0, 7, 0, 0, 0, 0, 255, 0, 0, 0};
+    tiles.solid = original;
+    const std::string name(128, 'a');
+    tiles.AddAutotile(name, Autotile{}.tiles);
+    TilemapEditDocument doc(std::move(map), std::move(tiles));
+    const auto* untouched_rule = doc.GetTileset().autotiles[0].name.data();
+    doc.BeginStroke();
+    doc.brush = 4;
+    doc.Apply(1, 1);
+    doc.SetSolid(1, false);
+    CHECK((doc.GetTileset().solid == std::vector<u8>{0, 0, 0, 0, 0, 0, 255}));
+    doc.SetSolid(6, false);
+    CHECK(doc.GetTileset().solid.empty());
+    doc.SetSolid(8191, true);
+    CHECK(doc.GetTileset().solid.size() == 8192 && doc.GetTileset().solid.back() == 1);
+
+    CHECK(doc.Undo() && doc.GetTileset().solid.empty());
+    CHECK((doc.Undo() && doc.GetTileset().solid == std::vector<u8>{0, 0, 0, 0, 0, 0, 255}));
+    CHECK(doc.Undo() && doc.GetTileset().solid == original);
+    CHECK(doc.GetTileset().autotiles[0].name.data() == untouched_rule);
+    CHECK(doc.Map().Get(0, 1, 1) == 4 && doc.Undo());
+    CHECK(doc.Map().Get(0, 1, 1) == kEmpty && !doc.dirty());
+
+    CHECK(doc.Redo() && doc.Redo() && doc.Redo() && doc.Redo());
+    CHECK(doc.Map().Get(0, 1, 1) == 4 && doc.dirty());
+    CHECK(doc.GetTileset().solid.size() == 8192 && doc.GetTileset().IsSolid(8191));
+    CHECK(!doc.GetTileset().IsSolid(1) && !doc.GetTileset().IsSolid(6));
+    CHECK(doc.GetTileset().autotiles[0].name.data() == untouched_rule);
+    CHECK(doc.Undo());
+    doc.SetSolid(2, true);
+    CHECK((doc.GetTileset().solid == std::vector<u8>{0, 0, 1}) && !doc.CanRedo());
 }
 
 AETHER_TEST(TilemapEditor_LayersSolidsAndResize) {

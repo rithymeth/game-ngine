@@ -107,6 +107,11 @@ private:
         usize rule;
         std::array<i32, 16> tiles;
     };
+    struct SolidFlag {
+        usize index;
+        usize size;
+        u8 value;
+    };
     struct AutotileAppend {
         // Later edits are undone first, so the tail rule has its initial
         // empty masks. Redo only needs its name while the rule is absent.
@@ -132,13 +137,12 @@ private:
         std::vector<std::vector<i32>> cropped_rows;
     };
     struct HistoryEntry {
-        std::variant<sprite2d::TilemapData, BrushEdit, LayerProperties, LayerMove, sprite2d::Tileset,
+        std::variant<sprite2d::TilemapData, BrushEdit, LayerProperties, LayerMove, SolidFlag,
                      LayerPresence, HeightEdit, AutotileName, AutotileMasks, AutotileAppend> edit;
         u64 state;
     };
     bool Travel(std::vector<HistoryEntry>& from, std::vector<HistoryEntry>& to);
     void RecordLayerProperties(usize layer);
-    void RecordTileset();
     void RecordAutotileMasks(usize rule);
     LayerPresence& RecordLayerPresence(usize index);
     void RotateLayers(usize from, usize to);

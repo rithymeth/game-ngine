@@ -89,13 +89,6 @@ void TilemapEditDocument::RecordLayerProperties(usize layer) {
     Changed();
 }
 
-void TilemapEditDocument::RecordTileset() {
-    EndStroke();
-    undo_.push_back({tileset_, state_});
-    redo_.clear();
-    Changed();
-}
-
 void TilemapEditDocument::RecordAutotileMasks(usize rule) {
     EndStroke();
     undo_.push_back({AutotileMasks{rule, tileset_.autotiles[rule].tiles}, state_});
@@ -375,8 +368,16 @@ bool TilemapEditDocument::Travel(std::vector<HistoryEntry>& from, std::vector<Hi
         RotateLayers(move->from, move->to);
         std::swap(move->from, move->to);
         std::swap(active_layer, move->selection);
-    } else if (auto* tileset = std::get_if<Tileset>(&step.edit)) {
-        std::swap(tileset_, *tileset);
+    } else if (auto* flag = std::get_if<SolidFlag>(&step.edit)) {
+        auto& flags = tileset_.solid;
+        const usize size = flags.size();
+        const u8 value = flag->index < size ? flags[flag->index] : u8{0};
+        // SetSolid changes only this byte and grows/trims zeros at the tail.
+        // Restore the exact size too, even for noncanonical input tables.
+        flags.resize(flag->size, 0);
+        if (flag->index < flags.size()) flags[flag->index] = flag->value;
+        flag->size = size;
+        flag->value = value;
     } else if (auto* presence = std::get_if<LayerPresence>(&step.edit)) {
         const auto where = map_.layers.begin() + static_cast<std::ptrdiff_t>(presence->index);
         if (presence->removed) {
@@ -568,8 +569,18 @@ void TilemapEditDocument::SetSolid(i32 tile, bool solid) {
         const u32 count = tileset_.TileCount();
         if (count != 0 && static_cast<u32>(tile) >= count) return;
     }
-    RecordTileset();
-    tileset_.SetSolid(tile, solid);
+    EndStroke();
+    const auto index = static_cast<usize>(tile);
+    const auto& flags = tileset_.solid;
+    undo_.push_back({SolidFlag{index, flags.size(), index < flags.size() ? flags[index] : u8{0}}, state_});
+    try {
+        tileset_.SetSolid(tile, solid);
+    } catch (...) {
+        undo_.pop_back();
+        throw;
+    }
+    redo_.clear();
+    Changed();
 }
 
 usize TilemapEditDocument::AddAutotile(const std::string& name) {
