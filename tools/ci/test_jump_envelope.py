@@ -1,4 +1,5 @@
 """Run the prototype against a deterministic stand-in for the player CLI."""
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -19,6 +20,8 @@ profile = Path(args[args.index("--user-dir") + 1])
 # Reused profiles would contaminate an experiment.
 profile.mkdir()
 assert "--jump-trace" in args
+if Path(args[0]).name == "mutating":
+    (Path(args[0]).parent / "Paks" / "Game.apak").write_bytes(b"changed mid-sweep")
 press, release = [e["frame"] for e in route["events"] if e["key"] == "Space"]
 assert release - press == 2
 assert [e["frame"] for e in route["events"] if e["key"] == "D"] == [0]
@@ -40,7 +43,7 @@ class JumpEnvelope(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name)
-        for name in ("before", "after", "unstable", "same", "always-miss"):
+        for name in ("before", "after", "unstable", "same", "always-miss", "mutating"):
             binary = self.root / name
             binary.write_text(FAKE, encoding="utf-8")
             binary.chmod(0o755)
@@ -67,6 +70,52 @@ class JumpEnvelope(unittest.TestCase):
         self.assertEqual(report["gained_pass_offsets"], [])
         self.assertEqual(report["skipped_offsets"], [3])
         self.assertEqual(self.route.read_bytes(), original)
+
+    def stage(self, tag, binary, payload):
+        root = self.root / tag
+        (root / "Paks").mkdir(parents=True)
+        (root / "Paks" / "Game.apak").write_bytes(payload)
+        (root / "PackageManifest.json").write_text("{}", encoding="utf-8")
+        player = root / binary
+        player.write_bytes((self.root / binary).read_bytes())
+        player.chmod(0o755)
+        return player
+
+    def test_evidence_keeps_both_build_identities_and_a_replayable_lost_route(self):
+        before = self.stage("old", "before", b"asset-before")
+        after = self.stage("new", "after", b"asset-after")
+        result = self.invoke(before.relative_to(self.root), "--candidate", after,
+                             "--capture-evidence", "--require-preserved-offsets")
+        self.assertEqual(result.returncode, 5, result.stderr)
+        evidence = json.loads(result.stdout)["evidence"]
+        old, new = evidence["baseline_sha256"], evidence["candidate_sha256"]
+        self.assertEqual(old["player"], new["player"])
+        self.assertEqual(old["Paks/Game.apak"], hashlib.sha256(b"asset-before").hexdigest())
+        self.assertEqual(new["Paks/Game.apak"], hashlib.sha256(b"asset-after").hexdigest())
+        reproducer = evidence["nearest_lost_replay"]
+        self.assertEqual(reproducer["offset"], -1)
+        self.assertEqual([e["frame"] for e in reproducer["route"]["events"]], [0, 3, 5])
+        route = self.root / "repro.json"
+        route.write_text(json.dumps(reproducer["route"]), encoding="utf-8")
+        for binary, expected in ((before, 0), (after, 5)):
+            run = subprocess.run([binary, "--jump-proof", route, "--jump-trace",
+                                  "--user-dir", self.root / ("repro-" + binary.name)],
+                                 capture_output=True, timeout=5)
+            self.assertEqual(run.returncode, expected, run.stderr)
+
+    def test_evidence_rejects_package_changes_without_a_receipt(self):
+        player = self.stage("unstable-package", "mutating", b"initial")
+        output = self.root / "evidence.json"
+        result = self.invoke(player.relative_to(self.root), "--capture-evidence", "--output", output)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("package files changed during the sweep", result.stderr)
+        self.assertFalse(output.exists())
+
+    def test_evidence_requires_packaged_files(self):
+        result = self.invoke("before", "--capture-evidence")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("missing evidence file", result.stderr)
+        self.assertEqual(result.stdout, "")
 
     def test_release_gate_fails_with_receipt_even_when_original_route_passes(self):
         output = self.root / "gate.json"
