@@ -137,7 +137,8 @@ std::string Title(const Game& g,bool paused) {
       !s.guardian_defeated?"Find guardian, V dodge, K attack":
       !s.beacon?"Place P/Q relays, E activate":
       !s.fire?"Build F campfire":"Survive night: R refuel, V wait";
-    return "HEARTHLINE | "+phase+" | HP "+std::to_string(s.health)+
+    return "HEARTHLINE | "+phase+" | pos "+std::to_string(s.player.x)+","+
+      std::to_string(s.player.y)+" | HP "+std::to_string(s.health)+
       " wood "+std::to_string(s.inventory.wood)+
       " stone "+std::to_string(s.inventory.stone)+
       " energy "+std::to_string(s.inventory.energy)+
