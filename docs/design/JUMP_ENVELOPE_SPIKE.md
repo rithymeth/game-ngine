@@ -77,6 +77,23 @@ missed, or not tested. A skipped timing is never displayed as a miss. The
 first path split, when captured, appears above the rows. Keep the JSON for
 replay and package fingerprints; the map is a review aid, not a new test.
 
+### Open the lost timing on the level
+
+Add --include-tilemap-overlay together with --capture-evidence and --candidate
+when running Jump Envelope. If a timing is lost, the receipt contains both
+paths for the nearest lost timing. Extract the overlay without rerunning:
+
+~~~sh
+python3 tools/jump_envelope_map.py jump-envelope.json --tilemap-overlay --output lost-jump.json
+~~~
+
+Open the matching tilemap in Tools > 2D > Tilemap, then load the JSON under
+Jump Proof overlay. The blue and orange paths are the baseline and candidate
+for the same shifted input. A missing split marker means the paths did not
+diverge past the position tolerance; the pass-to-miss verdict still applies.
+This is path comparison, not proof that a specific tile caused the loss.
+There is no overlay to extract when no timing was lost.
+
 ## Prior art and what we would ship differently
 
 - [Unity InputEventTrace](https://docs.unity3d.com/Packages/com.unity.inputsystem@1.4/api/UnityEngine.InputSystem.LowLevel.InputEventTrace.html)
