@@ -969,3 +969,11 @@ add_custom_target(aether_pr_gate DEPENDS ${_aether_pr_gate_deps})
 if(AETHER_BUILD_EVERVALE_REBOOT)
     add_subdirectory(games/EVERVALE-REBOOT)
 endif()
+
+# A complete painted 2D game with native and WebAssembly builds. The opt-in
+# keeps SDL and its art out of ordinary engine builds. See the game README
+# for the lean standalone build that compiles the Aether modules it uses.
+option(AETHER_BUILD_LANTERNWAKE "Build the Lanternwake game" OFF)
+if(AETHER_BUILD_LANTERNWAKE)
+    add_subdirectory(games/LANTERNWAKE)
+endif()

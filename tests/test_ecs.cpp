@@ -1,7 +1,10 @@
 #include "aether/ecs/world.h"
 #include "test_framework.h"
 
+#include <array>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 using namespace aether;
@@ -19,6 +22,46 @@ struct Name {
 };
 
 } // namespace
+
+AETHER_TEST(Entity_HashUsesBothIndexAndGeneration) {
+    const std::hash<Entity> hash;
+    const std::array<Entity, 8> handles{{
+        {0, 7}, {1, 7}, {2, 7}, {0x80000000u, 7},
+        {7, 0}, {7, 1}, {7, 2}, {7, 0x80000000u},
+    }};
+    std::unordered_set<usize> hashes;
+    for (Entity handle : handles) {
+        hashes.insert(hash(handle));
+        AETHER_CHECK(hash(handle) == hash(Entity{handle.index, handle.generation}));
+    }
+    // Representative changes in either field, including its high bit, must
+    // contribute on 32-bit hosts too. Truncating a packed u64 loses the index.
+    AETHER_CHECK(hashes.size() == handles.size());
+    if constexpr (sizeof(usize) >= sizeof(u64)) {
+        AETHER_CHECK(hash(Entity{0x89abcdefu, 0xfedcba98u}) == static_cast<usize>(0x89abcdeffedcba98ull));
+        AETHER_CHECK(hash(Entity{1, 0}) == static_cast<usize>(0x0000000100000000ull));
+    }
+}
+
+AETHER_TEST(Entity_UnorderedMapKeepsRecycledHandlesDistinct) {
+    World world;
+    const Entity original = world.CreateEntity(Position{1, 0, 0});
+    world.DestroyEntity(original);
+    const Entity replacement = world.CreateEntity(Position{2, 0, 0});
+    const Entity another = world.CreateEntity(Position{3, 0, 0});
+    AETHER_CHECK(original.index == replacement.index);
+    AETHER_CHECK(original.generation != replacement.generation);
+    std::unordered_map<Entity, int> values{{original, 11}, {replacement, 22}, {another, 33}};
+    AETHER_CHECK(values.size() == 3);
+    AETHER_CHECK(values.at(original) == 11);
+    AETHER_CHECK(values.at(replacement) == 22);
+    AETHER_CHECK(values.at(another) == 33);
+    values[Entity{replacement.index, replacement.generation}] = 44;
+    AETHER_CHECK(values.size() == 3 && values.at(replacement) == 44);
+    values.erase(original);
+    AETHER_CHECK(!values.contains(original));
+    AETHER_CHECK(values.size() == 2 && values.at(replacement) == 44 && values.at(another) == 33);
+}
 
 AETHER_TEST(World_CreateAndGetComponents) {
     World world;
