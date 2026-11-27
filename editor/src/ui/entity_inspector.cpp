@@ -2,12 +2,14 @@
 
 #include "aether/reflection/serialize.h"
 #include "aether/scene/components.h"
+#include "aether/sprite2d/components.h"
 #include "core/commands.h"
 #include "ui/reflected_inspector.h"
 
 #include <imgui.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <string>
 #include <unordered_map>
@@ -98,6 +100,17 @@ CardAction DrawComponentCard(CommandContext& ctx, CommandStack& stack, std::span
         ImGui::Separator();
         if (ImGui::MenuItem("Remove Component")) action = CardAction::Remove;
         ImGui::EndPopup();
+    }
+    if (open && id == GetComponentId<sprite2d::TilemapRenderer>() &&
+        std::any_of(entities.begin(), entities.end(), [&](Entity entity) {
+            const auto* transform = ctx.world.GetComponent<Transform>(entity);
+            if (!transform) return false;
+            const auto& q = transform->rotation;
+            // Sprite2D rotates in the XY plane from the quaternion's z/w
+            // pair. Treat either sign of the identity as unrotated.
+            return std::abs(q.z) > 1e-5f * std::hypot(q.z, q.w);
+        })) {
+        ImGui::TextWrapped("Tilemap rotation is visual only. Solid tile collision stays axis-aligned.");
     }
     return action;
 }

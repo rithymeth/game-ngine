@@ -6,6 +6,7 @@
 #include "aether/scene/components.h"
 #include "aether/scene/entity_guid.h"
 #include "aether/scene/prefab.h"
+#include "aether/sprite2d/components.h"
 #include "core/commands.h"
 #include "ui/entity_inspector.h"
 #include "ui/reflected_inspector.h"
@@ -14,6 +15,9 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -94,6 +98,39 @@ struct Fixture {
 ComponentId kGauge() { return GetComponentId<card_test::Gauge>(); }
 
 } // namespace
+
+AETHER_TEST(ComponentCard_RotatedTilemapsExplainCollisionAlignment) {
+    Fixture f;
+    HeadlessImGui ui;
+    const Entity level = f.world.CreateEntity(Transform{}, sprite2d::TilemapRenderer{});
+    const Entity decor = f.world.CreateEntity(Transform{}, sprite2d::TilemapRenderer{});
+    const Entity plain = f.world.CreateEntity(Transform{});
+    EnsureGuid(f.world, level, &f.guids);
+    EnsureGuid(f.world, decor, &f.guids);
+    EnsureGuid(f.world, plain, &f.guids);
+    const auto capture = std::filesystem::temp_directory_path() / "tilemap-collision-card.txt";
+    const auto shows_hint = [&](std::span<const Entity> selection) {
+        std::filesystem::remove(capture);
+        ui.Frame([&] {
+            ImGui::LogToFile(0, capture.string().c_str());
+            InspectEntities(f.ctx, f.stack, selection);
+            ImGui::LogFinish();
+        });
+        std::ifstream stream(capture);
+        const std::string text(std::istreambuf_iterator<char>(stream), {});
+        return text.find("Solid tile collision stays axis-aligned.") != std::string::npos;
+    };
+    const Entity single[] = {level}, multi[] = {level, decor}, transform_only[] = {plain};
+    AETHER_CHECK(!shows_hint(single));
+    const Quaternion quarter_turn{0, 0, 0.70710678f, 0.70710678f};
+    f.world.GetComponent<Transform>(level)->rotation = quarter_turn;
+    f.world.GetComponent<Transform>(plain)->rotation = quarter_turn;
+    AETHER_CHECK(shows_hint(single));
+    AETHER_CHECK(shows_hint(multi));
+    AETHER_CHECK(!shows_hint(transform_only));
+    f.world.GetComponent<Transform>(level)->rotation = Quaternion{0, 0, 0, -1}; // also identity
+    AETHER_CHECK(!shows_hint(single));
+}
 
 AETHER_TEST(ComponentCard_PasteCopiesEveryShownFieldAsOneUndoStep) {
     Fixture f;
