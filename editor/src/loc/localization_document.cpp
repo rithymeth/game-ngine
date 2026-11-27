@@ -136,10 +136,17 @@ bool LocalizationDocument::ImportPo(const std::string& language, const std::stri
         return false;
     }
     std::vector<std::string> errors;
-    const bool ok = loc::ImportPo(table_, target, po_text, &errors);
+    // The low-level importer keeps entries read before a parse error. Stage
+    // those entries separately so a failed editor import cannot change the table.
+    loc::StringTable incoming;
+    const bool ok = loc::ImportPo(incoming, target, po_text, &errors);
     for (std::string& e : errors) errors_.push_back("po: " + e);
+    if (!ok) return false;
+    for (const std::string& key : incoming.Keys()) {
+        if (const std::string* text = incoming.Find(target, key)) table_.Set(target, key, *text);
+    }
     Touch();
-    return ok;
+    return true;
 }
 
 bool LocalizationDocument::ExportPo(const std::string& language, const stdfs::path& file) const {

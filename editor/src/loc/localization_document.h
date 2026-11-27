@@ -53,7 +53,7 @@ public:
     bool AddLanguage(const std::string& language);
 
     // .po files for translators (§29.4). Import takes the language from the
-    // file's header, else `language`; returns how many errors it reported.
+    // file's header, else `language`. A failed import reports errors and changes no cells.
     bool ImportPo(const std::string& language, const std::string& po_text);
     bool ExportPo(const std::string& language, const std::filesystem::path& file) const;
 

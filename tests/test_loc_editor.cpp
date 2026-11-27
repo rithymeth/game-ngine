@@ -164,6 +164,28 @@ AETHER_TEST(LocEditor_FailedOpenAndReloadPreserveTheCurrentTable) {
     CHECK(!stdfs::exists(missing));
 }
 
+AETHER_TEST(LocEditor_MalformedPoDoesNotApplyEarlierEntries) {
+    LocalizationDocument doc;
+    CHECK(doc.Open(MakeTable(Dir("failed_po"))));
+    const u64 revision = doc.Revision();
+    const std::string before = doc.Table().ExportCsv();
+    const std::string patch = "msgctxt \"quit\"\nmsgid \"Quit\"\nmsgstr \"Beenden\"\n";
+
+    CHECK(!doc.ImportPo("de", patch + "msgctxt not-quoted\n"));
+    CHECK(doc.Table().ExportCsv() == before && !doc.Dirty() && doc.Revision() == revision);
+    CHECK(!doc.Errors().empty() && doc.Errors().back().find("line 4") != std::string::npos);
+
+    CHECK(doc.SetCell("de", "quit", "Eigene Fassung"));
+    const u64 edited_revision = doc.Revision();
+    CHECK(!doc.ImportPo("de", patch + "msgctxt not-quoted\n"));
+    const std::string* existing = doc.Table().Find("de", "quit");
+    CHECK(existing != nullptr && *existing == "Eigene Fassung");
+    CHECK(doc.Dirty() && doc.Revision() == edited_revision);
+    CHECK(doc.ImportPo("de", patch) && doc.Revision() != edited_revision);
+    const std::string* imported = doc.Table().Find("de", "quit");
+    CHECK(imported != nullptr && *imported == "Beenden");
+}
+
 AETHER_TEST(LocEditor_PoRoundTripAndGather) {
     const stdfs::path root = Dir("po_gather");
     const stdfs::path file = MakeTable(root);
