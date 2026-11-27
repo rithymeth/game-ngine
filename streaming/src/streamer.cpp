@@ -303,8 +303,6 @@ void WorldStreamer::Update() {
 void WorldStreamer::UpdateAsync(const std::vector<std::pair<f32, CellCoord>>& wanted) {
     if (!shared_) shared_ = std::make_shared<Shared>();
     const auto start = std::chrono::steady_clock::now();
-    std::set<CellCoord> want;
-    for (const auto& [n, cell] : wanted) want.insert(cell);
 
     // Apply finished reads, nearest first, within the budgets; drop the ones nobody wants any more.
     std::map<CellCoord, Shared::Result> ready;

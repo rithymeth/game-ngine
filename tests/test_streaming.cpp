@@ -438,6 +438,41 @@ AETHER_TEST(Streaming_AsyncDropsCellsNoLongerWanted) {
     CHECK(streamer.InFlight() == 0);
 }
 
+AETHER_TEST(Streaming_AsyncReadQueueKeepsPendingCellsWhileFull) {
+    Level level;
+    const PartitionResult partition = PartitionWorld(level.world, {});
+    World game;
+    std::vector<CellCoord> requested;
+    WorldStreamer streamer(game, partition.index, [&](const CellCoord& cell, std::vector<u8>& bytes) {
+        requested.push_back(cell);
+        const auto found = partition.cells.find(cell);
+        if (found == partition.cells.end()) return false;
+        bytes = found->second;
+        return true;
+    });
+    ManualExecutor exec;
+    streamer.SetExecutor(exec.Get());
+    streamer.max_inflight_reads = 1;
+    for (const i32 x : {0, 1, 3}) streamer.Pin({x, 0});
+
+    for (int i = 0; i < 3; ++i) {
+        streamer.Update();
+        CHECK(exec.tasks.size() == 1 && streamer.InFlight() == 1);
+        CHECK(streamer.PendingLoads() == 2 && requested.empty() && streamer.LoadedCells().empty());
+    }
+    exec.RunAll();
+    streamer.Update();
+    CHECK(requested == std::vector<CellCoord>{CellCoord{0, 0}});
+    CHECK(streamer.State({0, 0}) == CellState::Loaded && streamer.PendingLoads() == 1);
+    CHECK(exec.tasks.size() == 1 && streamer.InFlight() == 1);
+    exec.RunAll();
+    streamer.Update();
+    exec.RunAll();
+    streamer.Update();
+    CHECK(requested == std::vector<CellCoord>{CellCoord{0, 0}, CellCoord{1, 0}, CellCoord{3, 0}});
+    CHECK(streamer.LoadedCells() == requested && streamer.InFlight() == 0 && streamer.PendingLoads() == 0);
+}
+
 AETHER_TEST(Streaming_AsyncFailuresStillUseTheLoadBudget) {
     Level level;
     PartitionSettings settings;
