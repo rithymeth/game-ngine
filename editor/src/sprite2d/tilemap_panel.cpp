@@ -604,31 +604,36 @@ void TilemapPanel::DrawPalette() {
         ImGui::PopID();
         ImGui::PopID();
     }
-    if (has_selected_rule && doc_.brush >= 0) {
-        // Assigns the brush tile to a neighbour mask of the selected autotile.
-        const Autotile& at = ts.autotiles[static_cast<usize>(selected_autotile_)];
+    if (has_selected_rule) {
+        const auto rule = static_cast<usize>(selected_autotile_);
+        const Autotile& at = ts.autotiles[rule];
         ImGui::TextWrapped("Editing masks: %s", at.name.c_str());
-        const bool can_fill = static_cast<u32>(doc_.brush) < count &&
+        const bool can_assign = doc_.brush >= 0 && !outside_grid;
+        const bool can_fill = can_assign && static_cast<u32>(doc_.brush) < count &&
                               std::find(at.tiles.begin(), at.tiles.end(), kEmpty) != at.tiles.end();
         ImGui::BeginDisabled(!can_fill);
-        if (ImGui::SmallButton("Fill empty masks"))
-            doc_.FillEmptyAutotileMasks(static_cast<usize>(selected_autotile_), doc_.brush);
+        if (ImGui::SmallButton("Fill empty masks")) doc_.FillEmptyAutotileMasks(rule, doc_.brush);
         ImGui::EndDisabled();
-        ImGui::SetItemTooltip("Use tile %d for every empty mask. Assigned tiles stay as they are.", doc_.brush);
-        ImGui::TextDisabled("Or click one mask to assign it:");
-        ImGui::BeginDisabled(outside_grid);
+        if (can_assign)
+            ImGui::SetItemTooltip("Use tile %d for every empty mask. Assigned tiles stay as they are.", doc_.brush);
+        ImGui::TextWrapped("%s", can_assign ? "Click to assign. Right-click to clear."
+                                          : "Pick a palette tile to assign. Right-click to clear.");
         for (int m = 0; m < 16; ++m) {
             ImGui::PushID(2000 + m);
             if (m % 4 != 0) ImGui::SameLine();
+            const i32 tile = at.tiles[static_cast<usize>(m)];
             char label[24];
             std::snprintf(label, sizeof(label), "%c%c%c%c %d", (m & kNorth) ? 'N' : '-', (m & kEast) ? 'E' : '-',
-                          (m & kSouth) ? 'S' : '-', (m & kWest) ? 'W' : '-', at.tiles[static_cast<usize>(m)]);
-            if (ImGui::SmallButton(label)) {
-                doc_.SetAutotileTile(static_cast<usize>(selected_autotile_), static_cast<u8>(m), doc_.brush);
+                          (m & kSouth) ? 'S' : '-', (m & kWest) ? 'W' : '-', tile);
+            ImGui::BeginDisabled(!can_assign);
+            if (ImGui::SmallButton(label)) doc_.SetAutotileTile(rule, static_cast<u8>(m), doc_.brush);
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip("%s", tile == kEmpty ? "This mask is empty." : "Right-click to clear this mask.");
+                if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) doc_.SetAutotileTile(rule, static_cast<u8>(m), kEmpty);
             }
             ImGui::PopID();
         }
-        ImGui::EndDisabled();
         if (outside_grid)
             ImGui::TextWrapped("Tile %d is outside this tileset. Pick a tile from the palette to assign a mask.", doc_.brush);
     }

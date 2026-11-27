@@ -887,6 +887,66 @@ AETHER_TEST(TilemapEditor_InvalidPickedTileCannotBecomeAnAutotileVariant) {
     CHECK(doc.SetAutotileTile(river, mask, kEmpty) && doc.GetTileset().autotiles[river].tiles[mask] == kEmpty);
 }
 
+AETHER_TEST(TilemapEditor_ClearsOneAutotileMaskWithNoValidConcreteBrush) {
+    HeadlessImGui ui;
+    TilemapData map;
+    map.Resize(6, 5);
+    map.AddLayer("Ground");
+    Tileset tiles;
+    tiles.texture = assets::NewAssetGuid();
+    tiles.texture_width = tiles.texture_height = 32;
+    std::array<i32, 16> variants{};
+    variants[kNorth] = 3;
+    variants[kEast] = 2;
+    const auto rule = tiles.AddAutotile("River", variants);
+    map.Set(0, 0, 0, AutotileCell(rule));
+    TilemapEditDocument doc(std::move(map), std::move(tiles));
+    doc.brush = AutotileCell(rule);
+    TilemapPanel panel(doc);
+    ImGuiWindow* palette = nullptr;
+    const auto draw = [&] {
+        const auto* parent = ImGui::GetCurrentWindowRead();
+        const auto id = ImGui::GetID("##left");
+        panel.Draw();
+        for (ImGuiWindow* child : parent->DC.ChildWindows)
+            if (child->ChildId == id) palette = child;
+    };
+    const auto point_at_mask = [&] {
+        if (!palette) return false;
+        auto& io = ImGui::GetIO();
+        const auto id = ImHashStr("N--- 3", 0, palette->GetID(2000 + kNorth));
+        const auto clip = palette->InnerClipRect;
+        for (f32 y = clip.Min.y + 3; y < clip.Max.y; y += 6) {
+            for (f32 x = clip.Min.x + 8; x < clip.Max.x; x += 16) {
+                io.AddMousePosEvent(x, y);
+                ui.Frame(draw);
+                if (ImGui::GetHoveredID() == id) return true;
+            }
+        }
+        return false;
+    };
+    const auto click = [&](ImGuiMouseButton button) {
+        ImGui::GetIO().AddMouseButtonEvent(button, true);
+        ui.Frame(draw);
+        ImGui::GetIO().AddMouseButtonEvent(button, false);
+        ui.Frame(draw);
+    };
+    for (const i32 brush : {AutotileCell(rule), 99}) {
+        doc.brush = brush;
+        const auto revision = doc.Revision();
+        ui.Frame(draw);
+        if (!point_at_mask()) { CHECK(false); return; }
+        click(ImGuiMouseButton_Left);
+        CHECK(doc.Revision() == revision && doc.GetTileset().autotiles[rule].tiles == variants);
+        click(ImGuiMouseButton_Right);
+        auto cleared = variants;
+        cleared[kNorth] = kEmpty;
+        CHECK(doc.GetTileset().autotiles[rule].tiles == cleared && doc.Revision() == revision + 1);
+        CHECK(doc.brush == brush && doc.Map().Get(0, 0, 0) == AutotileCell(rule));
+        CHECK(doc.Undo() && !doc.dirty() && doc.GetTileset().autotiles[rule].tiles == variants);
+    }
+}
+
 AETHER_TEST(TilemapEditor_OutOfGridBrushCannotDefineSolidTiles) {
     HeadlessImGui ui;
     TilemapData map;
