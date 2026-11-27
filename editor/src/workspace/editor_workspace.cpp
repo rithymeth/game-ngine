@@ -1402,6 +1402,8 @@ struct EditorWorkspace::Impl {
             if (sequence_doc->dirty()) return fail("The sequence has unsaved changes; save it before opening " + relative + ".");
             std::string why;
             if (!sequence_doc->Load(file, &why)) return fail(why.empty() ? "Couldn't open " + relative + "." : why);
+            // The reused panel's selected key index belongs to the prior sequence.
+            sequencer_panel->ClearSelection();
             ShowTool("Sequencer");
             return true;
         }

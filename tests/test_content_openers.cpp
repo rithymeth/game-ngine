@@ -216,6 +216,68 @@ AETHER_TEST(Openers_EveryOpenableKindLoadsItsFileAndShowsItsTool) {
     stdfs::remove_all(project, ec);
 }
 
+AETHER_TEST(Openers_SequenceReplacementClearsThePreviousKeySelection) {
+    HeadlessImGui ui;
+    ProjectPaths paths;
+    FreshProject("sequence_selection", paths);
+    EditorWorkspace ws(paths.file);
+    seq::LevelSequence sequence;
+    sequence.name = "First";
+    seq::Track track;
+    track.type = seq::TrackType::Event;
+    track.id = "markers";
+    track.events = {seq::EventKey{1.0f, "Original", ""}};
+    sequence.tracks.push_back(track);
+    CHECK(seq::SaveSequence((paths.content / "Sequences/First.asequence").string(), sequence));
+    sequence.name = "Second";
+    sequence.tracks[0].events[0].name = "Replacement";
+    CHECK(seq::SaveSequence((paths.content / "Sequences/Second.asequence").string(), sequence));
+    Write(paths.content / "Sequences/Broken.asequence", "not a sequence");
+
+    CHECK(ws.OpenAsset("Sequences/First.asequence"));
+    const i64 tool = ws.FindTool("Sequencer");
+    CHECK(tool >= 0);
+    if (tool < 0) return;
+    const auto draw = [&] { ws.DrawTool(static_cast<usize>(tool)); };
+    ui.Frame(draw);
+    ui.Frame(draw);
+    const auto diamond = [](ImU32 color, ImVec2* center = nullptr) {
+        int count = 0;
+        ImVec2 sum{};
+        for (const ImDrawList* list : ImGui::GetDrawData()->CmdLists) {
+            for (const ImDrawVert& v : list->VtxBuffer) {
+                if (v.col != color) continue;
+                sum.x += v.pos.x;
+                sum.y += v.pos.y;
+                ++count;
+            }
+        }
+        if (center && count > 0) *center = ImVec2(sum.x / count, sum.y / count);
+        return count > 0;
+    };
+    constexpr ImU32 unselected = IM_COL32(120, 190, 255, 255);
+    constexpr ImU32 selected = IM_COL32(255, 200, 60, 255);
+    ImVec2 center{};
+    const bool found = diamond(unselected, &center);
+    CHECK(found);
+    if (!found) return;
+    ImGuiIO& io = ImGui::GetIO();
+    io.AddMousePosEvent(center.x, center.y);
+    ui.Frame(draw);
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+    ui.Frame(draw);
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+    ui.Frame(draw);
+    CHECK(diamond(selected));
+
+    CHECK(!ws.OpenAsset("Sequences/Broken.asequence"));
+    ui.Frame(draw);
+    CHECK(diamond(selected));
+    CHECK(ws.OpenAsset("Sequences/Second.asequence"));
+    ui.Frame(draw);
+    CHECK(diamond(unselected) && !diamond(selected));
+}
+
 AETHER_TEST(Openers_ContentBrowserCreatesAndSelectsAtlasWithoutReplacingOne) {
     ProjectPaths paths;
     FreshProject("create_sprite_atlas", paths);
