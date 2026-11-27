@@ -82,6 +82,8 @@ private:
     bool shape_active_ = false;
     i32 shape_x_ = 0, shape_y_ = 0;
     i32 selected_autotile_ = 0;
+    std::optional<u64> autotile_names_revision_;
+    bool autotile_names_single_line_ = false;
     struct GhostPoint { f32 x, y; };
     std::vector<GhostPoint> ghost_before_, ghost_after_;
     usize ghost_difference_ = 0;

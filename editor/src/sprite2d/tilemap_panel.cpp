@@ -582,12 +582,13 @@ void TilemapPanel::DrawPalette() {
     }
 
     ImGui::SeparatorText("Autotiles");
-    for (usize i = 0; i < ts.autotiles.size(); ++i) {
+    const auto draw_rule = [&](usize i, bool single_line) {
         ImGui::PushID(static_cast<int>(1000 + i));
         const bool active = doc_.brush == AutotileCell(i);
         const char* name = ts.autotiles[i].name.c_str();
         const ImVec2 name_position = ImGui::GetCursorScreenPos();
-        const f32 row_height = std::max(ImGui::GetTextLineHeight(), ImGui::CalcTextSize(name).y);
+        const f32 line_height = ImGui::GetTextLineHeight();
+        const f32 row_height = single_line ? line_height : std::max(line_height, ImGui::CalcTextSize(name).y);
         if (ImGui::Selectable("##autotile", active, 0, ImVec2(0.0f, row_height))) {
             pick_brush(AutotileCell(i));
             selected_autotile_ = static_cast<int>(i);
@@ -595,6 +596,27 @@ void TilemapPanel::DrawPalette() {
         // Authored names are display text, not ImGui labels (which interpret ##).
         if (ImGui::IsItemVisible()) dl->AddText(name_position, ImGui::GetColorU32(ImGuiCol_Text), name);
         ImGui::PopID();
+    };
+    const usize rule_count = ts.autotiles.size();
+    constexpr usize clip_threshold = 64;
+    const bool can_clip = rule_count >= clip_threshold &&
+                          rule_count < static_cast<usize>(std::numeric_limits<int>::max());
+    if (can_clip && autotile_names_revision_ != doc_.Revision()) {
+        autotile_names_revision_ = doc_.Revision();
+        autotile_names_single_line_ = std::none_of(ts.autotiles.begin(), ts.autotiles.end(), [](const Autotile& rule) {
+            return rule.name.find('\n') != std::string::npos;
+        });
+    }
+    // ImGui's clipper assumes equal item heights. Keep the existing row
+    // sizing for imported lists with multiline names.
+    if (can_clip && autotile_names_single_line_) {
+        ImGuiListClipper rules;
+        rules.Begin(static_cast<int>(rule_count));
+        while (rules.Step()) {
+            for (int i = rules.DisplayStart; i < rules.DisplayEnd; ++i) draw_rule(static_cast<usize>(i), true);
+        }
+    } else {
+        for (usize i = 0; i < rule_count; ++i) draw_rule(i, false);
     }
     if (ImGui::SmallButton("Add autotile")) {
         const usize n = doc_.AddAutotile("Autotile " + std::to_string(ts.autotiles.size() + 1));

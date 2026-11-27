@@ -3346,6 +3346,61 @@ AETHER_TEST(TilemapEditor_LargePaletteSubmitsOnlyVisibleRows) {
     CHECK(doc.GetTileset().TileCount() == 4096 && !doc.dirty() && !doc.CanUndo());
 }
 
+AETHER_TEST(TilemapEditor_CanSelectAnAutotileAtTheEndOfALargeScrolledList) {
+    HeadlessImGui ui;
+    TilemapData map;
+    map.Resize(4, 4);
+    Tileset tiles;
+    for (usize i = 0; i < 512; ++i)
+        tiles.AddAutotile("Canal ## bank " + std::to_string(i), Autotile{}.tiles);
+    TilemapEditDocument doc(std::move(map), std::move(tiles));
+    TilemapPanel panel(doc);
+    ImGuiWindow* palette = nullptr;
+    const auto draw = [&] {
+        ui.Frame([&] {
+            const ImGuiID palette_id = ImGui::GetID("##left");
+            const ImGuiWindow* parent = ImGui::GetCurrentWindowRead();
+            panel.Draw();
+            for (ImGuiWindow* child : parent->DC.ChildWindows)
+                if (child->ChildId == palette_id) palette = child;
+        });
+    };
+    auto& io = ImGui::GetIO();
+    const auto click_rule = [&](usize rule) {
+        const ImGuiID id = ImHashStr("##autotile", 0, palette->GetID(static_cast<int>(1000 + rule)));
+        const ImRect clip = palette->InnerClipRect;
+        for (f32 y = clip.Min.y + 2.0f; y < clip.Max.y; y += 4.0f) {
+            io.AddMousePosEvent(clip.Min.x + 25.0f, y);
+            draw();
+            if (ImGui::GetHoveredID() != id) continue;
+            io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+            draw();
+            io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+            draw();
+            return true;
+        }
+        return false;
+    };
+    draw();
+    if (!palette) { CHECK(false); return; }
+    draw(); // Let the child compute its contents and maximum scroll.
+    ImGui::SetScrollY(palette, palette->ScrollMax.y);
+    draw();
+    const auto revision = doc.Revision();
+    CHECK(palette->Scroll.y > 7000.0f && click_rule(511));
+    CHECK(doc.brush == AutotileCell(511) && doc.Revision() == revision && !doc.CanUndo());
+
+    // Adding a multiline name invalidates the uniform row layout.
+    CHECK(doc.RenameAutotile(508, "Upper bank\nLower bank"));
+    draw();
+    ImGui::SetScrollY(palette, palette->ScrollMax.y);
+    draw();
+    CHECK(click_rule(508) && doc.brush == AutotileCell(508));
+    CHECK(doc.Undo());
+    draw();
+    CHECK(click_rule(510) && doc.brush == AutotileCell(510));
+}
+
 AETHER_TEST(TilemapEditor_ResizeDialogOpensWithoutChangingTheMap) {
     HeadlessImGui ui;
     auto doc = Doc();
