@@ -2107,6 +2107,70 @@ AETHER_TEST(TilemapEditor_CanEraseButNotCopyMissingAutotileBrush) {
     CHECK(doc.Undo() && doc.Map().Get(0, 0, 0) == AutotileCell(2));
 }
 
+AETHER_TEST(TilemapEditor_LineToolPreviewsAndCommitsOneStraightStroke) {
+    HeadlessImGui ui;
+    auto doc = Doc();
+    TilemapPanel panel(doc);
+    doc.brush = 7;
+    ImVec2 origin, toolbar;
+    ImGuiID line_id = 0;
+    f32 canvas_top = 0;
+    const auto draw = [&] {
+        toolbar = ImGui::GetCursorScreenPos();
+        line_id = ImGui::GetID("Line");
+        panel.Draw();
+        canvas_top = ImGui::GetItemRectMin().y;
+        const auto padding = ImGui::GetStyle().WindowPadding;
+        origin = {ImGui::GetItemRectMin().x + padding.x + 8, ImGui::GetItemRectMax().y - padding.y - 8};
+    };
+    auto& io = ImGui::GetIO();
+    const auto move = [&](i32 x, i32 y) {
+        io.AddMousePosEvent(origin.x + (x + 0.5f) * panel.zoom, origin.y - (y + 0.5f) * panel.zoom);
+        ui.Frame(draw);
+    };
+    const auto left = [&](bool down) { io.AddMouseButtonEvent(ImGuiMouseButton_Left, down); ui.Frame(draw); };
+    ui.Frame(draw);
+    for (f32 y = toolbar.y + 4; doc.tool != TileTool::Line && y < canvas_top; y += 6) {
+        for (f32 x = toolbar.x + 6; x < toolbar.x + 550; x += 8) {
+            io.AddMousePosEvent(x, y);
+            ui.Frame(draw);
+            if (ImGui::GetHoveredID() != line_id) continue;
+            left(true);
+            left(false);
+            break;
+        }
+    }
+    if (doc.tool != TileTool::Line) { CHECK(false); return; }
+    move(0, 0);
+    left(true);
+    move(5, 3);
+    CHECK(!doc.dirty() && !doc.CanUndo() && doc.Map().Get(0, 0, 0) == kEmpty);
+    io.AddKeyEvent(ImGuiKey_Escape, true);
+    ui.Frame(draw);
+    io.AddKeyEvent(ImGuiKey_Escape, false);
+    left(false);
+    CHECK(!doc.dirty() && !doc.CanUndo());
+
+    move(0, 0);
+    left(true);
+    move(5, 3);
+    left(false);
+    const std::array<i32, 6> expected_y = {0, 1, 1, 2, 2, 3};
+    for (i32 x = 0; x < 6; ++x) {
+        for (i32 y = 0; y < 5; ++y)
+            CHECK(doc.Map().Get(0, x, y) == (y == expected_y[x] ? 7 : kEmpty));
+    }
+    CHECK(doc.Undo() && !doc.dirty() && !doc.CanUndo());
+    CHECK(doc.Redo() && doc.Map().Get(0, 5, 3) == 7);
+    CHECK(doc.Undo());
+    doc.brush = AutotileCell(1);
+    move(0, 0);
+    left(true);
+    move(5, 3);
+    left(false);
+    CHECK(!doc.CanUndo() && doc.CanRedo()); // invalid brush cannot overwrite history
+}
+
 AETHER_TEST(TilemapEditor_RectangleDragCancelsAndClipsWithoutPartialHistory) {
     HeadlessImGui ui;
     TilemapEditDocument doc = Doc();

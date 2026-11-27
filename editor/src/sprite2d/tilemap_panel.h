@@ -76,8 +76,8 @@ private:
         TileTool tool;
     };
     std::optional<BrushSample> last_brush_sample_;
-    bool rect_active_ = false;
-    i32 rect_x_ = 0, rect_y_ = 0;
+    bool shape_active_ = false;
+    i32 shape_x_ = 0, shape_y_ = 0;
     i32 selected_autotile_ = 0;
     struct GhostPoint { f32 x, y; };
     std::vector<GhostPoint> ghost_before_, ghost_after_;

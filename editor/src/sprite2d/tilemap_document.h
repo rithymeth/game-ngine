@@ -16,7 +16,7 @@
 
 namespace aether::editor {
 
-enum class TileTool : u8 { Paint, Erase, Rectangle, Fill, Pick };
+enum class TileTool : u8 { Paint, Erase, Rectangle, Fill, Pick, Line };
 
 class TilemapEditDocument {
 public:
@@ -44,6 +44,9 @@ public:
     // Fills the rectangle (inclusive corners) with the brush, or clears it
     // with Erase; one undo step.
     void Rectangle(i32 x0, i32 y0, i32 x1, i32 y1);
+    // Paints an inclusive straight line between two in-bounds cells. Joins
+    // the current stroke if one is open.
+    void Line(i32 x0, i32 y0, i32 x1, i32 y1);
     // The cells a flood fill from (x, y) would change (4-connected, same value).
     std::vector<std::pair<i32, i32>> FloodRegion(i32 x, i32 y) const;
 

@@ -31,22 +31,7 @@ bool IsInvalidPaint(i32 cell, u32 grid_count, usize autotile_count) {
     return cell >= 0 && grid_count != 0 && static_cast<u32>(cell) >= grid_count;
 }
 
-const char* kToolNames[] = {"Paint", "Erase", "Rectangle", "Fill", "Pick"};
-
-// Both endpoints are valid map cells. Fill the gaps between pointer samples
-// with an integer line, so one fast drag remains one undoable stroke.
-void ApplyBrushLine(TilemapEditDocument& doc, i32 x, i32 y, i32 end_x, i32 end_y) {
-    const i32 dx = std::abs(end_x - x), dy = -std::abs(end_y - y);
-    const i32 step_x = x < end_x ? 1 : -1, step_y = y < end_y ? 1 : -1;
-    i32 error = dx + dy;
-    for (;;) {
-        doc.Apply(x, y);
-        if (x == end_x && y == end_y) return;
-        const i32 twice = 2 * error;
-        if (twice >= dy) { error += dy; x += step_x; }
-        if (twice <= dx) { error += dx; y += step_y; }
-    }
-}
+const char* kToolNames[] = {"Paint", "Erase", "Rectangle", "Fill", "Pick", "Line"};
 
 } // namespace
 
@@ -228,7 +213,7 @@ void TilemapPanel::ResetView() {
 void TilemapPanel::ResetForNewMap() {
     ResetView();
     selected_autotile_ = 0;
-    rect_active_ = dragging_ = false;
+    shape_active_ = dragging_ = false;
     last_brush_sample_.reset();
 }
 
@@ -332,7 +317,7 @@ void TilemapPanel::DrawTools() {
     bool save_shortcut = false;
     const auto& io = ImGui::GetIO();
     const bool show_command = native_command_ || io.ConfigMacOSXBehaviors;
-    if (!dragging_ && !rect_active_ && !io.WantTextInput && !ImGui::IsAnyItemActive() &&
+    if (!dragging_ && !shape_active_ && !io.WantTextInput && !ImGui::IsAnyItemActive() &&
         !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) {
         const auto shortcut = [&](ImGuiKeyChord chord) {
             const bool ctrl = ImGui::Shortcut(ImGuiMod_Ctrl | chord);
@@ -368,11 +353,13 @@ void TilemapPanel::DrawTools() {
     } else if (!save_error_.empty() && save_error_revision_ == doc_.Revision()) {
         ImGui::TextWrapped("%s", save_error_.c_str());
     }
-    for (int t = 0; t < 5; ++t) {
+    for (int t = 0; t < static_cast<int>(std::size(kToolNames)); ++t) {
         if (t > 0) ImGui::SameLine();
         const bool on = static_cast<int>(doc_.tool) == t;
         if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
         if (ImGui::Button(kToolNames[t])) doc_.tool = static_cast<TileTool>(t);
+        if (static_cast<TileTool>(t) == TileTool::Line)
+            ImGui::SetItemTooltip("Drag to preview a straight line. Release to paint it.");
         if (on) ImGui::PopStyleColor();
     }
     ImGui::SameLine();
@@ -823,31 +810,45 @@ void TilemapPanel::DrawCanvas() {
     const bool left = ImGui::IsMouseDown(ImGuiMouseButton_Left) && ImGui::IsItemActive();
     const bool right = ImGui::IsMouseDown(ImGuiMouseButton_Right) && ImGui::IsItemActive();
     const TileTool selected = doc_.tool;
-    if (selected == TileTool::Rectangle) {
+    const bool line_tool = selected == TileTool::Line;
+    const bool shape_tool = selected == TileTool::Rectangle || line_tool;
+    if (shape_tool) {
         if (left && !right && !dragging_ && on_map && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-            rect_active_ = true;
-            rect_x_ = cx;
-            rect_y_ = cy;
+            shape_active_ = true;
+            shape_x_ = cx;
+            shape_y_ = cy;
         }
         const bool cancel = !mouse_valid || ImGui::IsKeyPressed(ImGuiKey_Escape) ||
-                            !map.InBounds(rect_x_, rect_y_);
-        if (rect_active_ && (cancel || !left)) {
-            if (!cancel && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) doc_.Rectangle(rect_x_, rect_y_, cx, cy);
-            rect_active_ = false;
+                            !map.InBounds(shape_x_, shape_y_);
+        if (shape_active_ && (cancel || !left)) {
+            if (!cancel && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+                if (line_tool) doc_.Line(shape_x_, shape_y_, std::clamp(cx, 0, static_cast<i32>(map.width) - 1),
+                                         std::clamp(cy, 0, static_cast<i32>(map.height) - 1));
+                else doc_.Rectangle(shape_x_, shape_y_, cx, cy);
+            }
+            shape_active_ = false;
         }
-        if (rect_active_) {
+        if (shape_active_) {
             const i32 x = std::clamp(cx, 0, static_cast<i32>(map.width) - 1);
             const i32 y = std::clamp(cy, 0, static_cast<i32>(map.height) - 1);
-            const ImVec2 a(to_screen_x(std::min(x, rect_x_)), to_screen_y(std::max(y, rect_y_)));
-            const ImVec2 b(to_screen_x(std::max(x, rect_x_) + 1), to_screen_y(std::min(y, rect_y_)) + zoom);
-            dl->AddRectFilled(a, b, IM_COL32(130, 214, 255, 48));
-            dl->AddRect(a, b, IM_COL32(130, 214, 255, 255), 0.0f, 0, 2.0f);
-            if (hovered) ImGui::SetTooltip("Release to fill the rectangle. Escape cancels.");
+            if (line_tool) {
+                const auto center = [&](i32 tile_x, i32 tile_y) {
+                    return ImVec2(to_screen_x(tile_x) + zoom * 0.5f, to_screen_y(tile_y) + zoom * 0.5f);
+                };
+                dl->AddLine(center(shape_x_, shape_y_), center(x, y), IM_COL32(130, 214, 255, 255), 2.0f);
+                if (hovered) ImGui::SetTooltip("Release to paint the line. Escape cancels.");
+            } else {
+                const ImVec2 a(to_screen_x(std::min(x, shape_x_)), to_screen_y(std::max(y, shape_y_)));
+                const ImVec2 b(to_screen_x(std::max(x, shape_x_) + 1), to_screen_y(std::min(y, shape_y_)) + zoom);
+                dl->AddRectFilled(a, b, IM_COL32(130, 214, 255, 48));
+                dl->AddRect(a, b, IM_COL32(130, 214, 255, 255), 0.0f, 0, 2.0f);
+                if (hovered) ImGui::SetTooltip("Release to fill the rectangle. Escape cancels.");
+            }
         }
     } else {
-        rect_active_ = false;
+        shape_active_ = false;
     }
-    if (on_map && !rect_active_) {
+    if (on_map && !shape_active_) {
         const ImVec2 a(to_screen_x(cx), to_screen_y(cy));
         dl->AddRect(a, ImVec2(a.x + zoom, a.y + zoom), IM_COL32(255, 255, 255, 200), 0.0f, 0, 2.0f);
         if (!left && !right && ImGui::BeginTooltip()) {
@@ -890,14 +891,14 @@ void TilemapPanel::DrawCanvas() {
     }
     dl->PopClipRect();
 
-    // In Rectangle mode a fresh right press starts a freehand eraser, but
+    // In shape modes a fresh right press starts a freehand eraser, but
     // never takes over a left drag or starts late after its release.
-    const bool rectangle_erase_drag = right && !rect_active_ &&
+    const bool shape_erase_drag = right && !shape_active_ &&
         (dragging_ || (!left && ImGui::IsMouseClicked(ImGuiMouseButton_Right)));
     // A press on blank canvas must not start painting when the pointer later enters the map.
     const bool brush_start = on_map && ImGui::IsMouseClicked(right ? ImGuiMouseButton_Right : ImGuiMouseButton_Left);
     const bool brush_drag = mouse_valid && (dragging_ || brush_start) &&
-        (selected == TileTool::Rectangle ? rectangle_erase_drag :
+        (shape_tool ? shape_erase_drag :
          right || (left && (selected == TileTool::Paint || selected == TileTool::Erase)));
     if (brush_drag) {
         if (right) doc_.tool = TileTool::Erase;
@@ -907,7 +908,7 @@ void TilemapPanel::DrawCanvas() {
         }
         if (on_map) {
             if (last_brush_sample_ && last_brush_sample_->tool == doc_.tool) {
-                ApplyBrushLine(doc_, last_brush_sample_->x, last_brush_sample_->y, cx, cy);
+                doc_.Line(last_brush_sample_->x, last_brush_sample_->y, cx, cy);
             } else {
                 doc_.Apply(cx, cy);
             }

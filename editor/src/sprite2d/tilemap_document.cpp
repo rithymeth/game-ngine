@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <deque>
 #include <string_view>
 #include <unordered_set>
@@ -268,7 +269,8 @@ void TilemapEditDocument::Apply(i32 x, i32 y) {
     case TileTool::Erase: PaintCell(x, y, kEmpty); break;
     case TileTool::Fill: FloodPaint(x, y); break;
     case TileTool::Pick: break; // handled before starting a stroke
-    case TileTool::Rectangle: break; // see Rectangle()
+    case TileTool::Rectangle:
+    case TileTool::Line: break; // use the two-endpoint operations
     }
     if (own_stroke) EndStroke();
 }
@@ -310,6 +312,26 @@ void TilemapEditDocument::Rectangle(i32 x0, i32 y0, i32 x1, i32 y1) {
         }
     }
     EndStroke();
+}
+
+void TilemapEditDocument::Line(i32 x, i32 y, i32 end_x, i32 end_y) {
+    if (!map_.InBounds(x, y) || !map_.InBounds(end_x, end_y) ||
+        (tool != TileTool::Erase && (HasMissingAutotileBrush() || HasOutOfGridBrush()))) return;
+    const bool own_stroke = !in_stroke_;
+    if (own_stroke) BeginStroke();
+    const i32 value = tool == TileTool::Erase ? kEmpty : brush;
+    const i64 dx = std::abs(static_cast<i64>(end_x) - x);
+    const i64 dy = -std::abs(static_cast<i64>(end_y) - y);
+    const i32 step_x = x < end_x ? 1 : -1, step_y = y < end_y ? 1 : -1;
+    i64 error = dx + dy;
+    for (;;) {
+        PaintCell(x, y, value);
+        if (x == end_x && y == end_y) break;
+        const i64 twice = 2 * error;
+        if (twice >= dy) { error += dy; x += step_x; }
+        if (twice <= dx) { error += dx; y += step_y; }
+    }
+    if (own_stroke) EndStroke();
 }
 
 bool TilemapEditDocument::Travel(std::vector<HistoryEntry>& from, std::vector<HistoryEntry>& to) {
