@@ -324,6 +324,20 @@ def main():
                      "--user-dir", root / "Player Data", cwd=empty_cwd, capture=True)
         if not SIXTY_FRAMES.search(output):
             raise RuntimeError("the packaged player did not report 60 frames")
+        if args.template == "platformer_2d":
+            receipts = [json.loads(line.removeprefix("GPU adapter: ")) for line in output.splitlines()
+                        if line.startswith("GPU adapter: ")]
+            if receipts != [{"backend": "none", "kind": "none", "submitted_frames": 0}]:
+                raise RuntimeError(f"headless Shipping report must not claim a GPU: {receipts}")
+            for extra, env in [(["--headless"], os.environ.copy()),
+                               ([], dict(os.environ, AETHER_PLAYER_HEADLESS="1"))]:
+                hardware = subprocess.run([game, "--require-hardware-gpu", "--frames", "1", *extra,
+                                           "--user-dir", root / "GPU Validation Data"],
+                                          cwd=empty_cwd, env=env, capture_output=True, text=True, timeout=10)
+                if hardware.returncode != 2 or "requires a windowed run" not in hardware.stderr:
+                    raise RuntimeError(f"hardware validation accepted headless mode: {hardware.stdout}{hardware.stderr}")
+                if (root / "GPU Validation Data").exists():
+                    raise RuntimeError("invalid hardware launch created a user profile")
         if args.template in MOTION:
             key, axis, direction = MOTION[args.template]
             moved = run(game, "--headless", "--frames", "60", "--press", key, "--report",
