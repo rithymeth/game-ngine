@@ -2,6 +2,7 @@
 
 #include "aether/loc/language.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 
@@ -9,9 +10,18 @@ namespace aether::loc {
 
 namespace {
 
-std::string BaseLanguage(std::string_view language) {
-    const std::string tag = NormalizeLanguage(language);
-    return tag.substr(0, tag.find('-'));
+bool HasPortugalRegion(std::string_view subtags) {
+    // Region follows the language or an optional four-letter script.
+    // Do not scan variants, extensions or private use for a matching subtag.
+    const usize cut = subtags.find('-');
+    const std::string_view first = subtags.substr(0, cut);
+    if (cut != std::string_view::npos && first.size() == 4 &&
+        std::all_of(first.begin(), first.end(), [](char c) {
+            return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+        })) {
+        subtags.remove_prefix(cut + 1);
+    }
+    return subtags.substr(0, subtags.find('-')) == "PT";
 }
 
 std::string Stringify(const FormatValue& v) {
@@ -45,13 +55,16 @@ std::string Trim(std::string_view s) {
 } // namespace
 
 std::string PluralCategory(std::string_view language, double n) {
-    const std::string lang = BaseLanguage(language);
+    const std::string normalized = NormalizeLanguage(language);
+    const std::string_view tag = normalized;
+    const usize cut = tag.find('-');
+    const std::string_view lang = tag.substr(0, cut);
     const bool whole = std::floor(n) == n && std::fabs(n) < 1e15;
     const i64 i = whole ? static_cast<i64>(std::fabs(n)) : 0;
     if (lang == "ja" || lang == "zh" || lang == "ko" || lang == "vi" || lang == "th" || lang == "id" || lang == "ms" || lang == "km") return "other";
     if (lang == "fr") return (n >= 0 && n < 2) ? "one" : "other"; // 0, 1 and fractions below 2
     if (lang == "pt") {
-        const bool pt_pt = NormalizeLanguage(language) == "pt-PT";
+        const bool pt_pt = cut != std::string_view::npos && HasPortugalRegion(tag.substr(cut + 1));
         if (pt_pt) return whole && i == 1 ? "one" : "other";
         return (n >= 0 && n < 2) ? "one" : "other"; // pt-BR: 0 and 1
     }

@@ -241,6 +241,31 @@ AETHER_TEST(Loc_FallbackEntriesUseTheLanguageTheyWereWrittenIn) {
     CHECK(localizer.Resolve("coins", &zero) == "0 piece"); // Existing exact-language behavior stays intact.
 }
 
+AETHER_TEST(Loc_PortuguesePluralRulesKeepTheRegionWithExtensions) {
+    CHECK(PluralCategory("pt-PT", 0) == "other");
+    CHECK(PluralCategory("pt-PT-u-nu-latn", 0) == "other");
+    CHECK(PluralCategory("pt-Latn-PT-x-game", 0.5) == "other");
+    CHECK(PluralCategory(" PT_latn_pt_u_nu_latn ", 1) == "one");
+    CHECK(PluralCategory("pt-BR-u-nu-latn", 0) == "one");
+    CHECK(PluralCategory("pt-x-pt", 0) == "one"); // Private use is not a region.
+    CHECK(PluralCategory("pt-BR-x-pt", 0) == "one");
+
+    const FormatArgs zero{{"count", i64{0}}};
+    const LocText coins{"coins", "{count} moeda{count|s}"};
+    Localizer localizer;
+    localizer.SetDefaultLanguage("pt-PT-u-nu-latn");
+    localizer.SetLanguage("ja");
+    CHECK(localizer.Resolve(coins, &zero) == "0 moedas"); // Authored source uses the default locale.
+
+    StringTable table;
+    table.Set("pt-Latn-PT", "coins", coins.source);
+    localizer.SetTable(&table);
+    localizer.SetDefaultLanguage("pt-BR");
+    localizer.SetLanguage("pt-Latn-PT-x-game");
+    CHECK(localizer.IsTranslated(coins));
+    CHECK(localizer.Resolve(coins, &zero) == "0 moedas"); // Found text uses the entry's locale.
+}
+
 AETHER_TEST(Loc_KeyedSourceFallbackUsesTheDefaultLanguage) {
     Localizer localizer;
     localizer.SetLanguage("km-KH");
