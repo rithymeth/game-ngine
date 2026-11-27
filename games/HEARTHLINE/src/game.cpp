@@ -13,12 +13,20 @@ int Distance(Point a, Point b) { return std::abs(a.x-b.x) + std::abs(a.y-b.y); }
 bool Inside(Point p) { return p.x >= 0 && p.x < kMapSize && p.y >= 0 && p.y < kMapSize; }
 std::size_t Cell(Point p) { return static_cast<std::size_t>(p.y)*kMapSize+p.x; }
 constexpr int kSightRadius=12;
+constexpr std::array<SupplyCache,4> kCaches{{
+    {{37,58},{4,1,0,1},"Forester's stash"},
+    {{48,70},{2,3,0,1},"Quarry supply chest"},
+    {{75,58},{2,1,0,2},"Lost expedition pack"},
+    {{98,72},{3,2,0,2},"Ruined watchpost"}
+}};
 bool Socket(Point p) { return p.y==64 && (p.x==105 || p.x==107); }
 bool Protected(Point p) {
     return (p.x>=15 && p.x<=113 && p.y>=62 && p.y<=66) ||
            (p.x>=99 && p.x<=113 && p.y>=57 && p.y<=71);
 }
 }
+
+const std::array<SupplyCache,4>& Game::Caches() { return kCaches; }
 
 Point Game::Resource(int index) {
     return index < 0 || index >= 6 ? Point{-1,-1} : kResources[index];
@@ -35,6 +43,16 @@ Game::Game(std::uint32_t seed) : seed_(seed), terrain_(kMapSize * kMapSize),
         if (y>=62 && y<=66 && x>=15 && x<=113) tile=Tile::Floor;
         if (x>=kRiverX && x<=kRiverX+1) tile=Tile::Water;
         terrain_[static_cast<std::size_t>(y)*kMapSize+x] = static_cast<std::uint8_t>(tile);
+    }
+    // Connect each optional landmark to the authored route. The river and
+    // main objectives remain untouched, regardless of the generated seed.
+    for(const auto& cache:kCaches) {
+        const auto p=cache.at;
+        for(int y=std::min(p.y,64);y<=std::max(p.y,64);++y)
+            terrain_[Cell({p.x,y})]=static_cast<std::uint8_t>(Tile::Floor);
+        for(int y=p.y-1;y<=p.y+1;++y) for(int x=p.x-1;x<=p.x+1;++x)
+            terrain_[Cell({x,y})]=static_cast<std::uint8_t>(Tile::Floor);
+        objects_[Cell(p)]=Structure::SupplyCache;
     }
     state_.player=Camp();
     state_.guardian=Guardian();
@@ -67,6 +85,35 @@ void Game::Reveal() {
 }
 bool Game::ResourceAvailable(int index) const {
     return index>=0 && index<static_cast<int>(gathered_.size()) && !gathered_[index];
+}
+bool Game::HarvestNearby() {
+    const auto p=state_.player;
+    constexpr Point directions[]={{1,0},{0,1},{-1,0},{0,-1}};
+    for(auto d:directions) {
+        const Point at{p.x+d.x,p.y+d.y};
+        if(!Inside(at) || ObjectAt(at.x,at.y)!=Structure::None) continue;
+        const auto tile=Terrain(at.x,at.y);
+        if(tile!=Tile::Tree && tile!=Tile::Rock) continue;
+        terrain_[Cell(at)]=static_cast<std::uint8_t>(Tile::Grass);
+        if(tile==Tile::Tree) state_.inventory.wood+=2;
+        else state_.inventory.stone+=2;
+        ++harvested_count_;
+        return true;
+    }
+    return false;
+}
+bool Game::OpenNearbyCache() {
+    for(const auto& cache:kCaches) {
+        const auto p=cache.at;
+        if(!Adjacent(p) || ObjectAt(p.x,p.y)!=Structure::SupplyCache) continue;
+        auto& inv=state_.inventory;
+        inv.wood+=cache.loot.wood; inv.stone+=cache.loot.stone;
+        inv.energy+=cache.loot.energy; inv.food+=cache.loot.food;
+        objects_[Cell(p)]=Structure::OpenedCache;
+        ++opened_caches_;
+        return true;
+    }
+    return false;
 }
 bool Game::HasStructure(Point p) const { return ObjectAt(p.x,p.y)==Structure::Wall; }
 bool Game::RotateNearbyRelay() {
@@ -121,6 +168,7 @@ bool Game::Act(Action action, Point at) {
             else s.inventory.food+=3;
             accepted=true; break;
         }
+        if(!accepted) accepted=HarvestNearby();
         break;
     case Action::BuildBridge:
         if(!s.bridge && s.player.x==kRiverX-1 && s.player.y==kBridgeY && s.inventory.wood>=4) {
@@ -172,6 +220,7 @@ bool Game::Act(Action action, Point at) {
         }
         break;
     case Action::Interact:
+        if(OpenNearbyCache()) { accepted=true; break; }
         if(!s.beacon && s.guardian_defeated && Distance(s.player,Beacon())<=4 && relays_.size()==2) {
             // Both relays face east (0) and form a continuous two-node circuit.
             const bool first=std::any_of(relays_.begin(),relays_.end(),[](const Relay& r){return r.at.x==105 && r.at.y==64 && r.direction==0;});
