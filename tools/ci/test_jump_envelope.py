@@ -8,6 +8,8 @@ import sys
 import tempfile
 import unittest
 
+from test_packaged_project import verify_jump_envelope
+
 TOOL = Path(__file__).resolve().parents[1] / "jump_envelope.py"
 FAKE = """#!/usr/bin/env python3
 import json
@@ -110,6 +112,13 @@ class JumpEnvelope(unittest.TestCase):
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertIn("package files changed during the sweep", result.stderr)
         self.assertFalse(output.exists())
+
+    def test_smoke_adapter_requires_verified_control_loss_and_replay(self):
+        old = self.stage("old-smoke", "before", b"asset-before")
+        changed = self.stage("new-smoke", "always-miss", b"asset-after")
+        # The smoke adapter invokes the actual envelope CLI and independently
+        # replays the exported input on each of these stand-in players.
+        verify_jump_envelope(old, changed, self.route, 4, self.root, self.root)
 
     def test_evidence_requires_packaged_files(self):
         result = self.invoke("before", "--capture-evidence")
