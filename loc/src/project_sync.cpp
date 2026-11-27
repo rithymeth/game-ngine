@@ -13,9 +13,17 @@ namespace stdfs = std::filesystem;
 namespace {
 
 bool WriteText(const stdfs::path& file, const std::string& text) {
+    const std::string path = file.string();
+    // Compare raw bytes so CRLF and non-ASCII output are handled identically
+    // on every host. A no-op sync should not wake file watchers.
+    std::vector<u8> existing;
+    if (fs::ReadFileBytes(path, existing, text.size()) && existing.size() == text.size() &&
+        std::equal(text.begin(), text.end(), existing.begin(), [](char c, u8 byte) { return static_cast<u8>(c) == byte; })) {
+        return true;
+    }
     std::error_code ec;
     if (file.has_parent_path()) stdfs::create_directories(file.parent_path(), ec);
-    return fs::WriteFileAtomic(file.string(), text.data(), text.size());
+    return fs::WriteFileAtomic(path, text.data(), text.size());
 }
 
 } // namespace

@@ -31,8 +31,8 @@ struct SyncReport {
 // What `aether_loc` does (§29.4): gathers the project's strings, applies any
 // returned .po files, merges the keys into the string table (new keys with
 // their source text; no translation touched; unused keys reported), writes
-// the table back as CSV and the .po files out. Deterministic, so a second run
-// with nothing changed rewrites identical files.
+// the table back as CSV and the .po files out. Existing outputs with identical
+// bytes are left untouched.
 SyncReport SyncProject(const SyncOptions& options);
 
 } // namespace aether::loc

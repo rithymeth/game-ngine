@@ -7,6 +7,7 @@
 #include "aether/reflection/serialize.h"
 #include "aether/loc/loc_text.h"
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 
@@ -298,10 +299,18 @@ AETHER_TEST(LocSync_GathersMergesAndWritesFiles) {
     const std::string csv = Slurp(o.strings_file);
     CHECK(csv.find("hud.score,Score,Points") != std::string::npos && csv.find("menu.play,Play,Jouer") != std::string::npos);
     CHECK(csv.find("legacy,Old,Ancien") != std::string::npos); // kept
-    // A second run with nothing new rewrites identical files.
+    // A second run with nothing new must leave both finished files untouched.
+    const auto po_path = root / "po/fr.po";
+    const auto mark = stdfs::file_time_type::clock::now() - std::chrono::hours(48);
+    stdfs::last_write_time(o.strings_file, mark);
+    stdfs::last_write_time(po_path, mark);
+    const auto csv_time = stdfs::last_write_time(o.strings_file);
+    const auto po_time = stdfs::last_write_time(po_path);
     const std::string before = Slurp(o.strings_file), po_before = Slurp(root / "po/fr.po");
     r = SyncProject(o);
     CHECK(r.ok && r.merge.added == 0 && Slurp(o.strings_file) == before && Slurp(root / "po/fr.po") == po_before);
+    CHECK(stdfs::last_write_time(o.strings_file) == csv_time);
+    CHECK(stdfs::last_write_time(po_path) == po_time);
     // --check writes nothing.
     Write(content / "UI/new.aui", R"({"root":{"type":"Text","text":"New","text_key":"new.key"}})");
     o.write = false;
