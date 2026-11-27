@@ -169,13 +169,17 @@ bool SaveTileset(const std::filesystem::path& file, const Tileset& t, std::strin
 }
 
 void TilemapData::Resize(u32 new_width, u32 new_height) {
+    const u32 overlap_width = std::min(width, new_width);
+    const u32 overlap_height = std::min(height, new_height);
     for (TileLayer& layer : layers) {
         std::vector<i32> cells(static_cast<usize>(new_width) * new_height, kEmpty);
-        for (u32 y = 0; y < std::min(height, new_height); ++y) {
-            for (u32 x = 0; x < std::min(width, new_width); ++x) {
-                const u64 source = static_cast<u64>(y) * width + x;
-                if (source < layer.cells.size()) cells[static_cast<usize>(y) * new_width + x] = layer.cells[source];
-            }
+        for (u32 y = 0; overlap_width != 0 && y < overlap_height; ++y) {
+            const u64 source = static_cast<u64>(y) * width;
+            if (source >= layer.cells.size()) break;
+            // Public layers can be truncated; copy the available prefix of that row only.
+            const usize count = std::min<usize>(overlap_width, layer.cells.size() - static_cast<usize>(source));
+            std::copy_n(layer.cells.data() + static_cast<usize>(source), count,
+                        cells.data() + static_cast<usize>(y) * new_width);
         }
         layer.cells = std::move(cells);
     }
@@ -214,13 +218,15 @@ usize TilemapData::Fill(usize layer, i32 x0, i32 y0, i32 x1, i32 y1, i32 cell) {
     const i64 bottom = std::max<i64>(std::min(y0, y1), 0);
     const i64 top = std::min<i64>(std::max(y0, y1), static_cast<i64>(height) - 1);
     if (left > right || bottom > top) return 0;
-    usize n = 0;
-    for (i64 y = bottom; y <= top; ++y) {
-        for (i64 x = left; x <= right; ++x) {
-            if (Set(layer, static_cast<i32>(x), static_cast<i32>(y), cell)) ++n;
-        }
+    const usize span = static_cast<usize>(right - left + 1);
+    const usize rows = static_cast<usize>(top - bottom + 1);
+    i32* const first = layers[layer].cells.data() + static_cast<usize>(bottom) * width + static_cast<usize>(left);
+    if (span == width) {
+        std::fill_n(first, span * rows, cell);
+    } else {
+        for (usize row = 0; row < rows; ++row) std::fill_n(first + row * width, span, cell);
     }
-    return n;
+    return span * rows;
 }
 
 nlohmann::json TilemapToJson(const TilemapData& m) {

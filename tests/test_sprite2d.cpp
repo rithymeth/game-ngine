@@ -310,6 +310,37 @@ AETHER_TEST(Sprite2D_TilemapEditingAndAutotiles) {
     CHECK(ResolveTile(m2, ts, 0, 4, 4) == kEmpty);
 }
 
+AETHER_TEST(Sprite2D_TilemapBulkEditsKeepRowBoundaries) {
+    TilemapData map;
+    map.Resize(5, 4);
+    map.AddLayer("ground");
+    map.AddLayer("overlay");
+    map.layers[1].collides = false;
+    CHECK(map.Fill(0, 7, 2, -2, 1, 8) == 10); // reversed and clipped; full rows
+    CHECK(map.Fill(0, 3, 2, 1, 1, 2) == 6);   // partial rows
+    CHECK(map.Fill(0, -4, 0, -1, 3, 99) == 0);
+    CHECK(map.Get(0, 0, 1) == 8 && map.Get(0, 4, 2) == 8);
+    CHECK(map.Get(0, 1, 1) == 2 && map.Get(0, 3, 2) == 2);
+    CHECK(map.Get(0, 4, 0) == kEmpty && map.Get(0, 0, 3) == kEmpty);
+    CHECK(map.Get(1, 1, 1) == kEmpty);
+
+    CHECK(map.Set(1, 0, 1, 9) && map.Set(1, 1, 1, 10));
+    map.layers[1].cells.resize(7); // represent a partial second row in a public layer
+    CHECK(map.Fill(1, 0, 0, 4, 3, 99) == 0 && map.Get(1, 0, 1) == 9);
+    map.Resize(7, 3);
+    CHECK(map.layers[1].name == "overlay" && !map.layers[1].collides && map.layers[1].cells.size() == 21);
+    CHECK(map.Get(0, 4, 2) == 8 && map.Get(0, 5, 2) == kEmpty);
+    CHECK(map.Get(1, 0, 1) == 9 && map.Get(1, 1, 1) == 10);
+    CHECK(map.Get(1, 2, 1) == kEmpty && map.Get(1, 0, 2) == kEmpty);
+
+    map.Resize(2, 2);
+    CHECK(map.Get(1, 1, 1) == 10 && map.Get(1, 2, 1) == kEmpty);
+    map.Resize(0, 2);
+    CHECK(map.layers[0].cells.empty() && map.Fill(0, 0, 0, 2, 2, 0) == 0);
+    map.Resize(2, 2);
+    CHECK(map.Get(1, 1, 1) == kEmpty);
+}
+
 AETHER_TEST(Sprite2D_TilemapSolidityAndCells) {
     Tileset ts;
     ts.texture_width = ts.texture_height = 32;
