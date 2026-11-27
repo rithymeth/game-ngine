@@ -88,12 +88,18 @@ private:
         std::optional<usize> selection = std::nullopt;
     };
     using CellEdits = std::map<std::pair<usize, usize>, i32>; // (layer, cell) -> opposite value
+    struct LayerProperties {
+        usize layer;
+        std::string name;
+        bool collides;
+    };
     struct HistoryEntry {
-        std::variant<Snapshot, CellEdits> edit;
+        std::variant<Snapshot, CellEdits, LayerProperties> edit;
         u64 state;
     };
     bool Travel(std::vector<HistoryEntry>& from, std::vector<HistoryEntry>& to);
     void Record(bool track_selection = false);
+    void RecordLayerProperties(usize layer);
     void Changed();
     void ClampActive();
     bool PaintCell(i32 x, i32 y, i32 value);

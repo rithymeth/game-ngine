@@ -87,6 +87,14 @@ void TilemapEditDocument::Record(bool track_selection) {
     Changed();
 }
 
+void TilemapEditDocument::RecordLayerProperties(usize layer) {
+    EndStroke();
+    const auto& current = map_.layers[layer];
+    undo_.push_back({LayerProperties{layer, current.name, current.collides}, state_});
+    redo_.clear();
+    Changed();
+}
+
 void TilemapEditDocument::BeginStroke() {
     if (in_stroke_) return;
     in_stroke_ = true;
@@ -255,6 +263,10 @@ bool TilemapEditDocument::Travel(std::vector<HistoryEntry>& from, std::vector<Hi
         std::swap(map_, snapshot->map);
         std::swap(tileset_, snapshot->tileset);
         if (snapshot->selection) std::swap(active_layer, *snapshot->selection);
+    } else if (auto* properties = std::get_if<LayerProperties>(&step.edit)) {
+        auto& layer = map_.layers[properties->layer];
+        std::swap(layer.name, properties->name);
+        std::swap(layer.collides, properties->collides);
     } else {
         for (auto& [key, value] : std::get<CellEdits>(step.edit))
             std::swap(map_.layers[key.first].cells[key.second], value);
@@ -319,14 +331,14 @@ bool TilemapEditDocument::DuplicateLayer(usize layer) {
 bool TilemapEditDocument::RenameLayer(usize layer, const std::string& name) {
     if (layer >= map_.layers.size() || map_.layers[layer].name == name ||
         std::all_of(name.begin(), name.end(), [](unsigned char c) { return std::isspace(c) != 0; })) return false;
-    Record();
+    RecordLayerProperties(layer);
     map_.layers[layer].name = name;
     return true;
 }
 
 bool TilemapEditDocument::SetLayerCollides(usize layer, bool collides) {
     if (layer >= map_.layers.size() || map_.layers[layer].collides == collides) return false;
-    Record();
+    RecordLayerProperties(layer);
     map_.layers[layer].collides = collides;
     return true;
 }

@@ -1140,6 +1140,37 @@ AETHER_TEST(TilemapEditor_RenamesLayersWithoutErasingCellsOrAcceptingBlankNames)
     CHECK(saved.layers.front().name == "Forest Floor ## A" && saved.Get(0, 2, 2) == 5);
 }
 
+AETHER_TEST(TilemapEditor_LayerPropertyHistoryKeepsTilesAndSelectionInPlace) {
+    TilemapData map;
+    map.Resize(4, 4);
+    map.AddLayer("Floor");
+    map.AddLayer("Canopy");
+    TilemapEditDocument doc(std::move(map), {});
+    doc.active_layer = 1;
+    const auto* floor_cells = doc.Map().layers[0].cells.data();
+    doc.BeginStroke();
+    doc.brush = 6;
+    doc.Apply(2, 2);
+    // Properties on another layer close the brush stroke as a distinct edit.
+    CHECK(doc.RenameLayer(0, "New Floor") && doc.SetLayerCollides(0, false));
+    CHECK(doc.Undo() && doc.Map().layers[0].collides && doc.Map().layers[0].name == "New Floor");
+    CHECK(doc.Undo() && doc.Map().layers[0].name == "Floor" && doc.Map().Get(1, 2, 2) == 6);
+    CHECK(doc.Map().layers[0].cells.data() == floor_cells && doc.active_layer == 1);
+    CHECK(doc.Undo() && doc.Map().Get(1, 2, 2) == kEmpty && !doc.dirty());
+    CHECK(doc.Redo() && doc.Redo() && doc.Redo());
+    CHECK(doc.Map().Get(1, 2, 2) == 6 && doc.Map().layers[0].name == "New Floor");
+    CHECK(doc.Map().layers[0].cells.data() == floor_cells && doc.active_layer == 1);
+
+    // Structural history must restore the correct layer before property undo.
+    CHECK(doc.MoveLayer(0, 1) && doc.Map().layers[1].name == "New Floor");
+    CHECK(doc.SetLayerCollides(1, true));
+    CHECK(doc.Undo() && !doc.Map().layers[1].collides);
+    CHECK(doc.Undo() && doc.Map().layers[0].name == "New Floor");
+    CHECK(doc.Undo() && doc.Map().layers[0].collides && doc.Map().layers[1].name == "Canopy");
+    CHECK(doc.Redo() && doc.Redo() && doc.Redo());
+    CHECK(doc.Map().layers[1].name == "New Floor" && doc.Map().layers[1].collides);
+}
+
 AETHER_TEST(TilemapEditor_ReordersLayersAndKeepsTheBrushOnTheSameLayer) {
     TilemapData map;
     map.Resize(2, 2);
