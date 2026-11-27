@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#101d24">
+<title>HEARTHLINE — First Expedition</title>
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%;background:#101d24;color:#e9e8ce;font-family:system-ui,-apple-system,sans-serif}
+body{display:flex;flex-direction:column;align-items:center;gap:12px;padding:12px}
+header,main,section,footer{width:min(100%,1000px)}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px}
+h1{font:700 clamp(20px,3vw,32px) Georgia,serif;letter-spacing:3px;margin:0;color:#f1cd8a}
+p{margin:4px 0;line-height:1.4}
+#status{font-size:13px;color:#c6d5cd;max-width:100%;min-height:38px;overflow-wrap:anywhere}
+main{position:relative;border:2px solid #53625c;background:#162b2d;box-shadow:0 14px 38px #0008}
+canvas{display:block;width:100%;aspect-ratio:3/2;outline:0;image-rendering:pixelated}
+#loading{position:absolute;inset:0;display:grid;place-items:center;background:#162b2d;color:#f1cd8a;font:22px Georgia,serif;letter-spacing:2px;text-align:center;padding:20px}
+#loading.hidden{display:none}
+#loading.error{color:#f19e90}
+.controls{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr);gap:14px}
+nav{display:grid;grid-template-columns:repeat(3, minmax(0,1fr));gap:5px}
+.actions{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px}
+button{background:#20383b;color:#f0e9cd;border:1px solid #61796d;border-radius:6px;padding:11px 5px;font-weight:700;touch-action:manipulation;cursor:pointer}
+button:hover,button:focus-visible{background:#426354;outline:2px solid #e8bc75;outline-offset:1px}
+button:active{background:#aa8653}
+button:disabled{opacity:.4}
+small{font-size:11px;color:#aabfb6}
+footer{font-size:12px;color:#aabfb6}
+kbd{background:#243b3d;border:1px solid #5d716c;border-radius:3px;padding:1px 3px}
+@media(max-width:700px){body{padding:7px;gap:7px}.controls{grid-template-columns:1fr}.actions{grid-template-columns:repeat(4,minmax(0,1fr))}button{padding:10px 4px}h1{letter-spacing:1px}}
+</style>
+</head>
+<body>
+<header>
+  <div><h1>HEARTHLINE</h1><small>FIRST EXPEDITION · 2D SURVIVAL PROTOTYPE</small></div>
+  <button id="fullscreen" type="button">Fullscreen</button>
+</header>
+<section id="status" aria-live="polite">Loading the expedition…</section>
+<main id="screen">
+  <canvas id="canvas" width="960" height="640" tabindex="0" aria-label="Hearthline game: use arrow keys or WASD to move, gather materials, restore the beacon, and survive the night."></canvas>
+  <div id="loading" role="status">Preparing the world…</div>
+</main>
+<section class="controls" aria-label="Touch game controls">
+  <nav aria-label="Movement controls">
+    <span></span><button type="button" data-key="119">▲<small> W</small></button><span></span>
+    <button type="button" data-key="97">◀<small> A</small></button>
+    <button type="button" data-key="115">▼<small> S</small></button>
+    <button type="button" data-key="100">▶<small> D</small></button>
+  </nav>
+  <div class="actions" aria-label="Action controls">
+    <button type="button" data-key="103">Gather<small> G</small></button>
+    <button type="button" data-key="98">Bridge<small> B</small></button>
+    <button type="button" data-key="107">Attack<small> K</small></button>
+    <button type="button" data-key="118">Dodge<small> V</small></button>
+    <button type="button" data-key="104">Heal<small> H</small></button>
+    <button type="button" data-key="112">Relay 1<small> P</small></button>
+    <button type="button" data-key="113">Relay 2<small> Q</small></button>
+    <button type="button" data-key="101">Activate<small> E</small></button>
+    <button type="button" data-key="102">Campfire<small> F</small></button>
+    <button type="button" data-key="114">Fuel<small> R</small></button>
+    <button type="button" data-key="49">Wall<small> 1</small></button>
+    <button type="button" data-key="50">Rotate<small> 2</small></button>
+    <button type="button" data-key="27">Pause<small> Esc</small></button>
+    <button type="button" data-key="1073741886">Restart<small> F5</small></button>
+  </div>
+</section>
+<footer>Gather near the starting camp → build a bridge at the river → defeat the guardian → place two relays and activate the beacon → build and fuel your fire until dawn. Keyboard controls work when the game canvas is focused. This is an experimental build.</footer>
+<script>
+const canvas=document.getElementById("canvas");
+const loading=document.getElementById("loading");
+const status=document.getElementById("status");
+let ready=false;
+function fail(message) {
+  loading.classList.remove("hidden");
+  loading.classList.add("error");
+  loading.textContent="Could not start: "+String(message);
+  status.textContent="Startup error. Please use an up-to-date browser with WebAssembly enabled.";
+}
+var Module={
+  canvas,
+  print:(message)=>console.log(message),
+  printErr:(message)=>console.error(message),
+  onGameReady:()=>{
+    ready=true;
+    loading.classList.add("hidden");
+    canvas.focus({preventScroll:true});
+  },
+  onGameStatus:(message)=>{status.textContent=message;},
+  onAbort:fail,
+};
+for(const control of document.querySelectorAll("[data-key]")) {
+  control.addEventListener("click",()=>{
+    if(!ready) return;
+    try{Module.ccall("hearthline_command",null,["number"],[Number(control.dataset.key)]);}
+    catch(error){fail(error);}
+  });
+}
+window.addEventListener("keydown",(event)=>{
+  if(["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"," "].includes(event.key)
+     && (document.activeElement===canvas || document.activeElement===document.body)) event.preventDefault();
+});
+canvas.addEventListener("pointerdown",()=>canvas.focus({preventScroll:true}));
+document.getElementById("fullscreen").addEventListener("click",async()=>{
+  try{
+    if(document.fullscreenElement) await document.exitFullscreen();
+    else await document.getElementById("screen").requestFullscreen();
+  } catch(error){console.error(error);}
+  canvas.focus({preventScroll:true});
+});
+window.addEventListener("error",(e)=>{if(!ready)fail(e.message);});
+</script>
+{{{ SCRIPT }}}
+</body>
+</html>
