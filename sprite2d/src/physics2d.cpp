@@ -1186,7 +1186,9 @@ std::vector<Entity> Physics2D::OverlapCapsule(Vec2 point_a, Vec2 point_b, f32 ra
         if (intersects_box) {
             f64 t_min = 0.0, t_max = 1.0;
             auto clip_axis = [&](f64 start, f64 delta, f64 min_value, f64 max_value) {
-                if (std::fabs(delta) < 1e-9f) return start >= min_value && start <= max_value;
+                // This is an endpoint displacement, not a normalized direction.
+                // A tiny nonzero displacement can still cross a thin slab.
+                if (delta == 0.0) return start >= min_value && start <= max_value;
                 f64 t0 = (min_value - start) / delta, t1 = (max_value - start) / delta;
                 if (t0 > t1) std::swap(t0, t1);
                 t_min = std::max(t_min, t0);

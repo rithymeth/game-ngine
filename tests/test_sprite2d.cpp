@@ -2129,6 +2129,29 @@ AETHER_TEST(Physics2D_LongCapsuleOverlapIsIndependentOfEndpointOrder) {
           physics.OverlapCircle({32791, 0}, 0.25f, 1u));
 }
 
+AETHER_TEST(Physics2D_CapsuleOverlapTestsShortNonzeroAxes) {
+    World world;
+    constexpr f32 step = 1e-10f;
+    const Entity vertical = Box(world, Vec3(0, 0, 0), {0, 1}, BodyType2D::Static, false);
+    const Entity horizontal = Box(world, Vec3(0, 0, 0), {1, 0}, BodyType2D::Static, false);
+    world.GetComponent<Collider2D>(horizontal)->layer = 2;
+    Box(world, Vec3(2 * step, 0, 0), {0, 1}, BodyType2D::Static, false);
+    Physics2D physics(world);
+
+    const Vec2 left{-step, -0.25f}, right{step, 0.25f};
+    const std::vector<Entity> vertical_hit{vertical};
+    CHECK(physics.OverlapCapsule(left, right, 0.0f, 1u) == vertical_hit);
+    CHECK(physics.OverlapCapsule(right, left, 0.0f, 1u) == vertical_hit);
+    CHECK(physics.OverlapCapsule(left, right, step * 0.1f, 1u) == vertical_hit);
+    CHECK(physics.OverlapCapsule({step, -0.25f}, {step, 0.25f}, 0.0f, 1u).empty());
+
+    const Vec2 below{-0.25f, -step}, above{0.25f, step};
+    const std::vector<Entity> horizontal_hit{horizontal};
+    CHECK(physics.OverlapCapsule(below, above, 0.0f, 2u) == horizontal_hit);
+    CHECK(physics.OverlapCapsule(above, below, 0.0f, 2u) == horizontal_hit);
+    CHECK(physics.OverlapCapsule({0.25f, 0}, {0.25f, 0}, 0.0f, 2u) == horizontal_hit);
+}
+
 AETHER_TEST(Physics2D_CastsHitClosedTileEdges) {
     World world;
     Tileset tiles;
