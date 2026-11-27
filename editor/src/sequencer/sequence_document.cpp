@@ -20,6 +20,18 @@ i32 IndexOfTime(const std::vector<K>& keys, f32 time) {
     return -1;
 }
 
+template <typename K>
+i32 SortedIndexOfKey(const std::vector<K>& keys, usize index) {
+    // Track::Normalize uses a stable sort. Equal-time keys retain their order,
+    // and nearby keys are distinct even when a lane permits a shared time.
+    const f32 time = keys[index].time;
+    i32 sorted = 0;
+    for (usize i = 0; i < keys.size(); ++i) {
+        if (keys[i].time < time || (keys[i].time == time && i < index)) ++sorted;
+    }
+    return sorted;
+}
+
 } // namespace
 
 SequenceDocument::SequenceDocument(LevelSequence sequence) : sequence_(std::move(sequence)) {}
@@ -176,17 +188,13 @@ i32 SequenceDocument::AddRotationKey(usize track, f32 time, const Quaternion& va
 }
 
 i32 SequenceDocument::AddEvent(usize track, f32 time, const std::string& name, const std::string& payload) {
-    if (!Editable(track) || sequence_.tracks[track].type != TrackType::Event || time < 0.0f) return -1;
+    if (!Editable(track) || sequence_.tracks[track].type != TrackType::Event || !std::isfinite(time) || time < 0.0f) return -1;
     Record();
     Track& t = sequence_.tracks[track];
     t.events.push_back(EventKey{time, name, payload});
+    const i32 inserted = SortedIndexOfKey(t.events, t.events.size() - 1);
     Commit(track);
-    // Events may share a time; the new one is the last at its time.
-    i32 found = -1;
-    for (usize i = 0; i < t.events.size(); ++i) {
-        if (std::fabs(t.events[i].time - time) <= kSameTime && t.events[i].name == name) found = static_cast<i32>(i);
-    }
-    return found;
+    return inserted;
 }
 
 bool SequenceDocument::SetEvent(const KeyRef& key, const std::string& name, const std::string& payload) {
@@ -232,7 +240,7 @@ usize SequenceDocument::KeyCount(usize track, KeyRef::Lane lane, usize channel) 
 }
 
 i32 SequenceDocument::MoveKey(const KeyRef& key, f32 time) {
-    if (!Editable(key.track) || time < 0.0f || key.index >= KeyCount(key.track, key.lane, key.channel)) return -1;
+    if (!Editable(key.track) || !std::isfinite(time) || time < 0.0f || key.index >= KeyCount(key.track, key.lane, key.channel)) return -1;
     Track& t = sequence_.tracks[key.track];
     // Value, rotation and cut keys can't share a time with another key of their list.
     const auto clash = [&](const auto& keys) {
@@ -245,12 +253,9 @@ i32 SequenceDocument::MoveKey(const KeyRef& key, f32 time) {
         if (!allow_shared && clash(keys)) return -1;
         Record();
         keys[key.index].time = time;
+        const i32 moved = SortedIndexOfKey(keys, key.index);
         Commit(key.track);
-        // Find it again after sorting: the key now at that time with the same identity.
-        for (usize i = 0; i < keys.size(); ++i) {
-            if (std::fabs(keys[i].time - time) <= kSameTime) return static_cast<i32>(i);
-        }
-        return -1;
+        return moved;
     };
     switch (key.lane) {
     case KeyRef::Lane::Channel: return move(t.channels[key.channel].keys, false);

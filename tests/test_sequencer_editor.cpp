@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <limits>
 
 // The sequencer editor (Phase 27 step 5, §27.6): the document's edits, undo
 // and diagnostics, and the panel previewing on a world.
@@ -122,6 +123,49 @@ AETHER_TEST(SequenceEditor_KeysStaySortedAndEditable) {
     CHECK(doc.SetEvent(KeyRef{e, KeyRef::Lane::Event, 0, 1}, "C", "p") && doc.Sequence().tracks[e].events[1].name == "C");
     CHECK(doc.AddEvent(t, 1.0f, "no") == -1); // not an Event track
     CHECK(doc.KeyCount(t, KeyRef::Lane::Rotation) == 2 && Near(doc.KeyTime(KeyRef{e, KeyRef::Lane::Event, 0, 0}), 1.0f));
+}
+
+AETHER_TEST(SequenceEditor_AddEventReturnsTheInsertedKey) {
+    SequenceDocument doc;
+    const usize t = doc.AddTrack(TrackType::Event, "Markers");
+    CHECK(doc.AddEvent(t, 1.0005f, "Cue", "nearby") == 0);
+    CHECK(doc.AddEvent(t, 1.0f, "Cue", "first") == 0);
+    CHECK(doc.AddEvent(t, 1.0f, "Cue", "second") == 1);
+    const auto& events = doc.Sequence().tracks[t].events;
+    CHECK(events.size() == 3 && events[0].payload == "first" &&
+          events[1].payload == "second" && events[2].payload == "nearby");
+}
+
+AETHER_TEST(SequenceEditor_MoveEventKeepsTheDraggedKeySelected) {
+    SequenceDocument doc;
+    const usize t = doc.AddTrack(TrackType::Event, "Markers");
+    doc.AddEvent(t, 0.9995f, "Cue", "nearby");
+    doc.AddEvent(t, 1.0f, "Cue", "existing");
+    doc.AddEvent(t, 2.0f, "Cue", "dragged");
+    doc.BeginEdit();
+    const i32 moved = doc.MoveKey(KeyRef{t, KeyRef::Lane::Event, 0, 2}, 1.0f);
+    CHECK(moved == 2);
+    if (moved >= 0) {
+        CHECK(doc.MoveKey(KeyRef{t, KeyRef::Lane::Event, 0, static_cast<usize>(moved)}, 0.5f) == 0);
+    }
+    doc.EndEdit();
+    const auto& events = doc.Sequence().tracks[t].events;
+    CHECK(events.size() == 3 && events[0].payload == "dragged" &&
+          events[1].payload == "nearby" && events[2].payload == "existing");
+    CHECK(doc.Undo() && Near(doc.KeyTime(KeyRef{t, KeyRef::Lane::Event, 0, 2}), 2.0f));
+}
+
+AETHER_TEST(SequenceEditor_EventEditsRejectNonFiniteTimes) {
+    SequenceDocument doc;
+    const usize t = doc.AddTrack(TrackType::Event, "Markers");
+    CHECK(doc.AddEvent(t, 1.0f, "Cue") == 0);
+    const u64 revision = doc.Revision();
+    const KeyRef key{t, KeyRef::Lane::Event, 0, 0};
+    for (f32 time : {std::numeric_limits<f32>::infinity(), std::numeric_limits<f32>::quiet_NaN()}) {
+        CHECK(doc.AddEvent(t, time, "Invalid") == -1);
+        CHECK(doc.MoveKey(key, time) == -1);
+    }
+    CHECK(doc.Revision() == revision && doc.KeyCount(t, key.lane) == 1 && doc.KeyTime(key) == 1.0f);
 }
 
 AETHER_TEST(SequenceEditor_ADragIsOneUndoStep) {
