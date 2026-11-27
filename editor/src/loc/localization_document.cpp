@@ -142,10 +142,16 @@ bool LocalizationDocument::ImportPo(const std::string& language, const std::stri
     const bool ok = loc::ImportPo(incoming, target, po_text, &errors);
     for (std::string& e : errors) errors_.push_back("po: " + e);
     if (!ok) return false;
+    bool changed = false;
     for (const std::string& key : incoming.Keys()) {
-        if (const std::string* text = incoming.Find(target, key)) table_.Set(target, key, *text);
+        if (const std::string* text = incoming.Find(target, key)) {
+            const std::string* current = table_.Find(target, key);
+            if (current != nullptr && *current == *text) continue;
+            table_.Set(target, key, *text);
+            changed = true;
+        }
     }
-    Touch();
+    if (changed) Touch();
     return true;
 }
 

@@ -186,6 +186,22 @@ AETHER_TEST(LocEditor_MalformedPoDoesNotApplyEarlierEntries) {
     CHECK(imported != nullptr && *imported == "Beenden");
 }
 
+AETHER_TEST(LocEditor_PoImportOnlyDirtiesTheTableWhenTranslationsChange) {
+    LocalizationDocument doc;
+    CHECK(doc.Open(MakeTable(Dir("unchanged_po"))));
+    CHECK(doc.SetCell("de", "quit", "Beenden") && doc.Save());
+    const u64 saved_revision = doc.Revision();
+    const std::string same = "msgctxt \"quit\"\nmsgid \"Quit\"\nmsgstr \"Beenden\"\n";
+    const std::string draft = "#, fuzzy\nmsgctxt \"quit\"\nmsgid \"Quit\"\nmsgstr \"Entwurf\"\n";
+    CHECK(doc.ImportPo("de", same) && !doc.Dirty() && doc.Revision() == saved_revision);
+    CHECK(doc.ImportPo("de", draft) && !doc.Dirty() && doc.Revision() == saved_revision);
+    CHECK(!doc.Errors().empty() && doc.Errors().back().find("fuzzy") != std::string::npos);
+    const std::string changed = "msgctxt \"quit\"\nmsgid \"Quit\"\nmsgstr \"Schließen\"\n";
+    CHECK(doc.ImportPo("de", changed) && doc.Dirty() && doc.Revision() != saved_revision);
+    const u64 dirty_revision = doc.Revision();
+    CHECK(doc.ImportPo("de", changed) && doc.Dirty() && doc.Revision() == dirty_revision);
+}
+
 AETHER_TEST(LocEditor_PoRoundTripAndGather) {
     const stdfs::path root = Dir("po_gather");
     const stdfs::path file = MakeTable(root);
