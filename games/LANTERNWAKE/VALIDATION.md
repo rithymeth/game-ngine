@@ -8,7 +8,9 @@ Validated on 2026-11-27 against Aether base commit
 | Check | Result |
 |---|---|
 | Standalone native Release build, Linux x86-64 | Passed |
+| Full Aether integration build and packaged native startup/render | Passed |
 | Native game CTest | 1/1 CTest entry; all 14 gameplay cases passed |
+| Complete registered headless Linux CTest suite | 55/55 checks passed in 73.94 seconds |
 | Same gameplay cases compiled to WebAssembly and executed in Node | 14/14 passed |
 | Complete journey through ordinary movement and ability inputs | Won in 1,328 simulation frames (22.13 seconds), four health remaining, one hit |
 | Native application autoplay, 1,800 frames | Won; 12 embers, three restored shrines, two hits, score 4,597 |
@@ -30,9 +32,16 @@ damage, defeat, pause, restart, terminal-state freezing and deterministic replay
 
 ## Engine integration gate
 
-The repository CTest gate is being run in a Release build with assertions,
-portable editor UI and Luau scripting enabled. The final outcome is recorded
-before publication.
+The complete registered CTest suite for this headless Linux configuration
+passed: **55/55 checks, zero failures**, in 73.94 seconds. This includes the
+main engine test suite (2,126/2,126 cases), governance checks, packaged headless templates,
+functional checks, fuzz replays and Lanternwake's integrated gameplay test.
+The integrated Lanternwake executable also started and rendered a title frame
+successfully from its copied assets.
+
+The build uses Release optimization with assertions, portable editor UI and
+Luau scripting enabled. This validates the registered headless configuration;
+it does not claim GPU, physics or desktop-editor coverage.
 
 The integration configuration includes the actual Aether Engine, UI and Audio
 libraries, the portable editor tests and scripting. Optional Vulkan/windowing,
@@ -50,6 +59,12 @@ cmake -S . -B build-validation -G Ninja \
 cmake --build build-validation --parallel 8
 ctest --test-dir build-validation --output-on-failure --parallel 4
 ```
+
+An initial minimal configuration could not compile existing portable-editor
+tests with editor UI disabled, or existing `ScriptComponent` test bodies with
+scripting disabled. Enabling the normal editor UI and scripting modules
+resolved those configuration prerequisites without changing or suppressing
+the existing tests.
 
 ## Reproduce the game checks
 

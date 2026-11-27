@@ -15,7 +15,7 @@ particle trails, a restrained HUD, legible real fonts, an ambient score and
 event sounds. Title, pause, defeat, victory and replay are part of the game.
 The generated art's source and license/provenance notes travel with the assets.
 
-## Implementation plan
+## Completed implementation
 
 - [x] Simulation: fixed 60 Hz C++ `Game`, actual `aether::World` components,
   normalized movement, collision damage, dash, pulse, shrine offering,
@@ -25,9 +25,14 @@ The generated art's source and license/provenance notes travel with the assets.
 - [x] Platform: SDL2 window/input/audio adapter, a display-free screenshot
   path, native build, and the same C++ code compiled to WebAssembly if the
   toolchain is available. SDL is the host platform layer.
-- [ ] Delivery: reproducible scripts, asset manifest, test/build evidence,
+- [x] Delivery: reproducible scripts, asset manifest, test/build evidence,
   playable package and reviewable Git branch. Run the repository CTest gate
   if the complete dependency build is available and disclose its outcome.
+
+The native and single-file browser builds are delivered. All 14 gameplay
+cases pass natively and on wasm32. The complete registered headless Linux
+CTest suite passes 55/55 checks. See [VALIDATION.md](VALIDATION.md) for exact
+configuration, reproduction commands and the browser/platform testing limits.
 
 ## Controls and acceptance
 
