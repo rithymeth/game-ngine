@@ -564,6 +564,36 @@ AETHER_TEST(Sprite2D_TilemapSaveRejectsInvalidShapeWithoutReplacingFile) {
     refuse(invalid, "too large");
 }
 
+AETHER_TEST(Sprite2D_TileSavesReportInvalidNamesWithoutOverwritingFiles) {
+    const auto dir = std::filesystem::temp_directory_path() / "aether_sprite2d";
+    const auto map_file = dir / "encoding.atilemap";
+    const auto set_file = dir / "encoding.atileset";
+    const std::string valid_name = "\xE1\x9E\x91"; // A valid UTF-8 Khmer letter.
+    const std::string invalid_name = std::string("invalid: ") + static_cast<char>(0xff);
+    TilemapData map;
+    map.Resize(2, 2);
+    map.AddLayer("Ground");
+    map.AddLayer(valid_name);
+    Tileset tiles;
+    tiles.AddAutotile(valid_name, Autotile{}.tiles);
+    std::string error;
+    if (!SaveTilemap(map_file, map, &error) || !SaveTileset(set_file, tiles, &error)) { CHECK(false); return; }
+    const auto bytes = [](const std::filesystem::path& file) {
+        std::ifstream stream(file, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>());
+    };
+    const auto old_map = bytes(map_file), old_set = bytes(set_file);
+    CHECK(old_map.find(valid_name) != std::string::npos && old_set.find(valid_name) != std::string::npos);
+    map.layers[1].name = invalid_name;
+    tiles.autotiles[0].name = invalid_name;
+    CHECK(!SaveTilemap(map_file, map, &error));
+    CHECK(error.find("layer 2") != std::string::npos && error.find("UTF-8") != std::string::npos);
+    error.clear();
+    CHECK(!SaveTileset(set_file, tiles, &error));
+    CHECK(error.find("tileset") != std::string::npos && error.find("UTF-8") != std::string::npos);
+    CHECK(bytes(map_file) == old_map && bytes(set_file) == old_set);
+}
+
 AETHER_TEST(Sprite2D_TilemapFileLoadPreservesLegacyJson) {
     const auto dir = std::filesystem::temp_directory_path() / "aether_sprite2d";
     std::filesystem::create_directories(dir);

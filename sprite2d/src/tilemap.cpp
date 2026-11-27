@@ -117,10 +117,6 @@ bool WriteJsonText(const std::filesystem::path& file, const std::string& text, s
     return true;
 }
 
-bool WriteJsonFile(const std::filesystem::path& file, const nlohmann::json& data, std::string* error) {
-    return WriteJsonText(file, data.dump(2), error);
-}
-
 } // namespace
 
 nlohmann::json TilesetToJson(const Tileset& t) {
@@ -198,7 +194,12 @@ bool LoadTileset(const std::filesystem::path& file, Tileset& out, std::string* e
     return ReadJsonFile(file, data, error) && TilesetFromJson(data, out, error);
 }
 bool SaveTileset(const std::filesystem::path& file, const Tileset& t, std::string* error) {
-    return WriteJsonFile(file, TilesetToJson(t), error);
+    try {
+        return WriteJsonText(file, TilesetToJson(t).dump(2), error);
+    } catch (const nlohmann::json::type_error&) {
+        if (error) *error = "Couldn't write " + file.string() + ": tileset text is not valid UTF-8";
+        return false;
+    }
 }
 
 void TilemapData::Resize(u32 new_width, u32 new_height) {
@@ -406,6 +407,18 @@ bool SaveTilemap(const std::filesystem::path& file, const TilemapData& m, std::s
             return false;
         }
     }
+    // Quote names first so bad text fails before building a large cell payload.
+    std::vector<std::string> names;
+    names.reserve(m.layers.size());
+    for (usize i = 0; i < m.layers.size(); ++i) {
+        try {
+            names.push_back(nlohmann::json(m.layers[i].name).dump());
+        } catch (const nlohmann::json::type_error&) {
+            if (error) *error = "Couldn't write " + file.string() + ": the name of layer " +
+                                std::to_string(i + 1) + " is not valid UTF-8";
+            return false;
+        }
+    }
     // The cells dominate large maps. Emit them directly instead of constructing
     // a boxed JSON value per tile before the atomic write. Keep the v1 schema
     // and JSON string escaping, with short lines for source-control diffs.
@@ -415,12 +428,11 @@ bool SaveTilemap(const std::filesystem::path& file, const TilemapData& m, std::s
     text += nlohmann::json(assets::ToString(m.tileset)).dump();
     text += ",\n  \"size\": [" + std::to_string(m.width) + ", " + std::to_string(m.height) + "],\n  \"layers\": [";
     constexpr usize cells_per_line = 32;
-    bool first_layer = true;
-    for (const TileLayer& layer : m.layers) {
-        if (!first_layer) text += ',';
-        first_layer = false;
+    for (usize index = 0; index < m.layers.size(); ++index) {
+        const TileLayer& layer = m.layers[index];
+        if (index != 0) text += ',';
         text += "\n    {\n      \"name\": ";
-        text += nlohmann::json(layer.name).dump();
+        text += names[index];
         text += layer.collides ? ",\n      \"collides\": true" : ",\n      \"collides\": false";
         text += ",\n      \"cells\": [";
         for (usize i = 0; i < layer.cells.size(); ++i) {
