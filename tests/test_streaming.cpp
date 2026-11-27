@@ -322,6 +322,50 @@ AETHER_TEST(Streaming_AsyncReadsApplyOnUpdate) {
     CHECK(streamer.InFlight() == 0);
 }
 
+AETHER_TEST(Streaming_ParentedSourceUsesHierarchyBeforeFloatingOrigin) {
+    RegisterStreamingComponents();
+    World source;
+    for (const f32 x : {10.0f, 140.0f, 270.0f}) {
+        source.CreateEntity(IdComponent{NewEntityGuid()}, At(x, 32));
+    }
+    PartitionSettings settings;
+    settings.cell_size = 64.0f;
+    const PartitionResult partition = PartitionWorld(source, settings);
+    CHECK(partition.cells.size() == 3);
+
+    const auto run = [&](bool async, f64 offset, bool indexed, CellCoord expected) {
+        World game;
+        const EntityGuid rig_id = NewEntityGuid();
+        game.CreateEntity(IdComponent{rig_id}, At(130, 0));
+        game.CreateEntity(At(4, 32), Parent{rig_id}, StreamingSource{0.0f, true});
+        GuidIndex guids;
+        guids.Rebuild(game);
+        std::vector<CellCoord> requested;
+        WorldStreamer streamer(game, partition.index, [&](const CellCoord& cell, std::vector<u8>& bytes) {
+            requested.push_back(cell);
+            const auto found = partition.cells.find(cell);
+            if (found == partition.cells.end()) return false;
+            bytes = found->second;
+            return true;
+        }, indexed ? &guids : nullptr);
+        streamer.SetOriginOffset({offset, 0, 0});
+        ManualExecutor exec;
+        if (async) streamer.SetExecutor(exec.Get());
+        streamer.Update();
+        if (async) {
+            CHECK(streamer.LoadedCells().empty() && exec.tasks.size() == 1);
+            exec.RunAll();
+            streamer.Update();
+        }
+        CHECK(requested == std::vector<CellCoord>{expected});
+        CHECK(streamer.LoadedCells() == std::vector<CellCoord>{expected});
+    };
+
+    run(false, 0, true, {2, 0});  // 130 + 4 = 134
+    run(true, 128, true, {4, 0}); // 128 + 130 + 4 = 262
+    run(false, 128, false, {2, 0}); // no GUID index: legacy local position plus offset
+}
+
 AETHER_TEST(Streaming_AsyncDropsCellsNoLongerWanted) {
     Level level;
     PartitionSettings s;

@@ -154,7 +154,13 @@ void WorldStreamer::Update() {
             for (usize i = 0; i < archetype.ChunkEntityCount(c); ++i) {
                 const StreamingSource* s = world_.GetComponent<StreamingSource>(es[i]);
                 const Transform* t = world_.GetComponent<Transform>(es[i]);
-                if (s != nullptr && t != nullptr && s->enabled) sources.push_back({t->position, s->radius});
+                if (s == nullptr || t == nullptr || !s->enabled) continue;
+                // A camera on a rig stores its transform relative to its
+                // parent. Resolve that hierarchy before the spatial query
+                // adds the floating origin's world offset.
+                const Vec3 position = guids_ != nullptr && world_.HasComponent<Parent>(es[i])
+                    ? aether::WorldPosition(world_, *guids_, es[i]) : t->position;
+                sources.push_back({position, s->radius});
             }
         }
     });
