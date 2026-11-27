@@ -600,13 +600,18 @@ AETHER_TEST(Openers_TilemapsAndTilesetsOpenTheirEditor) {
     tileset.texture_height = 64;
     tileset.tile_width = tileset.tile_height = 16;
     CHECK(sprite2d::SaveTileset(paths.content / "Tilesets/Ground.atileset", tileset, &error));
-    assets::AssetGuid ground;
+    const auto invalid_tileset_file = paths.content / "Tilesets/Invalid.atileset";
+    CHECK(sprite2d::SaveTileset(invalid_tileset_file, tileset, &error));
+    assets::AssetGuid ground, invalid;
     {
         assets::AssetDatabase scan(paths.content);
         scan.Scan();
         const assets::AssetRecord* record = scan.FindByPath("Tilesets/Ground.atileset");
         CHECK(record != nullptr);
         if (record != nullptr) ground = record->guid;
+        const auto* invalid_record = scan.FindByPath("Tilesets/Invalid.atileset");
+        if (!invalid_record) { CHECK(false); return; }
+        invalid = invalid_record->guid;
     }
     sprite2d::TilemapData map;
     map.tileset = ground;
@@ -621,7 +626,10 @@ AETHER_TEST(Openers_TilemapsAndTilesetsOpenTheirEditor) {
     broken.Resize(2, 2);
     broken.AddLayer("L");
     CHECK(sprite2d::SaveTilemap(paths.content / "Maps/Broken.atilemap", broken, &error));
+    broken.tileset = invalid;
+    CHECK(sprite2d::SaveTilemap(paths.content / "Maps/InvalidTileset.atilemap", broken, &error));
     EditorWorkspace ws(paths.file);
+    Write(invalid_tileset_file, "{invalid json");
 
     // The practice map has no backing asset. An invalid open leaves its edits
     // intact, but experimenting here must not block opening a real project map.
@@ -647,6 +655,15 @@ AETHER_TEST(Openers_TilemapsAndTilesetsOpenTheirEditor) {
     CHECK(ws.Tilemap().GetTileset().tile_width == 16);
     CHECK(!ws.Tilemap().dirty());
     CHECK(ws.Tilemap().TilemapFile().filename() == "Level_02.atilemap");
+
+    // A registered tileset that cannot be parsed must not replace the current map.
+    const auto revision = ws.Tilemap().Revision();
+    CHECK(!ws.OpenAsset("Maps/InvalidTileset.atilemap", &error));
+    CHECK(error.find("Invalid.atileset") != std::string::npos && error.find("valid JSON") != std::string::npos);
+    CHECK(ws.Tilemap().Revision() == revision && !ws.Tilemap().dirty());
+    CHECK(ws.Tilemap().TilemapFile().filename() == "Level_02.atilemap" &&
+          ws.Tilemap().TilesetFile().filename() == "Ground.atileset");
+    CHECK(ws.Tilemap().Map().Get(0, 1, 2) == 7 && ws.Tilemap().GetTileset().tile_width == 16);
 
     // A tileset opens the map that uses it; one no map uses says so.
     CHECK(ws.OpenAsset("Tilesets/Ground.atileset", &error));

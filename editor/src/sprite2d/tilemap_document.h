@@ -73,6 +73,9 @@ public:
     // unchanged and `error` says why. A tileset is edited with the map that uses it, so both are loaded together.
     bool Load(const std::filesystem::path& tilemap_file, const std::filesystem::path& tileset_file,
               std::string* error = nullptr);
+    // Reuse a decoded snapshot when the caller already read its tileset reference.
+    bool LoadDecodedMap(sprite2d::TilemapData map, const std::filesystem::path& tilemap_file,
+                        const std::filesystem::path& tileset_file, std::string* error = nullptr);
     // Writes back to the files it was opened from or last saved to; false (with the reason) for a sample that has
     // never been saved.
     bool Save(std::string* error = nullptr);

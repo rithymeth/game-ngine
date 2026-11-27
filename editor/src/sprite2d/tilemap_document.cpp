@@ -565,11 +565,17 @@ bool TilemapEditDocument::Save(const std::filesystem::path& tilemap_file, const 
 bool TilemapEditDocument::Load(const std::filesystem::path& tilemap_file, const std::filesystem::path& tileset_file,
                                std::string* error) {
     TilemapData map;
+    if (!LoadTilemap(tilemap_file, map, error)) return false;
+    return LoadDecodedMap(std::move(map), tilemap_file, tileset_file, error);
+}
+
+bool TilemapEditDocument::LoadDecodedMap(TilemapData map, const std::filesystem::path& tilemap_file,
+                                         const std::filesystem::path& tileset_file, std::string* error) {
     Tileset tileset;
-    if (!LoadTilemap(tilemap_file, map, error) || !LoadTileset(tileset_file, tileset, error)) return false;
+    if (!LoadTileset(tileset_file, tileset, error)) return false;
+    if (map.layers.empty()) map.AddLayer("Layer 1");
     map_ = std::move(map);
     tileset_ = std::move(tileset);
-    if (map_.layers.empty()) map_.AddLayer("Layer 1");
     tilemap_file_ = tilemap_file;
     tileset_file_ = tileset_file;
     undo_.clear();
