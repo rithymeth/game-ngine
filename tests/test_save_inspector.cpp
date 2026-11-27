@@ -262,6 +262,38 @@ AETHER_TEST(SaveInspector_PanelListsAndDraws) {
     CHECK(stdfs::exists(dir / "slot9.asav"));
 }
 
+AETHER_TEST(SaveInspector_RescuesAnOrphanedBackupThroughCopyAs) {
+    const auto dir = Dir("panel_orphan_backup");
+    const auto paired = MakeBagSave(dir);
+    auto paired_backup = paired;
+    paired_backup += ".bak";
+    const auto orphan = dir / "orphan.asav.bak";
+    CHECK(stdfs::copy_file(paired_backup, orphan));
+    const auto original = Slurp(orphan);
+    CHECK(!original.empty());
+    Spit(dir / "notes.bak", "not a save");
+
+    SaveInspectorDocument doc;
+    SaveInspectorPanel panel(doc);
+    panel.SetDirectory(dir);
+    const auto& entries = panel.Entries();
+    CHECK(entries.size() == 2);
+    if (entries.size() == 2) {
+        CHECK(entries[0].file == "orphan.asav.bak" && entries[0].valid && entries[0].checksum_ok);
+        CHECK(entries[1].file == "slot1.asav" && entries[1].valid && entries[1].checksum_ok);
+    }
+    CHECK(doc.Open(orphan));
+    CHECK(!panel.CopyOpen("orphan")); // don't reuse a name the backup already owns
+    CHECK(panel.CopyOpen("recovered"));
+    CHECK(!stdfs::exists(dir / "recovered.bak") && !stdfs::exists(dir / "orphan.asav"));
+    CHECK(Slurp(dir / "recovered.asav") == original && Slurp(orphan) == original);
+    SaveSystem saves(dir);
+    SaveBag loaded;
+    CHECK(saves.Load("recovered", loaded).ok && loaded.GetInt("coins") == 42);
+    CHECK(!panel.DeleteOpen()); // never delete the only copy from this view
+    CHECK(doc.IsOpen() && doc.File() == orphan && Slurp(orphan) == original);
+}
+
 AETHER_TEST(SaveInspector_PanelDeleteRescans) {
     const stdfs::path dir = Dir("panel_delete");
     const stdfs::path file = MakeBagSave(dir);

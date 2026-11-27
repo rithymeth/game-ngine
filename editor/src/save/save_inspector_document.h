@@ -41,6 +41,7 @@ public:
     u64 Revision() const { return revision_; }
 
     const save::envelope::EnvelopeInfo& Info() const { return info_; }
+    bool IsBackupFile() const;
     bool HasBackup() const;
     // Everything wrong or worth knowing: a bad checksum, a type this build
     // doesn't have, a newer version than the code's, what loading would skip.
@@ -53,10 +54,11 @@ public:
     void* Instance() const { return instance_; }
 
     // Deletes the file and its backup and closes the document. False if it
-    // couldn't (or nothing is open).
+    // couldn't, nothing is open, or the open file is itself a backup.
     bool DeleteFile();
     // Copies the file (and its backup) beside it as `<name>` plus the same
-    // extension. `name` must be a valid slot name and not already taken.
+    // extension. An open backup can be copied to a new primary without
+    // altering the original. `name` must be a valid unused slot name.
     bool CopyTo(const std::string& name, std::string* error = nullptr);
 
 private:

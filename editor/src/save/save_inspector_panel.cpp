@@ -85,9 +85,14 @@ void SaveInspectorPanel::SetDirectory(const stdfs::path& directory) {
 void SaveInspectorPanel::Refresh() {
     entries_.clear();
     if (directory_.empty()) return;
-    for (const std::string& name : fs::ListDirectory(directory_.string())) {
+    const auto names = fs::ListDirectory(directory_.string());
+    for (const std::string& name : names) {
         const stdfs::path p(name);
-        if (p.extension() != ".asav" && p.extension() != ".asettings") continue;
+        const bool backup = p.extension() == ".bak";
+        const auto primary = backup ? p.stem() : p;
+        if (primary.extension() != ".asav" && primary.extension() != ".asettings") continue;
+        // A named backup is the only file to inspect when its primary is absent.
+        if (backup && std::binary_search(names.begin(), names.end(), primary.string())) continue;
         Entry e;
         e.file = name;
         const save::envelope::EnvelopeInfo info = save::envelope::Inspect(directory_ / name);
@@ -125,7 +130,9 @@ void SaveInspectorPanel::Draw() {
         Refresh();
     }
     ImGui::SameLine();
+    ImGui::BeginDisabled(doc_.IsBackupFile());
     if (ImGui::Button("Delete...")) confirm_delete_ = true;
+    ImGui::EndDisabled();
     ImGui::SameLine();
     if (ImGui::Button("Copy as...")) open_copy_ = true;
     ImGui::EndDisabled();
@@ -179,7 +186,9 @@ void SaveInspectorPanel::DrawList() {
     for (const Entry& e : entries_) {
         const stdfs::path path = directory_ / e.file;
         const bool open = doc_.IsOpen() && doc_.File() == path;
-        std::string label = e.file + (e.valid ? "" : "  (unreadable)") + (e.valid && !e.checksum_ok ? "  (bad checksum)" : "");
+        const bool backup = e.file.ends_with(".bak");
+        std::string label = e.file + (backup ? "  (backup only)" : "") +
+                            (e.valid ? "" : "  (unreadable)") + (e.valid && !e.checksum_ok ? "  (bad checksum)" : "");
         if (!e.valid || !e.checksum_ok) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.5f, 0.4f, 1.0f));
         if (ImGui::Selectable(label.c_str(), open)) doc_.Open(path);
         if (!e.valid || !e.checksum_ok) ImGui::PopStyleColor();
@@ -197,8 +206,11 @@ void SaveInspectorPanel::DrawHeader() {
     if (info.ok) {
         ImGui::Text("%s  |  %s v%u  |  %s  |  %s", info.kind.c_str(), info.type.c_str(), info.type_version, FormatTime(info.timestamp).c_str(),
                     FormatSize(info.bytes).c_str());
-        ImGui::Text("Checksum %s  |  backup %s", info.checksum_ok ? "OK" : "BAD", doc_.HasBackup() ? "present" : "none");
+        ImGui::Text("Checksum %s  |  %s", info.checksum_ok ? "OK" : "BAD",
+                    doc_.IsBackupFile() ? "backup copy" : doc_.HasBackup() ? "backup present" : "no backup");
     }
+    if (doc_.IsBackupFile())
+        ImGui::TextWrapped("Use Copy as... to recover this backup into a new file without changing the original.");
     for (const std::string& p : doc_.Problems()) ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f), "! %s", p.c_str());
     ImGui::Separator();
 }

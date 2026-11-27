@@ -27,8 +27,14 @@ void SaveInspectorDocument::Close() {
     ++revision_;
 }
 
+bool SaveInspectorDocument::IsBackupFile() const {
+    if (file_.extension() != ".bak") return false;
+    const auto extension = file_.stem().extension();
+    return extension == ".asav" || extension == ".asettings";
+}
+
 bool SaveInspectorDocument::HasBackup() const {
-    if (file_.empty()) return false;
+    if (file_.empty() || IsBackupFile()) return false;
     stdfs::path backup = file_;
     backup += ".bak";
     std::error_code ec;
@@ -79,7 +85,7 @@ bool SaveInspectorDocument::OpenSlot(const save::SaveSystem& saves, const std::s
 }
 
 bool SaveInspectorDocument::DeleteFile() {
-    if (file_.empty()) return false;
+    if (file_.empty() || IsBackupFile()) return false;
     std::error_code ec;
     stdfs::path backup = file_;
     backup += ".bak";
@@ -105,7 +111,9 @@ bool SaveInspectorDocument::CopyTo(const std::string& name, std::string* error) 
     };
     if (file_.empty()) return fail("nothing is open");
     if (!save::SaveSystem::ValidSlotName(name)) return fail("'" + name + "' isn't a valid name (1-64 of A-Z a-z 0-9 _ -)");
-    const stdfs::path target = file_.parent_path() / (name + file_.extension().string());
+    const bool source_is_backup = IsBackupFile();
+    const auto extension = source_is_backup ? file_.stem().extension() : file_.extension();
+    const stdfs::path target = file_.parent_path() / (name + extension.string());
     stdfs::path target_backup = target;
     target_backup += ".bak";
     std::error_code ec;
@@ -117,8 +125,12 @@ bool SaveInspectorDocument::CopyTo(const std::string& name, std::string* error) 
     }
     stdfs::path backup = file_;
     backup += ".bak";
-    const auto backup_status = stdfs::symlink_status(backup, ec);
-    if (ec && ec != std::errc::no_such_file_or_directory) return fail("couldn't check source backup: " + ec.message());
+    stdfs::file_status backup_status(stdfs::file_type::not_found);
+    if (!source_is_backup) {
+        backup_status = stdfs::symlink_status(backup, ec);
+        if (ec && ec != std::errc::no_such_file_or_directory)
+            return fail("couldn't check source backup: " + ec.message());
+    }
     if (!stdfs::copy_file(file_, target, ec)) return fail("couldn't copy: " + ec.message());
     if (stdfs::exists(backup_status) && !stdfs::copy_file(backup, target_backup, ec)) {
         const std::string why = "couldn't copy backup: " + ec.message();
