@@ -167,13 +167,18 @@ bool Occluded(const std::vector<Segment2D>& occluders, Vec2 from, Vec2 to) {
     return false;
 }
 
-LightColor LightAt(const World& world, const std::vector<Segment2D>& occluders, Vec2 point) {
+namespace {
+struct LightSource {
+    const Light2D* light;
+    const Transform* transform;
+};
+
+template <typename Visit>
+LightColor EvaluateLights(const std::vector<Segment2D>& occluders, Vec2 point, Visit&& visit) {
     f64 red = 0.0, green = 0.0, blue = 0.0;
     if (!std::isfinite(point.x) || !std::isfinite(point.y)) return {};
-    EachEntity(world, [&](Entity e) {
-        const Light2D* light = world.GetComponent<Light2D>(e);
-        const Transform* t = world.GetComponent<Transform>(e);
-        if (!light || !t || !light->enabled || !std::isfinite(light->intensity) || light->intensity < 0.0f ||
+    visit([&](const Light2D* light, const Transform* t) {
+        if (!light->enabled || !std::isfinite(light->intensity) || light->intensity < 0.0f ||
             !std::isfinite(light->color.r) || !std::isfinite(light->color.g) || !std::isfinite(light->color.b)) return;
         f32 amount = light->intensity;
         if (light->type != Light2DType::Global) {
@@ -208,6 +213,18 @@ LightColor LightAt(const World& world, const std::vector<Segment2D>& occluders, 
     const f64 limit = std::numeric_limits<f32>::max();
     return {static_cast<f32>(std::clamp(red, -limit, limit)), static_cast<f32>(std::clamp(green, -limit, limit)),
             static_cast<f32>(std::clamp(blue, -limit, limit))};
+}
+
+} // namespace
+
+LightColor LightAt(const World& world, const std::vector<Segment2D>& occluders, Vec2 point) {
+    return EvaluateLights(occluders, point, [&](const auto& add) {
+        EachEntity(world, [&](Entity e) {
+            const auto* light = world.GetComponent<Light2D>(e);
+            const auto* transform = world.GetComponent<Transform>(e);
+            if (light && transform) add(light, transform);
+        });
+    });
 }
 
 LightMap BuildLightMap(const World& world, const Resolvers2D& tiles, Vec2 region_min, Vec2 region_max, f32 cell_size) {
@@ -257,11 +274,21 @@ LightMap BuildLightMap(const World& world, const Resolvers2D& tiles, Vec2 region
             }
         }
     });
+    // Gather once, after the geometry resolver callbacks. No callbacks run
+    // while sampling, and the world traversal preserves accumulation order.
+    std::vector<LightSource> lights;
+    EachEntity(world, [&](Entity e) {
+        const auto* light = world.GetComponent<Light2D>(e);
+        const auto* transform = light ? world.GetComponent<Transform>(e) : nullptr;
+        if (light && transform) lights.push_back({light, transform});
+    });
     for (u32 y = 0; y < map.height; ++y) {
         for (u32 x = 0; x < map.width; ++x) {
             if (solid[static_cast<usize>(y) * map.width + x]) continue;
             const Vec2 centre{region_min.x + (static_cast<f32>(x) + 0.5f) * cell_size, region_min.y + (static_cast<f32>(y) + 0.5f) * cell_size};
-            map.cells[static_cast<usize>(y) * map.width + x] = LightAt(world, occluders, centre);
+            map.cells[static_cast<usize>(y) * map.width + x] = EvaluateLights(occluders, centre, [&](const auto& add) {
+                for (const auto& light : lights) add(light.light, light.transform);
+            });
         }
     }
     for (u32 y = 0; y < map.height; ++y) {

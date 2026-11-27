@@ -1786,6 +1786,61 @@ AETHER_TEST(Lights2D_TileWallsAreLinesNotGrids) {
     CHECK(GatherOccluders(tw.world, tw.resolvers, {0, 0}, {20, 10}).size() == 16);
 }
 
+AETHER_TEST(Lights2D_LightMapMatchesPointSamplesAfterGeometryResolution) {
+    World world;
+    for (int i = 0; i < 16; ++i)
+        world.CreateEntity(Transform{Vec3(static_cast<f32>(i), 0, 0), Quaternion::Identity()});
+    Light2D global;
+    global.type = Light2DType::Global;
+    global.intensity = 0.25f;
+    world.CreateEntity(Transform{Vec3(0, 0, 0), Quaternion::Identity()}, global);
+    Light2D point;
+    point.radius = 6.0f;
+    point.enabled = false;
+    const auto point_entity = world.CreateEntity(Transform{Vec3(1, 1, 0), Quaternion::Identity()}, point);
+    Light2D spot;
+    spot.type = Light2DType::Spot;
+    spot.radius = 5.0f;
+    spot.color = {0.1f, 0.5f, 0.8f};
+    world.CreateEntity(Transform{Vec3(2, 3, 0), Quaternion::Identity()}, spot);
+
+    ShadowCaster2D wall;
+    wall.half_extents = {0.25f, 1.0f};
+    world.CreateEntity(Transform{Vec3(3, 2, 0), Quaternion::Identity()}, wall);
+    TilemapData map;
+    map.Resize(4, 4);
+    map.AddLayer("Empty");
+    Tileset tiles;
+    TilemapRenderer renderer;
+    renderer.pixels_per_unit = 16.0f;
+    world.CreateEntity(Transform{Vec3(0, 0, 0), Quaternion::Identity()}, renderer);
+    Resolvers2D resolvers;
+    bool enable_during_resolve = true;
+    resolvers.tilemaps = [&](const assets::AssetGuid&) {
+        if (enable_during_resolve) world.GetComponent<Light2D>(point_entity)->enabled = true;
+        return &map;
+    };
+    resolvers.tilesets = [&](const assets::AssetGuid&) { return &tiles; };
+
+    const auto match_point_samples = [&](const LightMap& lightmap, const std::vector<Segment2D>& occluders) {
+        CHECK(lightmap.width == 12 && lightmap.height == 8);
+        for (u32 y = 0; y < lightmap.height; ++y) for (u32 x = 0; x < lightmap.width; ++x) {
+            const LightColor expected = LightAt(world, occluders, {0.5f * (x + 0.5f), 0.5f * (y + 0.5f)});
+            const LightColor& actual = lightmap.At(x, y);
+            CHECK(actual.r == expected.r && actual.g == expected.g && actual.b == expected.b);
+        }
+    };
+    const auto lit = BuildLightMap(world, resolvers, {0, 0}, {6, 4}, 0.5f);
+    const auto occluders = GatherOccluders(world, resolvers, {-6, -6}, {12, 10});
+    CHECK(world.GetComponent<Light2D>(point_entity)->enabled);
+    match_point_samples(lit, occluders);
+    enable_during_resolve = false;
+    world.GetComponent<Light2D>(point_entity)->enabled = false;
+    const auto dim = BuildLightMap(world, resolvers, {0, 0}, {6, 4}, 0.5f);
+    match_point_samples(dim, occluders);
+    CHECK(lit.At(2, 2).r > dim.At(2, 2).r);
+}
+
 AETHER_TEST(Lights2D_LightMapShadowsAndWalls) {
     TileWorld tw;
     tw.map.Fill(0, 10, 0, 10, 9, 1); // a wall the full height at x = 10
