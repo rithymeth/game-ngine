@@ -17,7 +17,9 @@ prerequisites, exact build commands, controls, and a first code change. The
 sample uses software rendering, so you do not need a graphics card.
 
 Other playable samples: [Gem Hop](samples/gem_hop/README.md),
-[Beacon Run](samples/beacon_run/README.md), and the AETHER-01 proof game.
+[Beacon Run](samples/beacon_run/README.md), [Lanternwake](games/LANTERNWAKE/README.md),
+and the AETHER-01 proof game. Lanternwake is a complete painted 2D grove adventure
+with native C++ and single-file WebAssembly builds.
 
 **Evervale reboot** is the largest game built on Aether — a 288 × 192 valley with a farm, three villages,
 fifteen cave floors, four festivals and Khmer localization. It is a **separate repository**, checked out at

@@ -30,6 +30,17 @@ inline constexpr Entity kNullEntity{};
 template <>
 struct std::hash<aether::Entity> {
     size_t operator()(const aether::Entity& e) const noexcept {
-        return (static_cast<size_t>(e.index) << 32) ^ e.generation;
+        aether::u64 value = (static_cast<aether::u64>(e.index) << 32) ^ e.generation;
+        if constexpr (sizeof(size_t) >= sizeof(aether::u64)) {
+            return static_cast<size_t>(value); // Preserve the existing 64-bit hash.
+        } else {
+            // Mix both halves before folding: truncating would lose the index.
+            value ^= value >> 33;
+            value *= 0xff51afd7ed558ccdull;
+            value ^= value >> 33;
+            value *= 0xc4ceb9fe1a85ec53ull;
+            value ^= value >> 33;
+            return static_cast<size_t>(value ^ (value >> 32));
+        }
     }
 };
