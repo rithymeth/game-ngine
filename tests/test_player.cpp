@@ -1100,6 +1100,19 @@ AETHER_TEST(Player_PointersDriveTheUiAndVirtualControls) {
     ApplyWindowEvents(button_events, in);
     game.Tick(1.0f / 60.0f);
     CHECK(log->Offset() == log->wheel_step && game.InputActions().GetAxis1D("Zoom") == -1.0f);
+
+    // Mouse moves after a notch must not retroactively retarget it. Also
+    // opposing notches at different targets must not cancel each other.
+    const WindowEvent end_over_button[] = {over_log, wheel, over_button};
+    ApplyWindowEvents(end_over_button, in);
+    game.Tick(1.0f / 60.0f);
+    CHECK(log->Offset() == log->wheel_step * 2.0f && game.InputActions().GetAxis1D("Zoom") == 0.0f);
+
+    const WindowEvent wheel_up{.type = WindowEventType::Scroll, .dy = 1.0f};
+    const WindowEvent split[] = {over_button, wheel, over_log, wheel_up};
+    ApplyWindowEvents(split, in);
+    game.Tick(1.0f / 60.0f);
+    CHECK(log->Offset() == log->wheel_step && game.InputActions().GetAxis1D("Zoom") == -1.0f);
     game.EndPlay();
 }
 

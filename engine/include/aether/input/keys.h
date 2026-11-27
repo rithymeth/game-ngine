@@ -4,6 +4,8 @@
 #include "aether/reflection/reflection.h"
 
 #include <array>
+#include <span>
+#include <vector>
 
 namespace aether::input {
 
@@ -141,14 +143,31 @@ Key KeyFromName(std::string_view name); // Key::None if unknown
 // platform (window messages, XInput) or by tests with synthetic events.
 class InputState {
 public:
-    void SetButton(Key key, bool down) { values_[Index(key)] = down ? 1.0f : 0.0f; }
-    void SetAxis(Key key, f32 value) { values_[Index(key)] = value; }
+    void SetButton(Key key, bool down) { SetAxis(key, down ? 1.0f : 0.0f); }
+    void SetAxis(Key key, f32 value) {
+        values_[Index(key)] = value;
+        if (key == Key::MouseWheel) {
+            wheel_samples_.clear();
+            wheel_without_position_ = value;
+        }
+    }
     // Mouse movement and wheel accumulate over the frame.
     void AddMouseDelta(f32 dx, f32 dy) {
         values_[Index(Key::MouseX)] += dx;
         values_[Index(Key::MouseY)] += dy;
     }
-    void AddWheel(f32 delta) { values_[Index(Key::MouseWheel)] += delta; }
+    // Keep each wheel delta at the cursor's position when it arrived, while
+    // still exposing their summed value as the ordinary gameplay axis.
+    struct WheelSample { f32 x, y, delta; };
+    void AddWheel(f32 delta) {
+        if (delta == 0.0f) return;
+        values_[Index(Key::MouseWheel)] += delta;
+        const auto& mouse = pointers_[0];
+        if (mouse.active) wheel_samples_.push_back({mouse.x, mouse.y, delta});
+        else wheel_without_position_ += delta;
+    }
+    std::span<const WheelSample> WheelSamples() const { return wheel_samples_; }
+    f32 WheelWithoutPosition() const { return wheel_without_position_; }
 
     f32 Value(Key key) const { return values_[Index(key)]; }
     bool IsDown(Key key) const { return values_[Index(key)] >= 0.5f; }
@@ -156,7 +175,7 @@ public:
     // After the frame's input has been processed: resets per-frame deltas.
     void EndFrame() {
         for (Key key : {Key::MouseX, Key::MouseY, Key::MouseWheel}) {
-            values_[Index(key)] = 0.0f;
+            SetAxis(key, 0.0f);
         }
     }
     // Everything released and centred (e.g. the window lost focus).
@@ -164,6 +183,8 @@ public:
         values_.fill(0.0f);
         pointers_ = {};
         touch_ids_ = {};
+        wheel_samples_.clear();
+        wheel_without_position_ = 0.0f;
         ++clear_generation_;
     }
     // Lets consumers distinguish a device reset from an ordinary release,
@@ -217,6 +238,8 @@ private:
     std::array<Pointer, kMaxPointers> pointers_{};
     std::array<TouchId, kMaxPointers> touch_ids_{};
     u64 clear_generation_ = 0;
+    std::vector<WheelSample> wheel_samples_;
+    f32 wheel_without_position_ = 0.0f;
 };
 
 } // namespace aether::input

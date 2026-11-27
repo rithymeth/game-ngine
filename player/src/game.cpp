@@ -1625,11 +1625,15 @@ void Game::UpdateUiPointers(f32 dt) {
         if (!now.down) ui_pointer_used_[i] = false;
         ui_pointers_[i] = now;
     }
-    const f32 wheel = input_state_.Value(input::Key::MouseWheel);
-    const auto& mouse = ui_pointers_[0];
-    if (mouse.active && wheel != 0.0f &&
-        router.Wheel({mouse.x * ui_pointer_scale_x_, mouse.y * ui_pointer_scale_y_}, wheel)) {
-        input_state_.SetAxis(input::Key::MouseWheel, 0.0f); // do not zoom gameplay behind a scrolling menu
+    const auto wheel_samples = input_state_.WheelSamples();
+    if (!wheel_samples.empty()) {
+        f32 unhandled = input_state_.WheelWithoutPosition();
+        for (const auto& sample : wheel_samples) {
+            if (!router.Wheel({sample.x * ui_pointer_scale_x_, sample.y * ui_pointer_scale_y_}, sample.delta)) {
+                unhandled += sample.delta;
+            }
+        }
+        input_state_.SetAxis(input::Key::MouseWheel, unhandled); // do not zoom gameplay behind a scrolling menu
     }
     router.Tick(dt);
 }

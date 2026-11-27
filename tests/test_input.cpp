@@ -90,6 +90,30 @@ AETHER_TEST(Input_KeysAndDeviceState) {
     AETHER_CHECK(!state.IsDown(Key::Space));
 }
 
+AETHER_TEST(Input_WheelSamplesKeepTheirPositionsUntilReset) {
+    InputState state;
+    state.AddWheel(1.0f); // before any pointer location was reported
+    state.SetPointer(0, 10, 20, false, true);
+    state.AddWheel(-2.0f);
+    state.SetPointer(0, 30, 40, false, true);
+    state.AddWheel(1.0f);
+    const auto samples = state.WheelSamples();
+    AETHER_CHECK(state.Value(Key::MouseWheel) == 0.0f && state.WheelWithoutPosition() == 1.0f);
+    AETHER_CHECK(samples.size() == 2);
+    if (samples.size() == 2) {
+        AETHER_CHECK(samples[0].x == 10 && samples[0].y == 20 && samples[0].delta == -2.0f);
+        AETHER_CHECK(samples[1].x == 30 && samples[1].y == 40 && samples[1].delta == 1.0f);
+    }
+    state.SetAxis(Key::MouseWheel, 0.5f); // a raw assignment replaces prior samples
+    AETHER_CHECK(state.WheelSamples().empty() && state.WheelWithoutPosition() == 0.5f);
+    state.AddWheel(-1.0f);
+    state.EndFrame();
+    AETHER_CHECK(state.WheelSamples().empty() && state.WheelWithoutPosition() == 0.0f && state.Value(Key::MouseWheel) == 0.0f);
+    state.AddWheel(-1.0f);
+    state.Clear();
+    AETHER_CHECK(state.WheelSamples().empty() && state.WheelWithoutPosition() == 0.0f && state.Value(Key::MouseWheel) == 0.0f);
+}
+
 AETHER_TEST(Input_ModifiersBuildAxes) {
     // WASD into a 2D Move action, the Enhanced Input way.
     InputModifier swizzle = Modifier(ModifierType::Swizzle);
