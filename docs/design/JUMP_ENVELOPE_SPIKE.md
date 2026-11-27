@@ -56,7 +56,11 @@ The receipt includes the normalized reference route and, on an A/B loss,
 the nearest lost timing as evidence.nearest_lost_replay.route. Save that
 object as a JSON file and pass it to either package's --jump-proof command
 with a fresh --user-dir. If two losses are equally near, the earlier offset
-is chosen. Evidence capture is optional because it reads the cooked archive
+is chosen. The accompanying divergence records the first 1-based simulation
+frame where either X or Y differs by more than 0.01 world units, with both
+positions. If only the target verdict changes within that tolerance, the
+first frame is null: the timing loss still counts, but the report does not
+invent a visible split. Evidence capture is optional because it reads the cooked archive
 twice and includes the recorded inputs in the report.
 
 ## Prior art and what we would ship differently
