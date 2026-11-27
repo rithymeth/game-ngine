@@ -6,7 +6,10 @@
 
 #include <imgui.h>
 
+#include <filesystem>
+#include <fstream>
 #include <functional>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -199,6 +202,37 @@ AETHER_TEST(EditorWorkspace_CommandsRunAndMenusDrawFromTheTable) {
         }
     });
     CHECK(ImGui::GetDrawData()->TotalVtxCount > 0);
+}
+
+AETHER_TEST(EditorWorkspace_ToolbarTooltipClosesShortcutParenthesis) {
+    HeadlessImGui imgui;
+    EditorWorkspace ws;
+    const auto capture = std::filesystem::temp_directory_path() / "aether-workspace-toolbar-tooltip.txt";
+    std::filesystem::remove(capture);
+    ImGui::GetStyle().HoverFlagsForTooltipMouse = ImGuiHoveredFlags_None;
+    ImVec2 save_pos;
+    const auto draw = [&] {
+        ImGui::SetNextWindowPos(ImVec2(20, 20));
+        ImGui::SetNextWindowSize(ImVec2(1100, 120));
+        ImGui::Begin("Toolbar test", nullptr, ImGuiWindowFlags_NoTitleBar);
+        const ImVec2 cursor = ImGui::GetCursorScreenPos(); // Save is the toolbar's first button.
+        save_pos = ImVec2(cursor.x + 8, cursor.y + 8);
+        ws.DrawMainToolbar();
+        ImGui::End();
+    };
+    imgui.Frame(draw);
+    ImGui::GetIO().AddMousePosEvent(save_pos.x, save_pos.y);
+    imgui.Frame([&] {
+        ImGui::LogToFile(0, capture.string().c_str());
+        draw();
+        ImGui::LogFinish();
+    });
+    const std::string tooltip = [&] {
+        std::ifstream in(capture);
+        return std::string(std::istreambuf_iterator<char>(in), {});
+    }();
+    std::filesystem::remove(capture);
+    CHECK(tooltip.find("Save scene  (Ctrl+S)") != std::string::npos);
 }
 
 // The keyboard poller is generated from the same table: Ctrl+Shift+P opens the palette, P alone does not.

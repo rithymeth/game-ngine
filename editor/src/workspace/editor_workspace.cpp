@@ -2374,7 +2374,7 @@ void EditorWorkspace::DrawMainToolbar() {
         if (command != nullptr) {
             const std::string chord = command->chord.ToString();
             const std::string what = impl_->commands.Label(*command);
-            ImGui::SetItemTooltip("%s%s%s", what.c_str(), chord.empty() ? "" : "  (", chord.c_str(),
+            ImGui::SetItemTooltip("%s%s%s%s", what.c_str(), chord.empty() ? "" : "  (", chord.c_str(),
                                   chord.empty() ? "" : ")");
         }
         ImGui::PopID();
