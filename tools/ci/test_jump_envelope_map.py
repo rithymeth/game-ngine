@@ -54,6 +54,19 @@ class JumpEnvelopeMapTests(unittest.TestCase):
         self.assertIn("does not match the tested offsets", result.stderr)
         self.assertFalse(dest.exists())
 
+    def test_tilemap_extract_rejects_missing_paths_and_out_of_range_points(self):
+        self.assertIn("no lost-timing Tilemap overlay", self.invoke("--tilemap-overlay").stderr)
+        replay = self.report["evidence"]["nearest_lost_replay"]
+        replay["tilemap_overlay"] = {
+            "frames": 1, "first_difference_frame": 1, "before_status": "pass", "after_status": "missed",
+            "verdict_changed": True, "before_path": [[0, 0, 0]], "after_path": [[1000001, 0, 0]],
+        }
+        dest = self.root / "bad-overlay.json"
+        result = self.invoke("--tilemap-overlay", "--output", dest)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("outside the Tilemap overlay range", result.stderr)
+        self.assertFalse(dest.exists())
+
     def test_single_build_works_and_preserves_existing_output(self):
         del self.report["candidate"]
         self.assertEqual(self.invoke().returncode, 0)
