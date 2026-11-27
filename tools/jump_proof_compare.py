@@ -80,6 +80,11 @@ def read_trace_details(path):
         raise ValueError("trace does not end with its completed route verdict")
     if route is not None:
         validate_route(route, len(points))
+        x, y, _ = points[-1]
+        target = route["target"]
+        inside = target["min_x"] <= x <= target["max_x"] and target["min_y"] <= y <= target["max_y"]
+        if (verdict["status"] == "pass") != inside:
+            raise ValueError("trace verdict disagrees with the route target")
     return points, route, verdict["status"]
 
 
