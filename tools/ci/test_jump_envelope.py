@@ -14,6 +14,7 @@ TOOL = Path(__file__).resolve().parents[1] / "jump_envelope.py"
 FAKE = """#!/usr/bin/env python3
 import json
 from pathlib import Path
+import struct
 import sys
 
 args = sys.argv
@@ -33,6 +34,10 @@ tiny = Path(args[0]).name == "tiny"
 point = [0.5 if status == "pass" else (0.505 if tiny else 2), 0.5, 0]
 if Path(args[0]).name == "unstable" and profile.name == "profile-repeat":
     point[0] = 0.75
+for event in route["events"]:
+    event["value"] = struct.unpack("<f", struct.pack("<f", event["value"]))[0]
+    if Path(args[0]).name == "wrong-axis" and event["key"] == "GamepadLeftStickX":
+        event["value"] = 0.75
 print("Jump Route: " + json.dumps(route))
 for i in range(route["frames"]):
     sample = [0.5, 0.5, 0] if i < 2 else ([0.52, 0.5, 0] if i == 2 and status == "missed" and not tiny else point)
@@ -47,7 +52,7 @@ class JumpEnvelope(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name)
-        for name in ("before", "after", "unstable", "same", "always-miss", "mutating", "tiny"):
+        for name in ("before", "after", "unstable", "same", "always-miss", "mutating", "tiny", "wrong-axis"):
             binary = self.root / name
             binary.write_text(FAKE, encoding="utf-8")
             binary.chmod(0o755)
@@ -74,6 +79,17 @@ class JumpEnvelope(unittest.TestCase):
         self.assertEqual(report["gained_pass_offsets"], [])
         self.assertEqual(report["skipped_offsets"], [3])
         self.assertEqual(self.route.read_bytes(), original)
+
+    def test_matches_effective_analog_input_but_rejects_a_different_value(self):
+        route = json.loads(self.route.read_text(encoding="utf-8"))
+        route["events"].append(dict(key="GamepadLeftStickX", frame=7, value=0.8))
+        self.route.write_text(json.dumps(route), encoding="utf-8")
+        matched = self.invoke()
+        self.assertEqual(matched.returncode, 0, matched.stderr)
+        self.assertEqual(json.loads(matched.stdout)["baseline"]["contiguous_pass_offsets"], [-2, 2])
+        changed = self.invoke("wrong-axis")
+        self.assertEqual(changed.returncode, 2, changed.stderr)
+        self.assertIn("replay trace does not match", changed.stderr)
 
     def stage(self, tag, binary, payload):
         root = self.root / tag

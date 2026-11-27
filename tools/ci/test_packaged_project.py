@@ -434,8 +434,11 @@ def main():
 
             if args.jump_envelope:
                 envelope_route = root / "Jump Envelope route.json"
+                # Use a hand-edited decimal axis event that the player rounds to float32.
+                analog = {"frame": 399, "key": "GamepadLeftStickX", "value": 0.8}
                 envelope_route.write_text(json.dumps({**spec, "scene": captured["scene"],
-                                                      "fixed_hz": captured["fixed_hz"]}), encoding="utf-8")
+                                                      "fixed_hz": captured["fixed_hz"],
+                                                      "events": [*spec["events"], analog]}), encoding="utf-8")
                 verify_jump_envelope(game, changed / executable, envelope_route, 225, root, empty_cwd)
 
             compare = Path(__file__).resolve().parents[1] / "jump_proof_compare.py"

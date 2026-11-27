@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import struct
 import subprocess
 import tempfile
 
@@ -80,7 +81,13 @@ def run_trial(player, route, root, label):
     if result.returncode not in (0, 5):
         raise ValueError(f"{player.name}, trial {label}: player exited {result.returncode}")
     points, recorded, status = read_trace_details(trace_path)
-    if recorded != route or (result.returncode == 0) != (status == "pass"):
+    # The packaged player reads event values as float32 and reports those
+    # exact effective inputs. Keep every other part of the binding exact.
+    expected = {**route, "events": [
+        {**event, "value": struct.unpack("<f", struct.pack("<f", event["value"]))[0]}
+        for event in route["events"]
+    ]}
+    if recorded != expected or (result.returncode == 0) != (status == "pass"):
         raise ValueError(f"{player.name}, trial {label}: replay trace does not match the requested variant")
     return points, status
 
