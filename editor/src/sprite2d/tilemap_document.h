@@ -3,8 +3,11 @@
 #include "aether/sprite2d/tilemap.h"
 
 #include <filesystem>
+#include <map>
 #include <optional>
 #include <string>
+#include <utility>
+#include <variant>
 #include <vector>
 
 // A tilemap and its tileset being edited (Phase 26 step 5, §26.6): paint,
@@ -82,9 +85,14 @@ private:
     struct Snapshot {
         sprite2d::TilemapData map;
         sprite2d::Tileset tileset;
-        u64 state;
         std::optional<usize> selection = std::nullopt;
     };
+    using CellEdits = std::map<std::pair<usize, usize>, i32>; // (layer, cell) -> opposite value
+    struct HistoryEntry {
+        std::variant<Snapshot, CellEdits> edit;
+        u64 state;
+    };
+    bool Travel(std::vector<HistoryEntry>& from, std::vector<HistoryEntry>& to);
     void Record(bool track_selection = false);
     void Changed();
     void ClampActive();
@@ -95,9 +103,10 @@ private:
     std::filesystem::path tilemap_file_;
     std::filesystem::path tileset_file_;
     bool in_stroke_ = false;
-    std::optional<Snapshot> stroke_start_;
+    std::optional<Snapshot> stroke_start_; // populated only if a stroke becomes dense
+    CellEdits stroke_cells_;
     usize stroke_changed_cells_ = 0;
-    std::vector<Snapshot> undo_, redo_;
+    std::vector<HistoryEntry> undo_, redo_;
     u64 revision_ = 1;
     // The view revision always moves forward; undo can return to an old edit state.
     u64 state_ = revision_;

@@ -81,7 +81,7 @@ void TilemapEditDocument::ClampActive() {
 
 void TilemapEditDocument::Record(bool track_selection) {
     EndStroke();
-    undo_.push_back({map_, tileset_, state_, track_selection ? std::optional<usize>{active_layer} : std::nullopt});
+    undo_.push_back({Snapshot{map_, tileset_, track_selection ? std::optional<usize>{active_layer} : std::nullopt}, state_});
     redo_.clear();
     Changed();
 }
@@ -95,12 +95,14 @@ void TilemapEditDocument::EndStroke() {
     if (!in_stroke_) return;
     in_stroke_ = false;
     if (stroke_changed_cells_ != 0) {
+        if (stroke_start_) undo_.push_back({std::move(*stroke_start_), state_});
+        else undo_.push_back({std::move(stroke_cells_), state_});
         stroke_changed_cells_ = 0;
-        undo_.push_back(std::move(*stroke_start_));
         redo_.clear();
         Changed();
     }
     stroke_start_.reset();
+    stroke_cells_.clear();
 }
 
 bool TilemapEditDocument::PaintCell(i32 x, i32 y, i32 value) {
@@ -110,17 +112,30 @@ bool TilemapEditDocument::PaintCell(i32 x, i32 y, i32 value) {
     if (index >= cells.size()) return false;
     auto& cell = cells[static_cast<usize>(index)];
     if (cell == value) return false;
-    const i32 previous = cell;
-    // Take the undo snapshot just before the first real write. An eraser
-    // on empty cells or a brush on matching paint never copies the map.
-    if (!stroke_start_) stroke_start_ = Snapshot{map_, tileset_, state_};
-    cell = value;
+    if (!stroke_start_) {
+        const auto address = std::pair{active_layer, static_cast<usize>(index)};
+        auto it = stroke_cells_.find(address);
+        // Bound node overhead for broad fills. On promotion retain the start
+        // of the gesture, not the partially painted state.
+        const usize sparse_limit = std::clamp<usize>(cells.size() / 16, 32, 4096);
+        if (it == stroke_cells_.end() && stroke_cells_.size() >= sparse_limit) {
+            stroke_start_ = Snapshot{map_, tileset_};
+            for (const auto& [key, original] : stroke_cells_)
+                stroke_start_->map.layers[key.first].cells[key.second] = original;
+            stroke_cells_.clear();
+        } else {
+            if (it == stroke_cells_.end()) stroke_cells_.emplace(address, cell);
+            else if (it->second == value) stroke_cells_.erase(it);
+            cell = value;
+            stroke_changed_cells_ = stroke_cells_.size();
+            return true;
+        }
+    }
 
-    // Track only cells that still differ from the start of the stroke. Structural
-    // edits end the stroke first, so the snapshot addresses the same cells.
-    const i32 original = stroke_start_->map.Get(active_layer, x, y);
-    if (previous == original) ++stroke_changed_cells_;
+    const i32 original = stroke_start_->map.layers[active_layer].cells[static_cast<usize>(index)];
+    if (cell == original) ++stroke_changed_cells_;
     else if (value == original) --stroke_changed_cells_;
+    cell = value;
     return true;
 }
 
@@ -184,35 +199,30 @@ void TilemapEditDocument::Rectangle(i32 x0, i32 y0, i32 x1, i32 y1) {
     EndStroke();
 }
 
-bool TilemapEditDocument::Undo() {
+bool TilemapEditDocument::Travel(std::vector<HistoryEntry>& from, std::vector<HistoryEntry>& to) {
     EndStroke();
-    if (undo_.empty()) return false;
-    const auto selection = undo_.back().selection;
-    redo_.push_back({map_, tileset_, state_, selection ? std::optional<usize>{active_layer} : std::nullopt});
-    map_ = std::move(undo_.back().map);
-    tileset_ = std::move(undo_.back().tileset);
-    state_ = undo_.back().state;
-    undo_.pop_back();
-    if (selection) active_layer = *selection;
+    if (from.empty()) return false;
+    to.push_back(std::move(from.back()));
+    from.pop_back();
+    auto& step = to.back();
+    // Keep the opposite state in the same entry. Swapping avoids copying a
+    // full map on either stack, including for structural history.
+    if (auto* snapshot = std::get_if<Snapshot>(&step.edit)) {
+        std::swap(map_, snapshot->map);
+        std::swap(tileset_, snapshot->tileset);
+        if (snapshot->selection) std::swap(active_layer, *snapshot->selection);
+    } else {
+        for (auto& [key, value] : std::get<CellEdits>(step.edit))
+            std::swap(map_.layers[key.first].cells[key.second], value);
+    }
+    std::swap(state_, step.state);
     ClampActive();
     ++revision_;
     return true;
 }
 
-bool TilemapEditDocument::Redo() {
-    EndStroke();
-    if (redo_.empty()) return false;
-    const auto selection = redo_.back().selection;
-    undo_.push_back({map_, tileset_, state_, selection ? std::optional<usize>{active_layer} : std::nullopt});
-    map_ = std::move(redo_.back().map);
-    tileset_ = std::move(redo_.back().tileset);
-    state_ = redo_.back().state;
-    redo_.pop_back();
-    if (selection) active_layer = *selection;
-    ClampActive();
-    ++revision_;
-    return true;
-}
+bool TilemapEditDocument::Undo() { return Travel(undo_, redo_); }
+bool TilemapEditDocument::Redo() { return Travel(redo_, undo_); }
 
 usize TilemapEditDocument::AddLayer(const std::string& name) {
     Record(true);
@@ -361,6 +371,7 @@ bool TilemapEditDocument::Load(const std::filesystem::path& tilemap_file, const 
     redo_.clear();
     in_stroke_ = false;
     stroke_start_.reset();
+    stroke_cells_.clear();
     stroke_changed_cells_ = 0;
     active_layer = 0;
     tool = TileTool::Paint;

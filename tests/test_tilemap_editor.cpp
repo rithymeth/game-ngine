@@ -166,6 +166,71 @@ AETHER_TEST(TilemapEditor_StrokeWithLeadingNoOpsUndoesItsFirstRealEdit) {
     CHECK(doc.Redo() && doc.Map().Get(0, 1, 3) == 4);
 }
 
+AETHER_TEST(TilemapEditor_SparseStrokeSurvivesReorderAndResize) {
+    TilemapData map;
+    map.Resize(64, 48);
+    map.AddLayer("Floor");
+    map.AddLayer("Decor");
+    map.Set(0, 60, 44, 11);
+    TilemapEditDocument doc(std::move(map), Doc().GetTileset());
+
+    doc.BeginStroke();
+    doc.brush = 14;
+    doc.Apply(60, 44);
+    doc.active_layer = 1;
+    doc.brush = 22;
+    doc.Apply(2, 3);
+    doc.brush = 23;
+    doc.Apply(2, 3);
+    doc.EndStroke();
+    const auto revision = doc.Revision();
+    CHECK(doc.MoveLayer(1, 0));
+    CHECK(doc.Resize(16, 12));
+    CHECK(doc.Map().Get(0, 2, 3) == 23 && doc.Map().Get(1, 60, 44) == kEmpty);
+
+    CHECK(doc.Undo() && doc.Map().Get(1, 60, 44) == 14);
+    CHECK(doc.Undo() && doc.active_layer == 1 && doc.Map().Get(1, 2, 3) == 23);
+    CHECK(doc.Undo() && doc.Map().Get(0, 60, 44) == 11 && doc.Map().Get(1, 2, 3) == kEmpty);
+    CHECK(!doc.CanUndo() && !doc.dirty() && doc.Revision() > revision);
+    CHECK(doc.Redo() && doc.Map().Get(1, 2, 3) == 23);
+    CHECK(doc.Redo() && doc.active_layer == 0 && doc.Map().Get(1, 60, 44) == 14);
+    CHECK(doc.Redo() && doc.Map().width == 16 && doc.Map().Get(0, 2, 3) == 23 && !doc.CanRedo());
+}
+
+AETHER_TEST(TilemapEditor_DenseStrokeRestoresOriginalsAndPreservesRedoWhenReverted) {
+    TilemapData map;
+    map.Resize(96, 72);
+    map.AddLayer("Floor");
+    map.AddLayer("Decor");
+    map.Set(0, 5, 5, 4);
+    TilemapEditDocument doc(std::move(map), Doc().GetTileset());
+    doc.BeginStroke();
+    doc.active_layer = 1;
+    doc.brush = 12;
+    doc.Apply(7, 7); // Early sparse write in a separate layer.
+    doc.active_layer = 0;
+    doc.brush = 9;
+    doc.Rectangle(0, 0, 55, 50); // Promotes the active stroke to a snapshot.
+    CHECK(doc.Undo() && !doc.CanUndo() && doc.CanRedo() && !doc.dirty());
+    CHECK(doc.Map().Get(0, 5, 5) == 4 && doc.Map().Get(0, 50, 50) == kEmpty && doc.Map().Get(1, 7, 7) == kEmpty);
+    const auto revision = doc.Revision();
+
+    doc.BeginStroke();
+    for (i32 y = 0; y < 30; ++y) for (i32 x = 0; x < 30; ++x) doc.Apply(x, y);
+    CHECK(doc.dirty());
+    doc.tool = TileTool::Erase;
+    for (i32 y = 0; y < 30; ++y) for (i32 x = 0; x < 30; ++x)
+        if (x != 5 || y != 5) doc.Apply(x, y);
+    doc.tool = TileTool::Paint;
+    doc.brush = 4;
+    doc.Apply(5, 5);
+    CHECK(!doc.dirty());
+    doc.EndStroke();
+    CHECK(doc.Revision() == revision && !doc.CanUndo() && doc.CanRedo());
+    CHECK(doc.Redo() && !doc.CanRedo() && doc.Map().Get(0, 5, 5) == 9 &&
+          doc.Map().Get(0, 50, 50) == 9 && doc.Map().Get(1, 7, 7) == 12);
+}
+
 AETHER_TEST(TilemapEditor_RectangleFillAndPick) {
     TilemapEditDocument doc = Doc();
     doc.brush = 7;
