@@ -80,13 +80,6 @@ void TilemapEditDocument::ClampActive() {
     if (active_layer >= map_.layers.size()) active_layer = map_.layers.empty() ? 0 : map_.layers.size() - 1;
 }
 
-void TilemapEditDocument::Record() {
-    EndStroke();
-    undo_.push_back({Snapshot{map_, tileset_}, state_});
-    redo_.clear();
-    Changed();
-}
-
 void TilemapEditDocument::RecordLayerProperties(usize layer) {
     EndStroke();
     const auto& current = map_.layers[layer];
@@ -315,9 +308,8 @@ bool TilemapEditDocument::Travel(std::vector<HistoryEntry>& from, std::vector<Hi
     auto& step = to.back();
     // Keep the opposite state in the same entry. Swapping avoids copying a
     // full map on either stack, including for structural history.
-    if (auto* snapshot = std::get_if<Snapshot>(&step.edit)) {
-        std::swap(map_, snapshot->map);
-        std::swap(tileset_, snapshot->tileset);
+    if (auto* opposite_map = std::get_if<TilemapData>(&step.edit)) {
+        std::swap(map_, *opposite_map);
     } else if (auto* properties = std::get_if<LayerProperties>(&step.edit)) {
         auto& layer = map_.layers[properties->layer];
         std::swap(layer.name, properties->name);
@@ -471,10 +463,33 @@ bool TilemapEditDocument::Resize(u32 width, u32 height) {
         redo_.clear();
         Changed();
     } else {
-        // Width changes re-stride every row; preserve the full state for these
-        // edits and for malformed in-memory layers.
-        Record();
-        map_.Resize(width, height);
+        // Build the replacement first, keeping each original layer allocation
+        // for undo instead of copying both the map and its unchanged tileset.
+        TilemapData replacement;
+        replacement.tileset = map_.tileset;
+        replacement.width = width;
+        replacement.height = height;
+        replacement.layers.reserve(map_.layers.size());
+        const u32 overlap_width = std::min(width, map_.width);
+        const u32 overlap_height = std::min(height, map_.height);
+        for (const auto& old : map_.layers) {
+            const usize index = replacement.AddLayer(old.name);
+            auto& next = replacement.layers[index];
+            next.collides = old.collides;
+            for (u32 y = 0; overlap_width != 0 && y < overlap_height; ++y) {
+                const u64 offset = static_cast<u64>(y) * map_.width;
+                if (offset >= old.cells.size()) break;
+                const auto src = static_cast<usize>(offset);
+                const usize count = std::min<usize>(overlap_width, old.cells.size() - src);
+                std::copy_n(old.cells.data() + src, count, next.cells.data() + static_cast<usize>(y) * width);
+            }
+        }
+        // Allocate the history entry before taking ownership of the live map.
+        undo_.push_back({TilemapData{}, state_});
+        std::get<TilemapData>(undo_.back().edit) = std::move(map_);
+        map_ = std::move(replacement);
+        redo_.clear();
+        Changed();
     }
     return true;
 }

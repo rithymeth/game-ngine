@@ -2413,6 +2413,42 @@ AETHER_TEST(TilemapEditor_ExistingOversizedMapsCanBeCroppedWithoutGrowingAnAxis)
     CHECK(doc.Redo() && doc.dirty() && doc.Map().height == height - 1);
 }
 
+AETHER_TEST(TilemapEditor_GeneralResizeReusesOriginalStorageAndKeepsTilesetHistory) {
+    TilemapData map;
+    map.Resize(5, 4);
+    map.AddLayer("Ground");
+    map.Set(0, 3, 2, 8);
+    map.Set(0, 4, 3, 9);
+    map.AddLayer("Short decorative layer");
+    map.layers[1].collides = false;
+    map.layers[1].cells.resize(7);
+    map.Set(1, 1, 1, 4);
+    Tileset tiles;
+    tiles.SetSolid(3, true);
+    TilemapEditDocument doc(std::move(map), std::move(tiles));
+    doc.active_layer = 1;
+    const auto original = TilemapToJson(doc.Map());
+    const auto original_buffer = reinterpret_cast<std::uintptr_t>(doc.Map().layers[0].cells.data());
+    const auto flags = doc.GetTileset().solid.data();
+    auto expected = doc.Map();
+    expected.Resize(4, 3);
+
+    CHECK(doc.Resize(4, 3) && doc.active_layer == 1);
+    CHECK(TilemapToJson(doc.Map()) == TilemapToJson(expected));
+    CHECK(doc.GetTileset().solid.data() == flags && doc.GetTileset().IsSolid(3));
+    CHECK(doc.Undo() && !doc.dirty() && doc.active_layer == 1);
+    CHECK(TilemapToJson(doc.Map()) == original);
+    CHECK(reinterpret_cast<std::uintptr_t>(doc.Map().layers[0].cells.data()) == original_buffer);
+    CHECK(doc.GetTileset().solid.data() == flags);
+    CHECK(doc.Redo() && TilemapToJson(doc.Map()) == TilemapToJson(expected));
+
+    doc.SetSolid(7, true);
+    CHECK(doc.Undo() && !doc.GetTileset().IsSolid(7) && doc.Map().width == 4);
+    CHECK(doc.Undo() && TilemapToJson(doc.Map()) == original && !doc.dirty());
+    CHECK(doc.Redo() && doc.Map().width == 4 && !doc.GetTileset().IsSolid(7));
+    CHECK(doc.Redo() && doc.GetTileset().IsSolid(7) && doc.Map().Get(1, 1, 1) == 4);
+}
+
 AETHER_TEST(TilemapEditor_HeightResizeRestoresOnlyCroppedRows) {
     TilemapData map;
     map.Resize(4, 4);

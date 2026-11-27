@@ -82,10 +82,6 @@ public:
     bool dirty() const { return saved_state_ != state_ || stroke_changed_cells_ != 0; }
 
 private:
-    struct Snapshot {
-        sprite2d::TilemapData map;
-        sprite2d::Tileset tileset;
-    };
     using SparseCells = std::map<usize, i32>; // cell offset -> opposite value
     struct LayerStroke {
         std::variant<SparseCells, std::vector<i32>> cells;
@@ -112,11 +108,10 @@ private:
         std::vector<std::vector<i32>> cropped_rows;
     };
     struct HistoryEntry {
-        std::variant<Snapshot, BrushEdit, LayerProperties, LayerMove, sprite2d::Tileset, LayerPresence, HeightEdit> edit;
+        std::variant<sprite2d::TilemapData, BrushEdit, LayerProperties, LayerMove, sprite2d::Tileset, LayerPresence, HeightEdit> edit;
         u64 state;
     };
     bool Travel(std::vector<HistoryEntry>& from, std::vector<HistoryEntry>& to);
-    void Record();
     void RecordLayerProperties(usize layer);
     void RecordTileset();
     LayerPresence& RecordLayerPresence(usize index);
