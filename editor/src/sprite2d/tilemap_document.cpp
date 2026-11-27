@@ -245,11 +245,16 @@ void TilemapEditDocument::FloodPaint(i32 x, i32 y) {
     }
 }
 
+bool TilemapEditDocument::HasMissingAutotileBrush() const {
+    return IsAutotileCell(brush) && AutotileIndex(brush) >= tileset_.autotiles.size();
+}
+
 void TilemapEditDocument::Apply(i32 x, i32 y) {
     if (tool == TileTool::Pick) {
         if (map_.InBounds(x, y)) brush = map_.Get(active_layer, x, y);
         return; // Selecting a brush does not need a map snapshot.
     }
+    if ((tool == TileTool::Paint || tool == TileTool::Fill) && HasMissingAutotileBrush()) return;
     const bool own_stroke = !in_stroke_;
     if (own_stroke) BeginStroke();
     switch (tool) {
@@ -263,7 +268,7 @@ void TilemapEditDocument::Apply(i32 x, i32 y) {
 }
 
 void TilemapEditDocument::Rectangle(i32 x0, i32 y0, i32 x1, i32 y1) {
-    if (map_.width == 0 || map_.height == 0) return;
+    if (map_.width == 0 || map_.height == 0 || (tool != TileTool::Erase && HasMissingAutotileBrush())) return;
     const i32 left = std::max(0, std::min(x0, x1));
     const i32 bottom = std::max(0, std::min(y0, y1));
     const i32 right = std::min(static_cast<i32>(map_.width) - 1, std::max(x0, x1));

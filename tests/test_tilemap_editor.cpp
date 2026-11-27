@@ -1905,6 +1905,42 @@ AETHER_TEST(TilemapEditor_SaveShortcutWritesBothAssetsAndKeepsFailedEdits) {
     fs::remove_all(dir);
 }
 
+AETHER_TEST(TilemapEditor_MissingAutotileBrushCannotPaintAfterUndo) {
+    auto doc = Doc();
+    const auto rule = doc.AddAutotile("River");
+    doc.brush = AutotileCell(rule);
+    CHECK(doc.Undo() && doc.CanRedo() && doc.HasMissingAutotileBrush());
+    const auto revision = doc.Revision();
+    doc.Apply(0, 0);
+    doc.tool = TileTool::Fill;
+    doc.Apply(1, 0);
+    doc.tool = TileTool::Rectangle;
+    doc.Rectangle(2, 0, 5, 4);
+    CHECK(doc.Revision() == revision && !doc.dirty() && !doc.CanUndo() && doc.CanRedo());
+    for (i32 cell : doc.Map().layers[0].cells) CHECK(cell == kEmpty);
+    CHECK(doc.Redo() && !doc.HasMissingAutotileBrush());
+    doc.Rectangle(2, 0, 5, 4);
+    CHECK(doc.Map().Get(0, 5, 4) == AutotileCell(rule));
+}
+
+AETHER_TEST(TilemapEditor_CanEraseButNotCopyMissingAutotileBrush) {
+    TilemapData map;
+    map.Resize(2, 1);
+    map.AddLayer("Ground");
+    map.Set(0, 0, 0, AutotileCell(2));
+    TilemapEditDocument doc(std::move(map), {});
+    doc.tool = TileTool::Pick;
+    doc.Apply(0, 0);
+    CHECK(doc.brush == AutotileCell(2) && doc.HasMissingAutotileBrush());
+    doc.tool = TileTool::Paint;
+    doc.Apply(1, 0);
+    CHECK(doc.Map().Get(0, 1, 0) == kEmpty && !doc.CanUndo());
+    doc.tool = TileTool::Erase;
+    doc.Apply(0, 0);
+    CHECK(doc.Map().Get(0, 0, 0) == kEmpty && doc.CanUndo());
+    CHECK(doc.Undo() && doc.Map().Get(0, 0, 0) == AutotileCell(2));
+}
+
 AETHER_TEST(TilemapEditor_RectangleDragCancelsAndClipsWithoutPartialHistory) {
     HeadlessImGui ui;
     TilemapEditDocument doc = Doc();

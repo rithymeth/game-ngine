@@ -31,6 +31,9 @@ public:
     usize active_layer = 0;
     TileTool tool = TileTool::Paint;
 
+    // A stale autotile selection can survive Undo or be picked from old data.
+    bool HasMissingAutotileBrush() const;
+
     // A stroke is one undo step: press, any number of Apply calls, release.
     void BeginStroke();
     // Paint, Erase and Fill act at the cell; Pick takes the cell's value as
