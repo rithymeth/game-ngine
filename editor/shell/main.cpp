@@ -496,11 +496,12 @@ int main(int argc, char** argv) {
         // A last session that did not end cleanly left an autosave; offer it once the editor is up. Headless runs
         // (tests, screenshots) skip it: nothing there can answer the prompt, and the answer must not be "discard".
         if (!headless) workspace.OfferRecovery();
+        ImGuiWindowInput window_input;
         for (i32 frame = 0; !quit && (max_frames < 0 || frame < max_frames); ++frame) {
             if (window) {
                 if (!window->PumpMessages()) break;
                 const std::vector<WindowEvent> events = window->TakeEvents();
-                FeedImGuiEvents(events, io);
+                window_input.Feed(events, io);
                 if (window->IsMinimized()) continue;
                 if (resized) {
                     device->WaitForFence(fence);
