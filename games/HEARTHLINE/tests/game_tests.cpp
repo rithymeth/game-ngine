@@ -1,4 +1,7 @@
 #include "game.h"
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <iostream>
 using namespace hearthline;
@@ -18,7 +21,7 @@ void Test(unsigned seed) {
     Game g(seed);
     assert(g.State().player.x==20);
     for(int i=0;i<6;i++) {
-        To(g,Resource(i).x-1,64);
+        To(g,Game::Resource(i).x-1,64);
         assert(g.Act(Action::Gather));
     }
     assert(g.State().inventory.wood==12);
