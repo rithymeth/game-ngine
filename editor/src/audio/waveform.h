@@ -66,6 +66,7 @@ private:
     audio::VoiceId voice_ = 0;
     usize view_start_ = 0, view_frames_ = 0;
     f32 playhead_ = 0.0f, sel_from_ = 0.0f, sel_to_ = 0.0f;
+    f32 selection_anchor_ = 0.0f;
     bool dragging_selection_ = false;
     SoundStats stats_;
 };

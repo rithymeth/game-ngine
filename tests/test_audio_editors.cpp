@@ -144,6 +144,49 @@ AETHER_TEST(AudioEditor_WaveformPeaksStatsAndPreview) {
     imgui.Frame([&] { view.Draw(); });
 }
 
+AETHER_TEST(AudioEditor_WaveformDragKeepsItsAnchorDuringPlayback) {
+    HeadlessImGui imgui;
+    const SoundWave sound = Dc(0.25f, kRate);
+    Mixer mixer(kRate);
+    WaveformView view;
+    view.SetSound(&sound);
+    view.SetMixer(&mixer);
+    view.SetPlayhead(0.1f);
+    AETHER_CHECK(view.Play());
+
+    ImVec2 origin{};
+    f32 width = 0.0f;
+    const auto draw = [&] {
+        imgui.Frame([&] {
+            origin = ImGui::GetCursorScreenPos();
+            origin.y += ImGui::GetFrameHeightWithSpacing();
+            width = ImGui::GetContentRegionAvail().x;
+            view.Draw();
+        });
+    };
+    draw();
+    auto& io = ImGui::GetIO();
+    io.AddMousePosEvent(origin.x + width * 0.3f, origin.y + 40.0f);
+    draw();
+    io.AddMouseButtonEvent(0, true);
+    draw();
+    const f32 pressed_at = view.Playhead();
+    AETHER_CHECK(std::fabs(pressed_at - 0.3f) < 0.01f && !view.HasSelection());
+
+    // The preview moves the playhead, but not the pressed end of the selection.
+    for (f32 target : {0.65f, 0.8f}) {
+        Render(mixer, 2400);
+        io.AddMousePosEvent(origin.x + width * target, origin.y + 40.0f);
+        draw();
+        AETHER_CHECK(view.Playing() && view.HasSelection());
+        AETHER_CHECK(std::fabs(view.SelectionFrom() - pressed_at) < 0.001f);
+        AETHER_CHECK(std::fabs(view.SelectionTo() - target) < 0.01f);
+    }
+    io.AddMouseButtonEvent(0, false);
+    draw();
+    view.Stop();
+}
+
 AETHER_TEST(AudioEditor_CueDocumentEditsAndSaves) {
     SoundCueDocument doc;
     doc.SetSounds({"step1", "step2", "step3"});

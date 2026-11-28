@@ -53,7 +53,8 @@ SoundStats AnalyzeSound(const audio::SoundWave& s) {
 void WaveformView::SetSound(const audio::SoundWave* sound) {
     Stop();
     sound_ = sound;
-    playhead_ = sel_from_ = sel_to_ = 0.0f;
+    playhead_ = sel_from_ = sel_to_ = selection_anchor_ = 0.0f;
+    dragging_selection_ = false;
     stats_ = sound != nullptr ? AnalyzeSound(*sound) : SoundStats{};
     ShowAll();
 }
@@ -170,10 +171,10 @@ void WaveformView::Draw(f32 height) {
     const f32 at = static_cast<f32>(view_start_ + (io.MousePos.x - origin.x) / width * static_cast<f32>(view_frames_)) / rate;
     if (ImGui::IsItemActivated()) {
         SetPlayhead(at);
-        sel_from_ = sel_to_ = playhead_;
+        selection_anchor_ = sel_from_ = sel_to_ = playhead_;
         dragging_selection_ = true;
     }
-    if (ImGui::IsItemActive() && dragging_selection_ && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) SetSelection(playhead_, at);
+    if (ImGui::IsItemActive() && dragging_selection_ && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) SetSelection(selection_anchor_, at);
     if (!ImGui::IsItemActive()) dragging_selection_ = false;
     if (ImGui::IsItemHovered() && io.MouseWheel != 0.0f) {
         if (io.KeyShift) ScrollBy(static_cast<i64>(-io.MouseWheel * static_cast<f32>(view_frames_) * 0.1f));
