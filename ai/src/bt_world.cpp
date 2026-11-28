@@ -125,7 +125,8 @@ void BehaviorTreeWorld::Update(f32 dt) {
         live.accumulated += dt;
         // Start immediately without charging an interval that has not elapsed.
         if (!started && live.accumulated + 1e-6f < c.tick_interval) continue;
-        const f32 step = c.tick_interval > 0.0f ? live.accumulated : dt;
+        // Keep any time already queued if the component switches to per-frame ticking.
+        const f32 step = live.accumulated;
         live.accumulated = 0.0f;
         BtContext ctx{&world_, e, &c.Board(), &hooks};
         live.instance->Tick(ctx, step);

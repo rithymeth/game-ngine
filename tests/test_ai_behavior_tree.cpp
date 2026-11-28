@@ -665,6 +665,36 @@ AETHER_TEST(AI_BtImmediateStartAndRestartUseOnlyElapsedTime) {
     CHECK(calls.size() == 3 && calls.back().first && Near(calls.back().dt, 0.125f, 1e-6f));
 }
 
+AETHER_TEST(AI_BtTickIntervalChangePreservesPendingTime) {
+    Library lib;
+    lib.trees["Timed"] = Tree(N(BtNodeType::RunLuau));
+    World world;
+    BehaviorTreeWorld bt(world, lib.Lookup());
+    std::vector<f32> steps;
+    bt.hooks.run_luau = [&](Entity, const std::string&, f32 dt, bool) {
+        steps.push_back(dt);
+        return BtStatus::Running;
+    };
+    BehaviorTreeComponent component;
+    component.tree = "Timed";
+    component.tick_interval = 0.5f;
+    const Entity actor = world.CreateEntity(component);
+
+    bt.Update(0.125f); // immediate start
+    CHECK(steps.size() == 1 && steps.back() == 0.125f);
+    bt.Update(0.125f);
+    bt.Update(0.125f);
+    CHECK(steps.size() == 1);
+
+    world.GetComponent<BehaviorTreeComponent>(actor)->tick_interval = 0.0f;
+    bt.Update(0.125f);
+    CHECK(steps.size() == 2 && steps.back() == 0.375f);
+    bt.Update(0.125f);
+    CHECK(steps.size() == 3 && steps.back() == 0.125f);
+    const auto* instance = bt.InstanceOf(actor);
+    CHECK(instance != nullptr && instance->Time() == 0.625);
+}
+
 AETHER_TEST(AI_BtMoveToWithAgents) {
     World world;
     ModelRenderer floor;
