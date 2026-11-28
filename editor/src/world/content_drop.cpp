@@ -67,20 +67,24 @@ std::string PlaceTilemap(SceneDocument& document, const std::filesystem::path& c
     sprite2d::Tileset tileset_data;
     if (!sprite2d::LoadTileset(database.SourcePath(tileset->guid), tileset_data, &error))
         return "Could not place " + path + ": " + tileset->path + ": " + error;
-    // Only texture-backed tiles have to fit a UV grid. Textureless
-    // collision tiles can deliberately use arbitrary non-negative IDs.
-    if (!tileset_data.texture.IsNull() && map.width != 0) {
+    if (map.width != 0) {
+        // Only texture-backed concrete IDs must fit a UV grid. Autotile
+        // references need a rule even when painted for collision alone.
+        const bool textured = !tileset_data.texture.IsNull();
         const u32 count = tileset_data.TileCount();
         for (usize layer = 0; layer < map.layers.size(); ++layer) {
             const auto& cells = map.layers[layer].cells;
             const auto bad = std::find_if(cells.begin(), cells.end(), [&](i32 tile) {
-                return tile >= 0 && static_cast<u32>(tile) >= count;
+                if (tile >= 0) return textured && static_cast<u32>(tile) >= count;
+                return sprite2d::IsAutotileCell(tile) && sprite2d::AutotileIndex(tile) >= tileset_data.autotiles.size();
             });
             if (bad == cells.end()) continue;
             const usize index = static_cast<usize>(bad - cells.begin());
-            return "Could not place " + path + ": layer " + std::to_string(layer) + " cell (" +
-                std::to_string(index % map.width) + ", " + std::to_string(index / map.width) + ") uses tile index " +
-                std::to_string(*bad) + " outside the " + std::to_string(count) + "-tile grid in " + tileset->path;
+            const std::string cell = "Could not place " + path + ": layer " + std::to_string(layer) + " cell (" +
+                std::to_string(index % map.width) + ", " + std::to_string(index / map.width) + ")";
+            if (sprite2d::IsAutotileCell(*bad))
+                return cell + " uses missing autotile rule " + std::to_string(sprite2d::AutotileIndex(*bad)) + " in " + tileset->path;
+            return cell + " uses tile index " + std::to_string(*bad) + " outside the " + std::to_string(count) + "-tile grid in " + tileset->path;
         }
     }
     sprite2d::TilemapRenderer renderer;

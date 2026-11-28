@@ -1544,6 +1544,13 @@ AETHER_TEST(Openers_TilemapDropRefusesAnUnreadableTileset) {
     if (!sprite2d::SaveTileset(set_file, tileset)) { CHECK(false); return; }
     PlaceContentAsset(scene, paths.content, "Ground.atilemap", Vec3{}, &placed);
     CHECK(placed && scene.Entities().size() == before + 1 && scene.CanUndo());
+
+    map.Set(0, 1, 0, sprite2d::AutotileCell(0)); // no rule exists on this textureless tileset
+    if (!sprite2d::SaveTilemap(paths.content / "Ground.atilemap", map)) { CHECK(false); return; }
+    CHECK(scene.Undo() && !scene.CanUndo());
+    const auto missing_rule = PlaceContentAsset(scene, paths.content, "Ground.atilemap", Vec3{}, &placed);
+    CHECK(!placed && missing_rule.find("cell (1, 0) uses missing autotile rule 0") != std::string::npos);
+    CHECK(scene.Entities().size() == before && !scene.CanUndo() && scene.CanRedo());
 }
 
 AETHER_TEST(Openers_AuthoredTilemapWorksInAnIndependentStrictShippingPackage) {
@@ -1724,6 +1731,13 @@ AETHER_TEST(Openers_AuthoredTilemapWorksInAnIndependentStrictShippingPackage) {
     CHECK(sprite2d::ResolveTile(rule_map, rule_set, 0, 5, 5) == sprite2d::kEmpty);
     if (!sprite2d::SaveTileset(set_path, rule_set, &error) ||
         !sprite2d::SaveTilemap(map_path, rule_map, &error)) { CHECK(false); return; }
+    SceneDocument rule_drop;
+    rule_drop.Commands().Clear();
+    const auto rule_drop_before = rule_drop.Entities().size();
+    bool placed_rule = true;
+    const auto rule_problem = PlaceContentAsset(rule_drop, paths.content, "Ground.atilemap", at, &placed_rule);
+    CHECK(!placed_rule && rule_problem.find("layer 0 cell (5, 5) uses missing autotile rule 1 in Ground.atileset") != std::string::npos);
+    CHECK(rule_drop.Entities().size() == rule_drop_before && !rule_drop.CanUndo());
     options.output_dir = paths.root.parent_path() / "Rejected Missing Autotile";
     const auto missing_rule = cook::Package(options);
     CHECK(!missing_rule.ok && missing_rule.error.find(
@@ -1732,6 +1746,8 @@ AETHER_TEST(Openers_AuthoredTilemapWorksInAnIndependentStrictShippingPackage) {
     rule_map.Set(0, 5, 5, sprite2d::AutotileCell(0));
     CHECK(sprite2d::ResolveTile(rule_map, rule_set, 0, 5, 5) == 3);
     if (!sprite2d::SaveTilemap(map_path, rule_map, &error)) { CHECK(false); return; }
+    PlaceContentAsset(rule_drop, paths.content, "Ground.atilemap", at, &placed_rule);
+    CHECK(placed_rule && rule_drop.Entities().size() == rule_drop_before + 1 && rule_drop.CanUndo());
 
     options.output_dir = paths.root.parent_path() / "Shipping";
     const auto staged = cook::Package(options);
