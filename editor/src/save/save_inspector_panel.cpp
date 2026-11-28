@@ -140,7 +140,10 @@ void SaveInspectorPanel::Draw() {
     ImGui::EndDisabled();
     ImGui::SameLine();
     ImGui::BeginDisabled(doc_.IsBackupFile());
-    if (ImGui::Button("Delete...")) confirm_delete_ = true;
+    if (ImGui::Button("Delete...")) {
+        delete_revision_ = doc_.Revision();
+        ImGui::OpenPopup("Delete save?");
+    }
     ImGui::EndDisabled();
     ImGui::SameLine();
     if (ImGui::Button("Copy as...")) open_copy_ = true;
@@ -149,18 +152,19 @@ void SaveInspectorPanel::Draw() {
         ImGui::SameLine();
         ImGui::TextDisabled("%s", message_.c_str());
     }
-    if (confirm_delete_) {
-        ImGui::OpenPopup("Delete save?");
-        confirm_delete_ = false;
-    }
     if (ImGui::BeginPopupModal("Delete save?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("Delete %s and its backup?", doc_.File().filename().string().c_str());
-        if (ImGui::Button("Delete")) {
-            DeleteOpen();
+        if (doc_.Revision() != delete_revision_) {
+            // Switching or reloading a file invalidates the original confirmation.
             ImGui::CloseCurrentPopup();
+        } else {
+            ImGui::Text("Delete %s and its backup?", doc_.File().filename().string().c_str());
+            if (ImGui::Button("Delete")) {
+                DeleteOpen();
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
     if (open_copy_) {

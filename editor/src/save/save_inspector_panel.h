@@ -55,7 +55,7 @@ private:
     std::string copy_name_;
     std::string copy_error_;
     std::string message_;
-    bool confirm_delete_ = false;
+    u64 delete_revision_ = 0;
     bool open_copy_ = false;
 };
 

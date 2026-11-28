@@ -376,6 +376,45 @@ AETHER_TEST(SaveInspector_CopyErrorIsVisibleInsideTheModal) {
     CHECK(error > input); // the message was drawn inside the popup, after its input
 }
 
+AETHER_TEST(SaveInspector_ChangingTheOpenFileCancelsDeleteConfirmation) {
+    HeadlessImGui ui;
+    const auto original = MakeBagSave(Dir("panel_delete_switch") / "first");
+    const auto replacement = MakeBagSave(original.parent_path().parent_path() / "second");
+    SaveInspectorDocument doc;
+    SaveInspectorPanel panel(doc);
+    CHECK(doc.Open(original));
+
+    ImVec2 delete_button;
+    const auto draw = [&] {
+        delete_button = ImGui::GetCursorScreenPos();
+        const auto& style = ImGui::GetStyle();
+        for (const char* label : {"Refresh", "Reload", "Open backup"})
+            delete_button.x += ImGui::CalcTextSize(label).x + 2 * style.FramePadding.x + style.ItemSpacing.x;
+        delete_button.x += 10.0f;
+        delete_button.y += ImGui::GetFrameHeight() * 0.5f;
+        panel.Draw();
+    };
+    ui.Frame(draw);
+    auto& io = ImGui::GetIO();
+    io.AddMousePosEvent(delete_button.x, delete_button.y);
+    ui.Frame(draw);
+    io.AddMouseButtonEvent(0, true);
+    ui.Frame(draw);
+    io.AddMouseButtonEvent(0, false);
+    ui.Frame([&] {
+        draw();
+        CHECK(ImGui::IsPopupOpen("Delete save?"));
+    });
+
+    CHECK(doc.Open(replacement));
+    ui.Frame([&] {
+        draw();
+        CHECK(!ImGui::IsPopupOpen("Delete save?"));
+    });
+    CHECK(stdfs::exists(original) && stdfs::exists(replacement));
+    CHECK(stdfs::exists(original.string() + ".bak") && stdfs::exists(replacement.string() + ".bak"));
+}
+
 AETHER_TEST(SaveInspector_PanelDeleteRescans) {
     const stdfs::path dir = Dir("panel_delete");
     const stdfs::path file = MakeBagSave(dir);
