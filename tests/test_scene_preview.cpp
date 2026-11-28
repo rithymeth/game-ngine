@@ -895,6 +895,22 @@ return CountUpdates
         panel.SyncSession(document);
         shading.Stop();
     }
+    {
+        LiveViewportPanel panel(*device, scene, [&] { return project; });
+        panel.width = 128;
+        panel.height = 72;
+        AETHER_CHECK(panel.Start());
+        AETHER_CHECK(!panel.run_game);
+        AETHER_CHECK(panel.Advance(dt));
+        AETHER_CHECK(panel.Viewport().ScriptInstanceCount() == 1); // script lifecycle stays available for authoring
+        AETHER_CHECK(position_is(panel.Viewport(), 0));
+        AETHER_CHECK(panel.Advance(dt) && position_is(panel.Viewport(), 0));
+        panel.run_game = true;
+        AETHER_CHECK(panel.Advance(dt) && position_is(panel.Viewport(), 1));
+        panel.run_game = false;
+        AETHER_CHECK(panel.Advance(dt) && position_is(panel.Viewport(), 1));
+        panel.Stop();
+    }
 }
 
 #if defined(AETHER_HAS_EDITOR_VULKAN)

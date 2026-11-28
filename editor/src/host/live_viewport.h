@@ -76,16 +76,17 @@ public:
     u32 Height() const;
 
     // DrawOnly refreshes the picture without calling Game::Tick, even at zero dt.
-    enum class FrameMode { Advance, DrawOnly };
+    // SyncAndDraw also reconciles authored component lifecycles, but runs no gameplay update phases.
+    enum class FrameMode { Advance, DrawOnly, SyncAndDraw };
 
-    // Advances the game by `dt` seconds unless DrawOnly, puts the scene's camera at `position` looking as `rotation` (with `fov_degrees` if above zero),
+    // In Advance mode, ticks the game by `dt` seconds. Then puts the scene's camera at `position` looking as `rotation` (with `fov_degrees` if above zero),
     // draws, and reads the picture back. The scene keeps its own camera (the active one, or one made here when it has none); `projection`
     // and `ortho_height` select the parallel view. With `free_camera` the game's camera is only borrowed for the picture and put back
     // afterwards, which is what Simulate does: the game simulates from its own camera, the picture from the editor's view. False if
     // nothing is loaded or the picture could not be read.
     bool Frame(f32 dt, const Vec3& position, const Quaternion& rotation, f32 fov_degrees = 0.0f, Projection projection = Projection::Perspective,
                f32 ortho_height = 0.0f, bool free_camera = false, FrameMode mode = FrameMode::Advance);
-    // Advances the game by `dt` seconds unless DrawOnly and draws from its own camera: the active Camera entity at the pose, field of view and projection
+    // In Advance mode, ticks the game by `dt` seconds. Draws from its own camera: the active Camera entity at the pose, field of view and projection
     // the game has left it in (one is made here when the scene has none), with nothing borrowed from the editor. This is the Game View's
     // frame: what a player would see. False if nothing is loaded or the picture could not be read.
     bool FrameGameCamera(f32 dt, FrameMode mode = FrameMode::Advance);

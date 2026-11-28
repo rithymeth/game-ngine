@@ -178,7 +178,9 @@ bool LiveViewportPanel::Advance(f32 dt) {
     if (!reloaded && since_frame_ < 1.0f / std::max(max_fps, 1.0f)) return false;
     const f32 elapsed = since_frame_;
     since_frame_ = 0.0f;
-    if (!viewport_.Frame(run_game ? elapsed : 0.0f, camera_.Eye(), camera_.Rotation(), camera_.fov_degrees)) return false;
+    const auto mode = run_game ? LiveViewport::FrameMode::Advance : LiveViewport::FrameMode::SyncAndDraw;
+    if (!viewport_.Frame(elapsed, camera_.Eye(), camera_.Rotation(), camera_.fov_degrees,
+                         Projection::Perspective, 0.0f, false, mode)) return false;
     fps_ = fps_ <= 0.0f ? 1.0f / std::max(elapsed, 1e-3f) : fps_ * 0.9f + (1.0f / std::max(elapsed, 1e-3f)) * 0.1f; // smoothed, so the number can be read
     return texture_.Set(viewport_.Width(), viewport_.Height(), viewport_.Pixels());
 }

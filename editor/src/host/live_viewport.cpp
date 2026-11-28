@@ -363,7 +363,11 @@ bool LiveViewport::RenderFrame(f32 dt, const Vec3* position, const Quaternion* r
                                f32 ortho_height, bool free_camera, FrameMode mode) {
     if (!impl_) return false;
     Impl& live = *impl_;
-    if (mode == FrameMode::Advance) live.game->Tick(std::clamp(dt, 0.0f, 0.1f));
+    if (mode == FrameMode::Advance) {
+        live.game->Tick(std::clamp(dt, 0.0f, 0.1f));
+    } else if (mode == FrameMode::SyncAndDraw) {
+        live.game->GetLifecycle().Sync(); // create or retire edited scripts without running OnUpdate
+    }
     World& world = live.game->GetWorld();
     const GuidIndex& guids = live.game->Guids();
     Entity camera_entity = FindActiveCamera(world, guids);
