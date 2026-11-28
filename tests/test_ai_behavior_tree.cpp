@@ -364,6 +364,46 @@ AETHER_TEST(AI_BtDecorators) {
     CHECK(inv.logs == std::vector<std::string>{"ok"});
 }
 
+AETHER_TEST(AI_BtLoopRestartsWait) {
+    Runner r(Tree(With(Wait(1.0f), Deco(BtDecoratorType::Loop, 0, 2))));
+    CHECK(r.Tick(0.0f) == BtStatus::Running);
+    CHECK(r.Tick(1.0f) == BtStatus::Running); // end of the first wait
+    CHECK(r.Tick(0.25f) == BtStatus::Running); // enter the second wait
+    CHECK(r.Tick(0.75f) == BtStatus::Running);
+    CHECK(r.Tick(0.25f) == BtStatus::Success);
+    CHECK(r.inst->RootRuns() == 1);
+}
+
+AETHER_TEST(AI_BtLoopRestartsBlueprint) {
+    BtNode bp = With(N(BtNodeType::RunBlueprint), Deco(BtDecoratorType::Loop, 0, 2));
+    bp.event = "Dance";
+    BtService ping;
+    ping.type = BtServiceType::Blueprint;
+    ping.interval = 1.0f;
+    bp.services = {ping};
+    Runner r(Tree(bp));
+    int dispatches = 0, pings = 0;
+    r.hooks.run_blueprint = [&](Entity, const std::string& event) {
+        CHECK(event == "Dance");
+        ++dispatches;
+        return true;
+    };
+    r.hooks.blueprint_service = [&](Entity, const std::string&) { ++pings; };
+
+    CHECK(r.Tick(0.0f) == BtStatus::Running);
+    CHECK(dispatches == 1 && pings == 1);
+    CHECK(r.inst->FinishLatent(BtStatus::Success, "Dance"));
+    CHECK(r.Tick(0.25f) == BtStatus::Running);
+    CHECK(!r.inst->FinishLatent(BtStatus::Success, "Dance")); // not dispatched yet
+    CHECK(r.Tick(0.25f) == BtStatus::Running);
+    CHECK(dispatches == 2 && pings == 1); // loop restarts the task, not its service
+    CHECK(r.Tick(0.5f) == BtStatus::Running);
+    CHECK(dispatches == 2 && pings == 2);
+    CHECK(r.inst->FinishLatent(BtStatus::Success, "Dance"));
+    CHECK(r.Tick(0.25f) == BtStatus::Success);
+    CHECK(r.inst->RootRuns() == 1);
+}
+
 AETHER_TEST(AI_BtParallel) {
     BtNode one = N(BtNodeType::Parallel, {N(BtNodeType::Sequence, {Wait(1), Log("fast")}), N(BtNodeType::Sequence, {Wait(3), Log("slow")})});
     one.succeed_on_one = true;

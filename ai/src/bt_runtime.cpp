@@ -164,7 +164,10 @@ BtStatus BehaviorTreeInstance::Run(usize i, BtContext& ctx, f32 dt) {
         }
     }
     RunServices(i, ctx, dt);
-    BtStatus status = Execute(i, ctx, dt, entering);
+    // Loop re-enters the task without re-entering the branch or restarting its services.
+    const bool first_tick = st.first;
+    st.first = false;
+    BtStatus status = Execute(i, ctx, dt, first_tick);
     if (status == BtStatus::Running) return status;
     for (const BtDecorator& d : n.decorators) {
         if (d.type == BtDecoratorType::Loop && status == BtStatus::Success && (d.count == 0 || ++st.loops < d.count)) {
@@ -278,9 +281,7 @@ BtStatus BehaviorTreeInstance::Execute(usize i, BtContext& ctx, f32 dt, bool ent
         return BtStatus::Running;
     case BtNodeType::RunLuau: {
         if (ctx.hooks == nullptr || !ctx.hooks->run_luau) return BtStatus::Failure;
-        const BtStatus r = ctx.hooks->run_luau(ctx.entity, n.event, dt, st.first);
-        st.first = false;
-        return r;
+        return ctx.hooks->run_luau(ctx.entity, n.event, dt, entering);
     }
     case BtNodeType::Log:
         if (ctx.hooks != nullptr && ctx.hooks->log) ctx.hooks->log(ctx.entity, n.event);
