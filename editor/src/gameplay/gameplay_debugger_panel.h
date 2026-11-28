@@ -16,7 +16,7 @@ public:
     explicit GameplayDebuggerPanel(GameplayDebuggerDocument& document) : doc_(document) {}
 
     const std::string& Message() const { return message_; }
-    void Draw();
+    void Draw(u64 world_generation = 0);
 
 private:
     GameplayDebuggerDocument& doc_;

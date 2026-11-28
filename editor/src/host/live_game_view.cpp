@@ -54,7 +54,8 @@ EditorWorkspace::GameplaySource LiveGameView::GameplaySource(const SceneDocument
     const auto* game = viewport_.GameForDebugging();
     if (!game) return {};
     const auto runtime = game->GameplayForDebugging();
-    return {runtime.world, runtime.attributes, runtime.effects, runtime.abilities, runtime.effect_library, runtime.ability_library};
+    return {runtime.world, runtime.attributes, runtime.effects, runtime.abilities, runtime.effect_library,
+            runtime.ability_library, runtime.world_generation};
 }
 
 void LiveGameView::Stop() {
