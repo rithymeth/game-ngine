@@ -6,6 +6,19 @@
 
 namespace aether::gas {
 
+thread_local const GameplayLibraryScope* GameplayLibraryScope::current_ = nullptr;
+
+GameplayLibraryScope::GameplayLibraryScope(AttributeSystem& attributes, EffectSystem& effects, AbilitySystem& abilities)
+    : previous_(current_), attributes_(attributes), effects_(effects), abilities_(abilities) {
+    current_ = this;
+}
+
+GameplayLibraryScope::~GameplayLibraryScope() { current_ = previous_; }
+
+AttributeSystem* GameplayLibraryScope::Attributes() { return current_ ? &current_->attributes_ : AttributeSystem::Active(); }
+EffectSystem* GameplayLibraryScope::Effects() { return current_ ? &current_->effects_ : EffectSystem::Active(); }
+AbilitySystem* GameplayLibraryScope::Abilities() { return current_ ? &current_->abilities_ : AbilitySystem::Active(); }
+
 namespace {
 
 class GameplayKit : public kit::IKit {

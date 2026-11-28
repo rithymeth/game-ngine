@@ -13,6 +13,28 @@
 
 namespace aether::gas {
 
+// Binds the reflected gameplay libraries during a synchronous native call.
+// Nested calls restore the prior binding; code outside a scope keeps the
+// standalone libraries' active-system behavior.
+class GameplayLibraryScope {
+public:
+    GameplayLibraryScope(AttributeSystem& attributes, EffectSystem& effects, AbilitySystem& abilities);
+    ~GameplayLibraryScope();
+    GameplayLibraryScope(const GameplayLibraryScope&) = delete;
+    GameplayLibraryScope& operator=(const GameplayLibraryScope&) = delete;
+
+    static AttributeSystem* Attributes();
+    static EffectSystem* Effects();
+    static AbilitySystem* Abilities();
+
+private:
+    static thread_local const GameplayLibraryScope* current_;
+    const GameplayLibraryScope* previous_;
+    AttributeSystem& attributes_;
+    EffectSystem& effects_;
+    AbilitySystem& abilities_;
+};
+
 // The gameplay module as a kit (Phase 37 step 4): tags, attributes, effects and abilities. The other gameplay
 // kits depend on it.
 std::unique_ptr<kit::IKit> MakeGameplayKit(EffectLibrary* effects = nullptr, AbilityLibrary* abilities = nullptr);

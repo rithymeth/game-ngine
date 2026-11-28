@@ -2,10 +2,13 @@
 
 #include "aether/assets/asset_guid.h"
 #include "aether/blueprint/compiler.h"
+#include "aether/blueprint/system.h"
 #include "aether/blueprint/vm.h"
 #include "aether/ecs/world.h"
+#include "aether/gameplay/ability_system.h"
 #include "aether/gameplay/attribute_library.h"
 #include "aether/gameplay/attribute_system.h"
+#include "aether/gameplay/effect_system.h"
 #include "aether/pak/pak.h"
 #include "aether/player/game.h"
 #include "aether/reflection/registry.h"
@@ -249,4 +252,90 @@ return Charge
     CHECK(value(first, a) == 136 && value(second, b) == 211);
     second.EndPlay();
     CHECK(value(first, a) == 136 && value(second, b) == 311);
+}
+
+AETHER_TEST(Gameplay_PlayerBlueprintsUseTheirOwnRuntime) {
+    const auto dir = std::filesystem::temp_directory_path() / "aether_two_blueprint_games";
+    std::filesystem::create_directories(dir);
+    const auto file = dir / "Game.apak";
+    const assets::AssetGuid blueprint_id = assets::NewAssetGuid();
+    const auto asset = [](assets::AssetGuid guid, const char* path, const char* importer) {
+        return nlohmann::json{{"guid", assets::ToString(guid)}, {"path", path}, {"importer", importer}};
+    };
+    const nlohmann::json manifest = {{"$type", "CookManifest"}, {"$version", 1}, {"project", "Blueprint Worlds"},
+        {"configuration", "Development"}, {"startup_scene", "Scenes/start.ascene"},
+        {"assets", nlohmann::json::array({asset(blueprint_id, "Blueprints/Charge.abp", "Blueprint"),
+            asset(assets::NewAssetGuid(), "Effects/Charge.aeffect", "GameplayEffect"),
+            asset(assets::NewAssetGuid(), "Abilities/Boost.aability", "GameplayAbility")})}};
+    bp::Blueprint blueprint;
+    blueprint.graphs.emplace_back().name = "EventGraph";
+    bp::GraphBuilder graph(blueprint.graphs.back());
+    const bp::NodeId self = graph.Add("Entity.Self");
+    const auto change = [&](const char* event, int delta) {
+        const auto entry = graph.Add(event), add = graph.Add("Call.Native:Attributes.AddAttributeBase");
+        graph.Connect(entry, "then", add, "exec").Connect(self, "self", add, "target");
+        graph.Default(add, "name", "Charge").Default(add, "delta", delta);
+        return add;
+    };
+    const auto begin = change("Event.BeginPlay", 1);
+    const auto apply = graph.Add("Call.Native:Effects.ApplyEffect");
+    const auto grant = graph.Add("Call.Native:Abilities.GrantAbility");
+    graph.Connect(begin, "then", apply, "exec").Connect(apply, "then", grant, "exec");
+    graph.Connect(self, "self", apply, "target").Connect(self, "self", apply, "source").Connect(self, "self", grant, "owner");
+    graph.Default(apply, "effect", "Charged").Default(grant, "ability", "Boost");
+    change("Event.Tick", 10);
+    change("Event.EndPlay", 100);
+    pak::PakWriter writer;
+    CHECK(writer.Add("Manifest.json", manifest.dump()));
+    CHECK(writer.Add("Content/Scenes/start.ascene", std::string(R"({"$type":"Scene","$version":1,"entities":[]})")));
+    CHECK(writer.Add("Content/Blueprints/Charge.abp", bp::BlueprintToJson(blueprint).dump()));
+    CHECK(writer.Add("Content/Effects/Charge.aeffect", std::string(R"({"name":"Charged","duration_policy":"timed","duration":5})")));
+    CHECK(writer.Add("Content/Abilities/Boost.aability", std::string(R"({"name":"Boost"})")));
+    if (!writer.Write(file.string())) { CHECK(false); return; }
+    player::GamePackage package;
+    std::string error;
+    if (!package.Mount(file.string(), 0, &error) || !package.LoadManifest(&error)) { CHECK(false); return; }
+
+    player::Game first(package), second(package);
+    if (!first.LoadStartupScene(&error)) { CHECK(false); return; }
+    const auto* first_fx = EffectSystem::Active();
+    const auto* first_ab = AbilitySystem::Active();
+    if (!second.LoadStartupScene(&error)) { CHECK(false); return; }
+    const auto* second_fx = EffectSystem::Active();
+    const auto* second_ab = AbilitySystem::Active();
+    if (!first_fx || !first_ab || !second_fx || !second_ab) { CHECK(false); return; }
+    const auto actor = [&](player::Game& game, f32 initial) {
+        AttributeSet attrs;
+        attrs.Define("Charge", initial);
+        bp::BlueprintInstance instance;
+        instance.blueprint.guid = blueprint_id;
+        return game.GetWorld().CreateEntity(Transform{Vec3(), Quaternion::Identity()}, attrs, instance);
+    };
+    const Entity a = actor(first, 25), b = actor(second, 200);
+    CHECK(a == b); // both worlds must be able to resolve this numeric handle
+    const auto value = [](player::Game& game, Entity e) {
+        const auto* attrs = game.GetWorld().GetComponent<AttributeSet>(e);
+        return attrs ? attrs->Get("Charge") : -1000.0f;
+    };
+
+    first.BeginPlay(); // the second game was loaded most recently
+    CHECK(first.BlueprintErrors().empty());
+    CHECK(value(first, a) == 26 && value(second, b) == 200);
+    CHECK(first_fx->HasEffect(a, "Charged") && !second_fx->HasEffect(b, "Charged"));
+    CHECK(first_ab->IsGranted(a, "Boost") && !second_ab->IsGranted(b, "Boost"));
+    CHECK(EffectSystem::Active() == second_fx && AbilitySystem::Active() == second_ab);
+    second.BeginPlay();
+    CHECK(second.BlueprintErrors().empty());
+    CHECK(value(first, a) == 26 && value(second, b) == 201);
+    CHECK(first_fx->HasEffect(a, "Charged") && second_fx->HasEffect(b, "Charged"));
+    CHECK(first_ab->IsGranted(a, "Boost") && second_ab->IsGranted(b, "Boost"));
+    first.Tick(1.0f / 60.0f);
+    CHECK(value(first, a) == 36 && value(second, b) == 201);
+    second.Tick(1.0f / 60.0f);
+    CHECK(value(first, a) == 36 && value(second, b) == 211);
+    first.EndPlay();
+    CHECK(value(first, a) == 136 && value(second, b) == 211);
+    second.EndPlay();
+    CHECK(value(first, a) == 136 && value(second, b) == 311);
+    CHECK(first.BlueprintErrors().empty() && second.BlueprintErrors().empty());
 }

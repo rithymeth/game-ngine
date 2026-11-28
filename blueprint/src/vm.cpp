@@ -665,10 +665,14 @@ void BlueprintVM::NativeCallOp(Instance& instance, const CompiledFunction& fn, c
                              arg.reg.bank == Bank::String ? frame.s[arg.reg.index] : std::string(), arg.type));
     }
     reflect::Any result;
-    const bool ok = call.has_target && call.owner != nullptr
-                        ? CallFunction(world_, frame.r[call.target.index].AsEntity(), *call.owner, *call.function, self,
-                                       args, call.has_result ? &result : nullptr)
-                        : call.function->Invoke(self, args, call.has_result ? &result : nullptr);
+    reflect::Any* out = call.has_result ? &result : nullptr;
+    bool ok;
+    if (call.has_target && call.owner != nullptr) {
+        ok = CallFunction(world_, frame.r[call.target.index].AsEntity(), *call.owner, *call.function, self, args, out);
+    } else {
+        ok = static_native_invoker_ ? static_native_invoker_(*call.function, args, out)
+                                    : call.function->Invoke(self, args, out);
+    }
     if (!ok) {
         Warn("BP204", instance, fn, node, std::string("The call to '") + call.function->name + "' was refused.");
         return;

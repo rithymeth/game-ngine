@@ -889,6 +889,13 @@ void Game::StartRuntime() {
     runtime_->attributes = std::make_unique<gas::AttributeSystem>(*world_); // attributes of this scene's entities
     runtime_->effects = std::make_unique<gas::EffectSystem>(*world_, *runtime_->attributes, effects_);
     runtime_->abilities = std::make_unique<gas::AbilitySystem>(*world_, *runtime_->attributes, *runtime_->effects, abilities_, effects_);
+    // Both the VM and these systems are owned by the same scene runtime.
+    runtime_->blueprints->VM().SetStaticNativeInvoker(
+        [attrs = runtime_->attributes.get(), effects = runtime_->effects.get(), abilities = runtime_->abilities.get()]
+        (const reflect::FunctionInfo& function, std::span<reflect::Any> args, reflect::Any* result) {
+            gas::GameplayLibraryScope scope(*attrs, *effects, *abilities);
+            return function.Invoke(nullptr, args, result);
+        });
     CreateKitRuntime();
     runtime_->sequences = std::make_unique<seq::SequenceSystem>(
         *world_, guids_, [this](const std::string& path) { return FindSequence(path); }, lifecycle_.get());

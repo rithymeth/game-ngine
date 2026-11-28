@@ -21,6 +21,9 @@ struct Transform;
 namespace aether::assets {
 struct AssetGuid;
 }
+namespace aether::reflect {
+class Any;
+}
 
 namespace aether::bp {
 
@@ -155,6 +158,12 @@ public:
     // Where Print String goes (default: the engine log, category "Blueprint").
     void SetPrintHandler(std::function<void(Entity, const std::string&)> handler) { print_ = std::move(handler); }
 
+    // Lets a host provide world-specific services during a reflected static
+    // call. Without an invoker the VM invokes the function directly. Component
+    // methods still use the VM's world and its remote-call rules.
+    using StaticNativeInvoker = std::function<bool(const reflect::FunctionInfo&, std::span<reflect::Any>, reflect::Any*)>;
+    void SetStaticNativeInvoker(StaticNativeInvoker invoker) { static_native_invoker_ = std::move(invoker); }
+
     // --- Debugging -----------------------------------------------------
     // The handler runs at each stop, synchronously (PIE is paused inside it;
     // it must not run Blueprints on this VM). Null detaches the debugger.
@@ -251,6 +260,7 @@ private:
     std::vector<Frame> frames_; // one per call depth, reused: no allocation per dispatch
     u32 depth_ = 0;             // frames in use
     std::function<void(Entity, const std::string&)> print_;
+    StaticNativeInvoker static_native_invoker_;
     std::vector<RuntimeError> errors_;
     std::unordered_map<u64, bool> warned_; // BP201 once per (function, node)
     GuidIndex* guids_ = nullptr;

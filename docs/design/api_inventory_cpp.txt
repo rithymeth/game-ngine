@@ -1109,6 +1109,7 @@
   std::vector<VmValue>GetArray(Entity entity,std::string_view name)const
   u64 InstructionsRun()const
   using SpawnHandler=std::function<Entity(const assets::AssetGuid&blueprint,const Transform&transform,const nlohmann::json&exposed)>
+  using StaticNativeInvoker=std::function<bool(const reflect::FunctionInfo&,std::span<reflect::Any>,reflect::Any*)>
   usize DebugStops()const
   usize DispatchAll(std::string_view event,std::span<const VmValue>args=
   usize InstanceCount()const
@@ -1133,6 +1134,7 @@
   void SetPhysicsQueries(PhysicsQueries queries)
   void SetPrintHandler(std::function<void(Entity,const std::string&)>handler)
   void SetSpawnHandler(SpawnHandler handler)
+  void SetStaticNativeInvoker(StaticNativeInvoker invoker)
   void SetTraceEnabled(bool enabled,usize capacity=4096)
   void StartLatent(Instance&instance,u32 function,const Instr&in,Frame&frame)
   void Tick(f32 delta_seconds)
@@ -4124,13 +4126,21 @@
   usize Size()const
   void Clear()
 [gameplay/include/aether/gameplay/gameplay_kit.h] experimental
+  type class GameplayLibraryScope
   type struct GameplayAssetDiagnostic
+  GameplayLibraryScope&operator=(const GameplayLibraryScope&)=delete
+  GameplayLibraryScope(const GameplayLibraryScope&)=delete
   SystemDesc MakeAbilitySystem(AbilitySystem*system,std::function<void(const AbilityEvent&)>on_event)
   SystemDesc MakeAttributeSystem(AttributeSystem*system,std::function<void(const AttributeEvent&)>on_event)
   SystemDesc MakeEffectSystem(EffectSystem*system,std::function<void(const EffectEvent&)>on_event)
+  public:GameplayLibraryScope(AttributeSystem&attributes,EffectSystem&effects,AbilitySystem&abilities)
+  static AbilitySystem*Abilities()
+  static AttributeSystem*Attributes()
+  static EffectSystem*Effects()
   std::unique_ptr<kit::IKit>MakeGameplayKit(EffectLibrary*effects=nullptr,AbilityLibrary*abilities=nullptr)
   std::vector<GameplayAssetDiagnostic>LoadAbilityAssets(const std::vector<std::string>&paths,std::function<bool(const std::string&,std::vector<u8>&,std::string*)>read_content,const EffectLibrary&effects,AbilityLibrary&abilities)
   std::vector<GameplayAssetDiagnostic>LoadEffectAssets(const std::vector<std::string>&paths,std::function<bool(const std::string&,std::vector<u8>&,std::string*)>read_content,EffectLibrary&effects)
+  ~GameplayLibraryScope()
 [gameplay/include/aether/gameplay/gameplay_tag.h] experimental
   type struct GameplayTag
   AETHER_REFLECT(aether::gas::GameplayTag,1,AETHER_FIELD(name,Field_EditAnywhere,
