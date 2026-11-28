@@ -22,7 +22,7 @@ public:
 
     bool Start(const SceneDocument& document, u32 width, u32 height) override;
     bool Frame(f32 play_dt) override;
-    const ImageTexture& Picture() const override { return texture_; }
+    const ImageTexture& Picture() const override;
     const std::string& Note() const override { return note_; }
     void Stop() override;
 
@@ -34,7 +34,8 @@ private:
     ScenePanel& scene_;
     std::function<std::filesystem::path()> project_file_;
     LiveViewport viewport_;
-    ImageTexture texture_;
+    ImageTexture texture_; // keep the allocation across sessions for safe backend reuse
+    bool has_picture_ = false;
     std::string note_;
 };
 

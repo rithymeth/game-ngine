@@ -620,24 +620,44 @@ AETHER_TEST(GameView_PlaysTheSessionFromItsOwnCamera) {
     draw();
     AETHER_CHECK(live.Viewport().FrameCount() == frames + 1); // Step: exactly one frame of the game
     document.Play(); // Paused -> Playing again, for Stop
-    document.Stop();
-    draw();
-    AETHER_CHECK(!panel.Running() && !live.Viewport().Loaded() && panel.LastState().note.find("not running") != std::string::npos);
+    document.Stop(); // Game View is hidden and does not observe the Editing frame.
 
-    // The next session shows the document as it is now: the camera moved down to an eye-level look at the floor.
+    // The next session has a different camera, but is paused before the Game View becomes visible.
     const Entity camera_now = document.Guids().Find(document.GetWorld(), camera_guid); // handles do not survive Stop
     AETHER_CHECK(!camera_now.IsNull());
     if (camera_now.IsNull()) return;
     AETHER_CHECK(document.SetPosition(camera_now, Vec3(0.0f, 2.0f, 7.0f), true));
     AETHER_CHECK(document.SetRotation(camera_now, Quaternion::FromAxisAngle(Vec3(1.0f, 0.0f, 0.0f), -0.25f), true));
     document.Play();
+    document.Pause();
     draw();
-    AETHER_CHECK(panel.Running() && panel.LastState().has_picture);
+    AETHER_CHECK(panel.Running() && panel.LastState().paused && panel.LastState().has_picture);
+    AETHER_CHECK(live.Viewport().FrameCount() == 1); // a paused new session still needs its own first picture
     Vec3 game_camera2;
     const bool found2 = live.Viewport().PositionOf(camera_guid, game_camera2);
     const usize differing = DifferingPixels(top_down, live.Viewport().Pixels());
     AETHER_CHECK(found2 && (game_camera2 - Vec3(0.0f, 2.0f, 7.0f)).Length() < 0.5f); // the session runs the document's camera
     AETHER_CHECK(differing > 160u * 90u / 20); // a different game camera, a different picture
+    draw();
+    AETHER_CHECK(live.Viewport().FrameCount() == 1 && panel.LastState().has_picture); // keep this session's paused frame
+
+    document.Stop();
+    draw();
+    AETHER_CHECK(!panel.Running() && !live.Viewport().Loaded() && panel.LastState().note.find("not running") != std::string::npos);
+    AETHER_CHECK(!live.Picture().Valid());
+
+    // Force a real first-frame upload failure without changing the Vulkan device.
+    // There is still an ImageTexture allocation from earlier sessions, but no
+    // current ImGui context to accept the new pixels.
+    AETHER_CHECK(live.Start(document, 160, 90));
+    AETHER_CHECK(!live.Picture().Valid());
+    ImGuiContext* context = ImGui::GetCurrentContext();
+    ImGui::SetCurrentContext(nullptr);
+    const bool failed = !live.Frame(0.0f);
+    ImGui::SetCurrentContext(context);
+    AETHER_CHECK(failed && live.Viewport().FrameCount() == 1 && !live.Picture().Valid());
+    AETHER_CHECK(live.Frame(0.0f) && live.Viewport().FrameCount() == 2 && live.Picture().Valid());
+    AETHER_CHECK(!live.Frame(0.0f) && live.Viewport().FrameCount() == 2 && live.Picture().Valid());
 }
 
 #if defined(AETHER_HAS_EDITOR_VULKAN)
