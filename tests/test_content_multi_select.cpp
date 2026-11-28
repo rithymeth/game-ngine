@@ -9,7 +9,14 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iterator>
 #include <string>
+
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
 
 // Multiple selection in the Content Browser and the operations that act on it as one batch: duplicate, delete, move,
 // rename. A batch is the transaction -- one database rescan and one refresh per call -- and a delete that something
@@ -143,6 +150,48 @@ AETHER_TEST(ContentOps_DeleteIsAllOrNothing) {
     std::error_code ignore;
     stdfs::remove_all(project, ignore);
 }
+
+#if defined(_WIN32)
+AETHER_TEST(ContentOps_DeletePreservesAssetIdentityIfSourceIsLocked) {
+    ProjectPaths paths;
+    const auto project = FreshProject("delete_locked_source", paths);
+    const std::string relative = "asset-delete-lock.png";
+    const auto source = paths.content / relative;
+    const auto sidecar = paths.content / (relative + ".ameta");
+    stdfs::copy_file(kRepoAssets / "textures/checker_a.png", source);
+    AssetDatabase db(paths.content);
+    db.Scan();
+    const auto* existing = db.FindByPath(relative);
+    if (!existing) { CHECK(existing != nullptr); return; }
+    const AssetGuid guid = existing->guid;
+    const auto read = [](const auto& path) {
+        std::ifstream in(path, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    };
+    const auto source_before = read(source);
+    const auto meta_before = read(sidecar);
+    CHECK(!source_before.empty() && !meta_before.empty());
+
+    // Readers, including the asset database, still work. Only this source
+    // denies deletion; the adjacent metadata is not locked.
+    HANDLE locked = CreateFileW(source.c_str(), GENERIC_READ, FILE_SHARE_READ,
+                                nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (locked == INVALID_HANDLE_VALUE) { CHECK(locked != INVALID_HANDLE_VALUE); return; }
+    std::string error;
+    usize deleted = 99;
+    const bool ok = DeleteContents(db, {relative}, &error, &deleted);
+    CloseHandle(locked);
+    CHECK(!ok && deleted == 0 && error.find(relative) != std::string::npos);
+    CHECK(read(source) == source_before && read(sidecar) == meta_before);
+    db.Scan();
+    const auto* after = db.FindByPath(relative);
+    CHECK(after != nullptr && after->guid == guid);
+    CHECK(DeleteContents(db, {relative}, nullptr, &deleted) && deleted == 1);
+    CHECK(!stdfs::exists(source) && !stdfs::exists(sidecar) && !db.FindByPath(relative));
+    std::error_code ignore;
+    stdfs::remove_all(project, ignore);
+}
+#endif
 
 AETHER_TEST(ContentSelection_SelectsExtendsTogglesAndBoxSelects) {
     ProjectPaths paths;
