@@ -139,12 +139,15 @@ bool LiveSceneShading::Advance(SceneDocument& document, const SceneViewCamera& c
     if (since_frame_ < 1.0f / std::max(max_fps, 1.0f)) return texture_.Valid();
     since_frame_ = 0.0f;
     const bool ortho = camera.projection == SceneViewProjection::Orthographic;
-    // While the document plays, the game runs: the frame's own time (or one frame after Step) goes to the running scene, so physics,
-    // scripts and animation advance. Paused -- and while editing -- nothing moves in the picture. Simulate borrows the camera for the
-    // picture only, so the running game keeps its own.
-    if (!viewport_.Frame(document.PlayDelta(dt), camera.Eye(), camera.Rotation(), camera.fov_degrees,
+    // A normal play frame or Step advances gameplay. A paused redraw can move the editor camera without running Update.
+    // Keep the existing editing preview path, including its zero-time updates.
+    const f32 play_dt = document.PlayDelta(dt);
+    const auto frame_mode = document.PlayState() == PlaySession::State::Paused && !(play_dt > 0.0f)
+                                ? LiveViewport::FrameMode::DrawOnly
+                                : LiveViewport::FrameMode::Advance;
+    if (!viewport_.Frame(play_dt, camera.Eye(), camera.Rotation(), camera.fov_degrees,
                          ortho ? Projection::Orthographic : Projection::Perspective, ortho ? camera.ortho_height : 0.0f,
-                         document.IsSimulating())) {
+                         document.IsSimulating(), frame_mode)) {
         return texture_.Valid();
     }
     return texture_.Set(viewport_.Width(), viewport_.Height(), viewport_.Pixels());

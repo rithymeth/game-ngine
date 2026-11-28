@@ -782,6 +782,84 @@ AETHER_TEST(GameView_LiveGameplaySourceTracksTheCurrentSession) {
     document.Stop();
 }
 
+AETHER_TEST(PreviewPause_RedrawsWithoutRunningUpdateAndStepsOnce) {
+    std::unique_ptr<gfx::rhi::IDevice> device = TryDevice();
+    if (!device) {
+        std::printf("    (no Vulkan device: install a driver, or Mesa's lavapipe, to run this)\n");
+        return;
+    }
+    if (!player::Game::HasScripting()) {
+        std::printf("    (no scripting in this build)\n");
+        return;
+    }
+    Context imgui;
+    const stdfs::path project = MakeProject("PausePreviewUpdates", "blank");
+    const stdfs::path content = project.parent_path() / "Content";
+    stdfs::create_directories(content / "Scripts");
+    const char* script_path = "Scripts/CountUpdates.luau";
+    std::ofstream(content / script_path) << R"(
+local CountUpdates = {}
+function CountUpdates:OnUpdate(_dt)
+    local transform = self.entity:Get("Transform")
+    transform.position = transform.position + vector.create(1, 0, 0)
+end
+return CountUpdates
+)";
+    assets::AssetDatabase database(content);
+    database.Scan();
+    const assets::AssetRecord* script = database.FindByPath(script_path);
+    AETHER_CHECK(script != nullptr);
+    if (!script) return;
+
+    ScenePanel scene(content);
+    if (!scene.OpenScene("Scenes/Main.ascene", true)) { AETHER_CHECK(false); return; }
+    SceneDocument& document = scene.Document();
+    const Entity actor = document.CreateEntity("Update counter");
+    const EntityGuid guid = document.GetWorld().GetComponent<IdComponent>(actor)->guid;
+    ScriptComponent component;
+    component.script.guid = script->guid;
+    document.GetWorld().AddComponent(actor, component);
+    std::string error;
+    if (!document.Save({}, &error)) { AETHER_CHECK(false); return; }
+
+    const auto position_is = [&](const LiveViewport& viewport, f32 expected) {
+        Vec3 position;
+        return viewport.PositionOf(guid, position) && std::abs(position.x - expected) < 1e-3f;
+    };
+    constexpr f32 dt = 0.1f;
+    {
+        LiveSceneShading shading(*device, scene, [&] { return project; });
+        SceneViewCamera camera;
+        const auto draw = [&] { return shading.Advance(document, camera, 128, 72, SceneViewMode::Lit, dt); };
+        document.Play();
+        AETHER_CHECK(draw() && position_is(shading.Viewport(), 1));
+        const u64 frame = shading.Viewport().FrameCount();
+        document.Pause();
+        camera.yaw += 0.2f;
+        AETHER_CHECK(draw() && draw());
+        AETHER_CHECK(shading.Viewport().FrameCount() == frame + 2);
+        AETHER_CHECK(position_is(shading.Viewport(), 1)); // paused Scene View still redraws
+        document.Step();
+        AETHER_CHECK(draw() && position_is(shading.Viewport(), 2));
+        AETHER_CHECK(draw() && position_is(shading.Viewport(), 2));
+        shading.Stop();
+        document.Stop();
+    }
+    {
+        LiveGameView live(*device, scene, [&] { return project; });
+        document.Play();
+        document.Pause(); // first draw of a brand-new preview while paused
+        if (!live.Start(document, 128, 72)) { AETHER_CHECK(false); return; }
+        AETHER_CHECK(live.Frame(document.PlayDelta(dt)) && live.Picture().Valid());
+        AETHER_CHECK(position_is(live.Viewport(), 0));
+        document.Step();
+        AETHER_CHECK(live.Frame(document.PlayDelta(dt)) && position_is(live.Viewport(), 1));
+        AETHER_CHECK(!live.Frame(document.PlayDelta(dt)) && position_is(live.Viewport(), 1));
+        live.Stop();
+        document.Stop();
+    }
+}
+
 #if defined(AETHER_HAS_EDITOR_VULKAN)
 // The Scene View's shaded look: the bridge cooks and runs the open scene the first time it is asked, draws at the Scene View's camera, and keeps what
 // the document has with patches, as the Live Viewport does.

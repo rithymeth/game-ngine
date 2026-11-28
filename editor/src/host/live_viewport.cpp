@@ -345,8 +345,8 @@ bool LiveViewport::Load(const std::filesystem::path& cooked_dir, const std::stri
 }
 
 bool LiveViewport::Frame(f32 dt, const Vec3& position, const Quaternion& rotation, f32 fov_degrees, Projection projection, f32 ortho_height,
-                         bool free_camera) {
-    return RenderFrame(dt, &position, &rotation, fov_degrees, projection, ortho_height, free_camera);
+                         bool free_camera, FrameMode mode) {
+    return RenderFrame(dt, &position, &rotation, fov_degrees, projection, ortho_height, free_camera, mode);
 }
 
 void LiveViewport::BeginPlay() {
@@ -355,13 +355,15 @@ void LiveViewport::BeginPlay() {
 
 player::Game* LiveViewport::GameForDebugging() const { return impl_ ? impl_->game.get() : nullptr; }
 
-bool LiveViewport::FrameGameCamera(f32 dt) { return RenderFrame(dt, nullptr, nullptr, 0.0f, Projection::Perspective, 0.0f, false); }
+bool LiveViewport::FrameGameCamera(f32 dt, FrameMode mode) {
+    return RenderFrame(dt, nullptr, nullptr, 0.0f, Projection::Perspective, 0.0f, false, mode);
+}
 
 bool LiveViewport::RenderFrame(f32 dt, const Vec3* position, const Quaternion* rotation, f32 fov_degrees, Projection projection,
-                               f32 ortho_height, bool free_camera) {
+                               f32 ortho_height, bool free_camera, FrameMode mode) {
     if (!impl_) return false;
     Impl& live = *impl_;
-    live.game->Tick(std::clamp(dt, 0.0f, 0.1f));
+    if (mode == FrameMode::Advance) live.game->Tick(std::clamp(dt, 0.0f, 0.1f));
     World& world = live.game->GetWorld();
     const GuidIndex& guids = live.game->Guids();
     Entity camera_entity = FindActiveCamera(world, guids);

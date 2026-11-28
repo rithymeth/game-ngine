@@ -37,8 +37,10 @@ bool LiveGameView::Start(const SceneDocument& document, u32 width, u32 height) {
 
 bool LiveGameView::Frame(f32 play_dt) {
     if (!viewport_.Loaded()) return false;
-    if (!(play_dt > 0.0f) && has_picture_) return false; // paused: keep this session's last picture
-    if (!viewport_.FrameGameCamera(play_dt)) return false;
+    const bool advance = play_dt > 0.0f;
+    if (!advance && has_picture_) return false; // paused: keep this session's last picture
+    const auto mode = advance ? LiveViewport::FrameMode::Advance : LiveViewport::FrameMode::DrawOnly;
+    if (!viewport_.FrameGameCamera(play_dt, mode)) return false;
     if (!texture_.Set(viewport_.Width(), viewport_.Height(), viewport_.Pixels())) return false;
     has_picture_ = true;
     return true;
