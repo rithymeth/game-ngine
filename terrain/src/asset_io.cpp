@@ -131,7 +131,7 @@ json TerrainToJson(const TerrainData& data, const TerrainSettings& settings, con
     };
 }
 
-bool TerrainFromJson(const json& j, TerrainData& data, TerrainSettings& settings, SplatmapData& splatmap, std::string* error) {
+bool TerrainFromJson(const json& j, TerrainData& data, TerrainSettings& settings, SplatmapData& splatmap, std::string* error) try {
     if (!Header(j, "aether.terrain", kTerrainVersion, error)) return false;
     const auto settings_json = j.find("settings");
     const auto data_json = j.find("data");
@@ -214,6 +214,8 @@ bool TerrainFromJson(const json& j, TerrainData& data, TerrainSettings& settings
     settings = parsed_settings;
     splatmap = std::move(parsed_splat);
     return true;
+} catch (const json::exception& e) {
+    return Fail(error, std::string("terrain asset: ") + e.what());
 }
 
 json FoliageToJson(const FoliageLayer& layer, const DensityMap& density) {
@@ -267,7 +269,7 @@ json FoliageToJson(const FoliageLayer& layer, const DensityMap& density) {
     };
 }
 
-bool FoliageFromJson(const json& j, FoliageLayer& layer, DensityMap& density, std::string* error) {
+bool FoliageFromJson(const json& j, FoliageLayer& layer, DensityMap& density, std::string* error) try {
     if (!Header(j, "aether.foliage", kFoliageVersion, error)) return false;
     const auto layer_json = j.find("layer");
     if (layer_json == j.end() || !layer_json->is_object()) return Fail(error, "the foliage asset has no layer");
@@ -342,6 +344,8 @@ bool FoliageFromJson(const json& j, FoliageLayer& layer, DensityMap& density, st
     layer = std::move(parsed);
     density = std::move(parsed_density);
     return true;
+} catch (const json::exception& e) {
+    return Fail(error, std::string("foliage asset: ") + e.what());
 }
 
 } // namespace terrain

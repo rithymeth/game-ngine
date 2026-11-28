@@ -1,6 +1,7 @@
 #include "aether/scene/components.h"
 #include "aether/scene/hierarchy.h"
 #include "aether/scene/serialization.h"
+#include "aether/terrain/asset_io.h"
 #include "test_framework.h"
 #include "world/world_panels.h"
 
@@ -535,6 +536,55 @@ AETHER_TEST(WorldEditor_TerrainSavesAndLoads) {
     CHECK(doc.Save(&error));
     CHECK(!doc.Dirty());
     CHECK(H(doc, 40, 40) > 0.0f);
+}
+
+AETHER_TEST(WorldEditor_WrongAssetFieldTypesKeepPendingEdits) {
+    namespace fs = std::filesystem;
+    const auto dir = fs::temp_directory_path() / "aether_world_editor_invalid_types";
+    fs::create_directories(dir);
+    const auto reject = [&](auto& doc, const fs::path& original, const fs::path& invalid, const nlohmann::json& payload) {
+        {
+            std::ofstream file(invalid);
+            file << payload;
+        }
+        const auto revision = doc.Revision();
+        std::string error;
+        bool loaded = false, threw = false;
+        try {
+            loaded = doc.Load(invalid, &error);
+        } catch (const nlohmann::json::exception&) {
+            threw = true;
+        }
+        CHECK(!threw && !loaded && !error.empty());
+        CHECK(doc.Path() == original && doc.Dirty() && doc.CanUndo() && doc.Revision() == revision);
+    };
+
+    TerrainEditDocument hills = FlatTerrain();
+    const auto terrain_file = dir / "Hills.aterrain";
+    CHECK(hills.SaveAs(terrain_file));
+    hills.brush.radius = 3.0f;
+    hills.brush.strength = 1.0f;
+    hills.DabOnce(10.0f, 10.0f);
+    const auto pending_heights = hills.Data().heightmap.heights;
+    auto invalid_terrain = TerrainToJson(hills.Data(), hills.Settings(), hills.Splatmap());
+    invalid_terrain["data"]["heightmap"]["width"] = "wide";
+    reject(hills, terrain_file, dir / "Bad.aterrain", invalid_terrain);
+    CHECK(hills.Data().heightmap.heights == pending_heights);
+
+    FoliageLayer layer;
+    layer.types.resize(1);
+    layer.density = 1.0f;
+    FoliagePaintDocument forest(layer, {}, {}, 5);
+    const auto foliage_file = dir / "Forest.afoliage";
+    CHECK(forest.SaveAs(foliage_file));
+    forest.radius = 3.0f;
+    forest.DabOnce({20.0f, 0.0f, 20.0f});
+    const auto pending_foliage = FoliageToJson(forest.Layer(), forest.Density());
+    auto invalid_foliage = pending_foliage;
+    invalid_foliage["layer"]["types"][0]["scale_min"] = "small";
+    reject(forest, foliage_file, dir / "Bad.afoliage", invalid_foliage);
+    CHECK(FoliageToJson(forest.Layer(), forest.Density()) == pending_foliage);
+    fs::remove_all(dir);
 }
 
 AETHER_TEST(WorldEditor_TerrainRefusesAForeignFile) {
