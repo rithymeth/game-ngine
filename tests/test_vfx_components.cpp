@@ -262,6 +262,22 @@ AETHER_TEST(VFX_ParticleReplacementWaitsForManualActivation) {
     CHECK(!world.IsAlive(effect));
 }
 
+AETHER_TEST(VFX_ParticleAttachmentLostBeforeFirstUpdate) {
+    Library lib;
+    World world;
+    ParticleWorld pw(world, lib.Lookup());
+    const Entity target = world.CreateEntity(At({1, 2, 3}));
+    const Entity effect = pw.SpawnAttached("Smoke", target);
+    CHECK(world.IsAlive(effect) && pw.InstanceOf(effect) == nullptr);
+
+    world.DestroyEntity(target);
+    pw.Update(0.1f);
+    CHECK(!world.IsAlive(effect) && pw.InstanceOf(effect) == nullptr);
+    CHECK(pw.Events().empty()); // the effect never played
+    pw.Update(0.1f);
+    CHECK(pw.GetStats().systems == 0 && pw.Events().empty());
+}
+
 AETHER_TEST(VFX_ParticleWorldCullingAndDrawing) {
     Library lib;
     World world;

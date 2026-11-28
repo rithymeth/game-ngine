@@ -208,7 +208,15 @@ void ParticleWorld::Update(f32 dt, const ParticleCamera* camera) {
             t->rotation = target.rotation;
         } else if (!att.detached) {
             att.detached = true;
-            if (ParticleSystem* ps = world_.GetComponent<ParticleSystem>(e)) ps->Deactivate();
+            if (ParticleSystem* ps = world_.GetComponent<ParticleSystem>(e)) {
+                if (ps->destroy_when_finished && InstanceOf(e) == nullptr) {
+                    // The target disappeared before this effect had anything to drain.
+                    world_.DestroyEntity(e);
+                    it = attachments_.erase(it);
+                    continue;
+                }
+                ps->Deactivate();
+            }
         }
         ++it;
     }
