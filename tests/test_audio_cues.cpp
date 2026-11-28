@@ -73,6 +73,34 @@ bool Has(const std::vector<CueDiagnostic>& d, const std::string& code) {
 
 } // namespace
 
+AETHER_TEST(Audio_CueRandomNoRepeatKeepsPlayingTheOnlyWeightedInput) {
+    CueNode random = Node(10, CueNodeType::Random, {1, 2, 3});
+    random.weights = {0.0f, 2.0f, 0.0f};
+    random.no_repeat = true;
+    SoundCue cue;
+    cue.root = random.id;
+    cue.nodes = {Node(1, CueNodeType::Wave, {}, "first"), Node(2, CueNodeType::Wave, {}, "only"),
+                 Node(3, CueNodeType::Wave, {}, "third"), random};
+    AETHER_CHECK(ValidateCue(cue).empty());
+    CueState state(17);
+    const auto duration = [](const std::string&) { return 0.5f; };
+    for (int i = 0; i < 3; ++i) {
+        const CuePlan plan = EvaluateCue(cue, state, duration);
+        AETHER_CHECK(plan.items.size() == 1 && plan.items.front().sound == "only" && plan.duration == 0.5);
+    }
+
+    // With another weighted input, no-repeat still alternates without selecting the muted input.
+    cue.nodes.back().weights[2] = 1.0f;
+    for (const char* expected : {"third", "only", "third"}) {
+        const CuePlan plan = EvaluateCue(cue, state, duration);
+        AETHER_CHECK(plan.items.size() == 1 && plan.items.front().sound == expected);
+    }
+
+    // A truly all-zero node is still silent even with a previous pick.
+    cue.nodes.back().weights[1] = cue.nodes.back().weights[2] = 0.0f;
+    AETHER_CHECK(EvaluateCue(cue, state, duration).items.empty());
+}
+
 AETHER_TEST(Audio_DecodesOggAndFlacAndStreams) {
     const std::vector<u8> ogg = ReadFile(kOgg), flac = ReadFile(kFlac);
     AETHER_CHECK(!ogg.empty() && !flac.empty());

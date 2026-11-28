@@ -380,12 +380,21 @@ struct Evaluator {
             const auto last = state.last_pick.find(n->id);
             std::vector<f32> w(n->children.size());
             f32 total = 0.0f;
+            f32 skipped_weight = 0.0f;
             for (usize i = 0; i < w.size(); ++i) {
                 w[i] = std::max(i < n->weights.size() ? n->weights[i] : 1.0f, 0.0f);
-                if (n->no_repeat && w.size() > 1 && last != state.last_pick.end() && last->second == i) w[i] = 0.0f;
+                if (n->no_repeat && w.size() > 1 && last != state.last_pick.end() && last->second == i) {
+                    skipped_weight = w[i];
+                    w[i] = 0.0f;
+                }
                 total += w[i];
             }
-            if (total <= 0.0f) return 0.0;
+            if (total <= 0.0f) {
+                if (!(skipped_weight > 0.0f)) return 0.0;
+                // When all alternatives are muted, repeat the only playable input.
+                w[last->second] = skipped_weight;
+                total = skipped_weight;
+            }
             f32 r = state.Uniform(0.0f, total);
             usize pick = 0;
             while (pick + 1 < w.size() && (r >= w[pick] || w[pick] == 0.0f)) r -= w[pick++];
