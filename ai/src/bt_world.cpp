@@ -81,10 +81,20 @@ const BehaviorTreeInstance* BehaviorTreeWorld::InstanceOf(Entity e) const {
 }
 
 void BehaviorTreeWorld::Update(f32 dt) {
-    // Entities that went: drop their trees (their world is gone, so no aborts reach them).
     for (auto it = live_.begin(); it != live_.end();) {
-        if (!world_.IsAlive(it->second.entity) || world_.GetComponent<BehaviorTreeComponent>(it->second.entity) == nullptr) it = live_.erase(it);
-        else ++it;
+        Live& live = it->second;
+        const bool alive = world_.IsAlive(live.entity);
+        if (alive && world_.GetComponent<BehaviorTreeComponent>(live.entity) != nullptr) {
+            ++it;
+            continue;
+        }
+        // A surviving entity still needs its running tasks stopped. Abort does not use the blackboard.
+        if (alive && live.instance) {
+            BtContext ctx{&world_, live.entity, nullptr, &hooks};
+            live.instance->Abort(ctx);
+        }
+        // Destroyed entities have no recipients for aborts.
+        it = live_.erase(it);
     }
     std::vector<Entity> entities;
     world_.ForEachArchetype([&](Archetype& archetype) {

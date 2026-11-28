@@ -754,6 +754,60 @@ AETHER_TEST(AI_BtMoveToWithAgents) {
     CHECK(logs.back() == "halted");
 }
 
+AETHER_TEST(AI_BtRemovingComponentAbortsLiveTasks) {
+    World world;
+    ModelRenderer floor;
+    SetModelPath(floor, "floor");
+    world.CreateEntity(Transform{}, floor);
+    nav::NavWorld nav(world, FloorMesh);
+    CHECK(nav.Bake({}));
+    nav::NavCrowd crowd(world, nav);
+
+    Library lib;
+    BlackboardAsset bb;
+    bb.Add("Goal", BlackboardType::Vector);
+    BtNode move = N(BtNodeType::MoveTo);
+    move.key = "Goal";
+    BtNode blueprint = N(BtNodeType::RunBlueprint);
+    blueprint.event = "Patrol";
+    lib.trees["Patrol"] = Tree(N(BtNodeType::Parallel, {move, blueprint}), bb);
+    BehaviorTreeWorld bt(world, lib.Lookup());
+    std::vector<Entity> started, aborted;
+    bt.hooks.run_blueprint = [&](Entity e, const std::string& event) {
+        CHECK(event == "Patrol");
+        started.push_back(e);
+        return true;
+    };
+    bt.hooks.abort_blueprint = [&](Entity e, const std::string& event) {
+        CHECK(event == "Patrol");
+        aborted.push_back(e);
+    };
+
+    BehaviorTreeComponent c;
+    c.tree = "Patrol";
+    const Entity survivor = world.CreateEntity(Transform{Vec3(-6, 0, 0), Quaternion::Identity()}, NavAgent{}, c);
+    const Entity destroyed = world.CreateEntity(Transform{Vec3(-6, 0, 3), Quaternion::Identity()}, NavAgent{}, c);
+    CHECK(world.GetComponent<BehaviorTreeComponent>(survivor)->SetVector("Goal", Vec3(6, 0, 0)));
+    CHECK(world.GetComponent<BehaviorTreeComponent>(destroyed)->SetVector("Goal", Vec3(6, 0, 3)));
+    bt.Update(0.1f);
+    crowd.Update(0.1f);
+    CHECK(started.size() == 2);
+    CHECK(world.GetComponent<NavAgent>(survivor)->IsMoving());
+
+    world.RemoveComponent<BehaviorTreeComponent>(survivor);
+    world.DestroyEntity(destroyed);
+    bt.Update(0.1f);
+    CHECK(world.IsAlive(survivor) && bt.InstanceOf(survivor) == nullptr && bt.InstanceOf(destroyed) == nullptr);
+    CHECK(aborted == std::vector<Entity>{survivor});
+    const NavAgent* agent = world.GetComponent<NavAgent>(survivor);
+    CHECK(agent != nullptr && agent->commands.size() == 1 && agent->commands.back().kind == NavAgentCommand::Kind::Stop);
+    crowd.Update(0.1f);
+    CHECK(world.GetComponent<NavAgent>(survivor)->status == NavMoveStatus::Idle);
+    bt.Update(0.1f);
+    CHECK(world.GetComponent<NavAgent>(survivor)->commands.empty());
+    CHECK(aborted == std::vector<Entity>{survivor});
+}
+
 AETHER_TEST(AI_BtMoveToFollowsBlackboardTargetChanges) {
     World world;
     const Entity walker = world.CreateEntity(Transform{}, NavAgent{});
