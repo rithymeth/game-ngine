@@ -1,4 +1,5 @@
 #include "graph/material_document.h"
+#include "ui/staged_asset_write.h"
 
 #include <algorithm>
 #include <map>
@@ -45,13 +46,14 @@ bool MaterialDocument::Save(std::string* error) {
         if (error != nullptr) *error = "the material has no file yet; use Save As";
         return false;
     }
-    if (!mat::SaveMaterial(material_, path_, error)) return false;
-    dirty_ = false;
-    return true;
+    return SaveAs(path_, error);
 }
 
 bool MaterialDocument::SaveAs(const std::filesystem::path& path, std::string* error) {
-    if (!mat::SaveMaterial(material_, path, error)) return false;
+    if (!WriteStagedAsset(path, mat::MaterialToJson(material_).dump(2) + "\n")) {
+        if (error != nullptr) *error = "can't write " + path.string();
+        return false;
+    }
     path_ = path;
     dirty_ = false;
     return true;
