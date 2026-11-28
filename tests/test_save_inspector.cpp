@@ -9,6 +9,7 @@
 #include "aether/save/save_system.h"
 
 #include <imgui.h>
+#include <imgui_internal.h>
 
 #include <filesystem>
 #include <fstream>
@@ -76,6 +77,29 @@ stdfs::path MakeBagSave(const stdfs::path& dir) {
     AETHER_CHECK(saves.Save("slot1", bag).ok);
     AETHER_CHECK(saves.Save("slot1", bag).ok);
     return dir / "slot1.asav";
+}
+
+// Use the actual ImGui buttons, not the panel's unconfirmed DeleteOpen API.
+bool ClickDeleteButton(HeadlessImGui& ui, const std::function<void()>& draw,
+                       const char* window_name, const char* button) {
+    auto* window = ImGui::FindWindowByName(window_name);
+    if (!window) return false;
+    const ImGuiID id = window->GetID(button);
+    const auto clip = window->InnerClipRect;
+    auto& io = ImGui::GetIO();
+    for (float y = clip.Min.y + 3; y < std::min(clip.Min.y + 72.0f, clip.Max.y); y += 6) {
+        for (float x = clip.Min.x + 4; x < std::min(clip.Min.x + 330.0f, clip.Max.x); x += 10) {
+            io.AddMousePosEvent(x, y);
+            ui.Frame(draw);
+            if (ImGui::GetHoveredID() != id) continue;
+            io.AddMouseButtonEvent(0, true);
+            ui.Frame(draw);
+            io.AddMouseButtonEvent(0, false);
+            ui.Frame(draw);
+            return true;
+        }
+    }
+    return false;
 }
 
 } // namespace
@@ -413,6 +437,49 @@ AETHER_TEST(SaveInspector_ChangingTheOpenFileCancelsDeleteConfirmation) {
     });
     CHECK(stdfs::exists(original) && stdfs::exists(replacement));
     CHECK(stdfs::exists(original.string() + ".bak") && stdfs::exists(replacement.string() + ".bak"));
+}
+
+AETHER_TEST(SaveInspector_ConfirmDeleteRejectsACompletedSaveToTheSameSlot) {
+    for (const bool backup_only : {false, true}) {
+        HeadlessImGui ui;
+        const auto file = MakeBagSave(Dir(backup_only ? "confirm_backup_write" : "confirm_primary_write"));
+        const auto backup = stdfs::path(file.string() + ".bak");
+        SaveInspectorDocument doc;
+        SaveInspectorPanel panel(doc);
+        CHECK(doc.Open(file));
+        const auto revision = doc.Revision();
+        const auto draw = [&] { panel.Draw(); };
+        ui.Frame(draw);
+        if (!ClickDeleteButton(ui, draw, "Test", "Delete...")) { CHECK(false); return; }
+        ui.Frame(draw);
+
+        SaveBag updated;
+        updated.SetInt("coins", 73); // constant-width change, so file size is not a reliable identity
+        updated.SetBool("done", true);
+        SaveSystem saves(file.parent_path());
+        if (backup_only) {
+            CHECK(saves.Save("other", updated).ok);
+            Spit(backup, Slurp(file.parent_path() / "other.asav"));
+        } else {
+            CHECK(saves.Save("slot1", updated).ok);
+        }
+        const auto primary_after_write = Slurp(file);
+        const auto backup_after_write = Slurp(backup);
+        CHECK(doc.Revision() == revision);
+        if (!ClickDeleteButton(ui, draw, "Delete save?", "Delete")) { CHECK(false); continue; }
+        const bool preserved = stdfs::exists(file) && stdfs::exists(backup) &&
+                               Slurp(file) == primary_after_write && Slurp(backup) == backup_after_write;
+        CHECK(preserved);
+        if (!preserved) continue;
+
+        // The rejected confirmation closes. A fresh review can delete an unchanged pair.
+        ui.Frame([&] { draw(); CHECK(!ImGui::IsPopupOpen("Delete save?")); });
+        CHECK(doc.Reload());
+        if (!ClickDeleteButton(ui, draw, "Test", "Delete...")) { CHECK(false); continue; }
+        ui.Frame(draw);
+        CHECK(ClickDeleteButton(ui, draw, "Delete save?", "Delete"));
+        CHECK(!stdfs::exists(file) && !stdfs::exists(backup));
+    }
 }
 
 AETHER_TEST(SaveInspector_PanelDeleteRescans) {
