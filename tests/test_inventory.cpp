@@ -12,6 +12,7 @@
 #include "aether/player/game.h"
 #include "aether/scene/components.h"
 #if AETHER_TEST_HAS_SCRIPTING
+#include "aether/script/inventory_api.h"
 #include "aether/script/script_system.h"
 #endif
 
@@ -356,7 +357,10 @@ std::filesystem::path MakePackage(const char* dir_name, const std::vector<std::t
 } // namespace
 
 AETHER_TEST(Inventory_PlayerLoadsItemsAndRunsTheSystem) {
-    const std::filesystem::path file = MakePackage("aether_inventory_player_tests", {});
+    const std::filesystem::path file = MakePackage("aether_inventory_player_tests", {
+        {"Items/wrapped.aitem", "ItemDefinition", R"({"name":"WrappedStack","max_stack":4294967297})", assets::NewAssetGuid()},
+        {"Items/maximum.aitem", "ItemDefinition", R"({"name":"MaximumStack","max_stack":2147483647})", assets::NewAssetGuid()},
+    });
     std::string error;
     player::GamePackage package;
     CHECK(package.Mount(file.string(), 0, &error) && package.LoadManifest(&error));
@@ -365,6 +369,9 @@ AETHER_TEST(Inventory_PlayerLoadsItemsAndRunsTheSystem) {
     bool warned = false;
     for (const std::string& w : game.Warnings()) warned = warned || (w.find("bad.aitem") != std::string::npos && w.find("item.unknown_effect") != std::string::npos);
     CHECK(warned); // the item naming a missing effect is reported, the good one loads
+    bool warned_stack = false;
+    for (const std::string& w : game.Warnings()) warned_stack |= w.find("wrapped.aitem") != std::string::npos && w.find("item.bad_stack") != std::string::npos;
+    CHECK(warned_stack);
     InventorySystem* sys = InventorySystem::Active();
     CHECK(sys != nullptr && gas::AttributeSystem::Active() != nullptr);
     if (!sys) return;
@@ -373,6 +380,9 @@ AETHER_TEST(Inventory_PlayerLoadsItemsAndRunsTheSystem) {
     attrs->Define(e, "Health", 40, 0, 100);
     game.BeginPlay();
     CHECK(sys->Add(e, "Potion", 3) == 3 && sys->Add(e, "Bad", 1) == 0 && sys->Use(e, 0) && Near(attrs->GetBase(e, "Health"), 65));
+    constexpr i32 limit = std::numeric_limits<i32>::max();
+    CHECK(sys->Add(e, "WrappedStack", 1) == 0);
+    CHECK(sys->Add(e, "MaximumStack", limit) == limit && sys->Count(e, "MaximumStack") == limit);
     game.Tick(0.016f);
     CHECK(sys->Events().empty()); // Player.Inventory took them
 }
@@ -427,6 +437,45 @@ return Hero
     game.Tick(0.016f);
     CHECK(game.ScriptErrors().empty());
     CHECK(Near(attrs->Get(e, "Added"), 2) && Near(attrs->Get(e, "Used"), 1)); // the script heard OnItemAdded and OnItemUsed
+}
+
+AETHER_TEST(Inventory_LuauRejectsUnrepresentableCountsAndSlots) {
+    Rig r;
+    GuidIndex guids;
+    script::LuauHost host;
+    script::InstallInventoryApi(host);
+    host.BindWorld(&r.world, &guids);
+    host.SetGlobal("owner", script::EntityRef{r.e});
+    CHECK(r.sys.Configure(r.e, 4, 0.0f) && r.sys.Add(r.e, "Coin", 2) == 2);
+    const auto installed = host.Run("assert(Inventory.Count(owner, 'Coin') == 2)");
+    CHECK(installed.ok);
+    if (!installed.ok) { std::fprintf(stderr, "%s\n", installed.error.c_str()); return; }
+
+    const char* rejected[] = {
+        "return Inventory.Configure(owner, 2147483648, 0)",
+        "return Inventory.Add(owner, 'Coin', math.huge)",
+        "return Inventory.Remove(owner, 'Coin', -2147483649)",
+        "return Inventory.Has(owner, 'Coin', 0 / 0)",
+        "return Inventory.Move(owner, 0, 2147483648)",
+        "return Inventory.Split(owner, 0, 2147483648, 1)",
+        "return Inventory.GetSlotItem(owner, math.huge)",
+        "return Inventory.GetSlotCount(owner, -math.huge)",
+        "return Inventory.Equip(owner, 2147483648)",
+        "return Inventory.Use(owner, 2147483648)",
+    };
+    for (const char* code : rejected) {
+        const auto result = host.Run(code);
+        CHECK(!result.ok && result.error.find("32-bit") != std::string::npos);
+    }
+    CHECK(r.sys.Count(r.e, "Coin") == 2 && r.sys.Slot(r.e, 3) != nullptr);
+
+    // Keep ordinary truncation and the omitted count default; allow both
+    // representable endpoints to reach the inventory system as before.
+    const auto valid = host.Run("assert(not Inventory.Has(owner, 'Coin', 2147483647)); "
+                                "assert(not Inventory.Use(owner, -2147483648)); "
+                                "assert(Inventory.Add(owner, 'Coin', 1.75) == 1); "
+                                "assert(Inventory.Add(owner, 'Coin') == 1)");
+    CHECK(valid.ok && r.sys.Count(r.e, "Coin") == 4);
 }
 
 AETHER_TEST(Inventory_LuauTableActsOnTheSystem) {
