@@ -363,6 +363,49 @@ AETHER_TEST(ProceduralEditor_StaleScatterCannotReachOutput) {
     fs::remove_all(root);
 }
 
+AETHER_TEST(ProceduralEditor_BakeKeepsCollidingRuleNamesSeparate) {
+    auto settings = Small();
+    settings.rules = {
+        ScatterRule{.name = "Tall Pine", .slope_max = 100.0f, .density = 30.0f, .max_instances = 8},
+        ScatterRule{.name = "Tall_Pine", .slope_max = 100.0f, .density = 30.0f, .max_instances = 8},
+        ScatterRule{.name = "tall_pine", .slope_max = 100.0f, .density = 30.0f, .max_instances = 8},
+    };
+    settings.slots.resize(3);
+    for (auto& slot : settings.slots) slot.variants = 1;
+    ProceduralWorldDocument doc(std::move(settings));
+    doc.Generate();
+    const auto counts = doc.CountsByRule();
+    CHECK(counts.size() == 3 && counts[0] > 0 && counts[1] > 0 && counts[2] > 0);
+
+    const fs::path root = ScratchDir("aether_procedural_rule_filename_collision");
+    BakeOptions options;
+    options.name = "Forest";
+    options.terrain_texture = options.water_texture = 0;
+    options.terrain_collision = options.add_player = false;
+    const auto baked = doc.Bake(root.string(), options);
+    CHECK(baked.ok && baked.instances_in_scene == doc.Instances().size());
+    World scene;
+    CHECK(LoadSceneJson(scene, (root / baked.scene).string()));
+    std::set<std::string> distinct_paths;
+    scene.ForEachArchetype([&](const Archetype& archetype) {
+        if (!archetype.Mask().test(GetComponentId<ModelRenderer>())) return;
+        for (usize chunk = 0; chunk < archetype.ChunkCount(); ++chunk) {
+            const auto* models = static_cast<const ModelRenderer*>(archetype.ComponentArray(chunk, GetComponentId<ModelRenderer>()));
+            for (usize row = 0; row < archetype.ChunkEntityCount(chunk); ++row) {
+                const std::string path = models[row].asset_path;
+                CHECK(fs::is_regular_file(root / path));
+                if (path.ends_with("_terrain.glb")) continue;
+                std::string key = path;
+                for (char& c : key) if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+                distinct_paths.insert(key);
+            }
+        }
+    });
+    CHECK(distinct_paths.size() == 3);
+    CHECK(std::find(baked.files.begin(), baked.files.end(), "Generated/Forest/Forest_Tall_Pine_0.glb") != baked.files.end());
+    fs::remove_all(root);
+}
+
 AETHER_TEST(ProceduralEditor_BakeWritesTheTerrainMeshesAndASceneThePlayerLoads) {
     ProceduralWorldDocument doc(Small());
     doc.AddRule(ScatterRule{.name = "Fern"}); // a rule of the user's own starts with no mesh family

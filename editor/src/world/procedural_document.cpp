@@ -16,6 +16,7 @@
 #endif
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -64,6 +65,11 @@ std::string FileSafe(const std::string& name) {
     std::string out;
     for (const char c : name) out += (std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-') ? c : '_';
     return out.empty() ? std::string("unnamed") : out;
+}
+
+std::string CaseInsensitiveFileKey(std::string name) {
+    for (char& c : name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return name;
 }
 
 bool WriteFile(const fs::path& path, const std::vector<u8>& bytes) {
@@ -591,13 +597,28 @@ BakeReport ProceduralWorldDocument::Bake(const std::string& content_root, const 
     }
     if (!write(name + "_terrain.glb", EncodeGlb(ground))) return report;
 
+    // Reserve the original stems so resolving collisions cannot take an unrelated rule's name.
+    std::set<std::string> reserved_stems, used_stems;
+    for (usize r = 0; r < settings_.rules.size(); ++r)
+        if (settings_.slots[r].enabled) reserved_stems.insert(CaseInsensitiveFileKey(FileSafe(settings_.rules[r].name)));
+
     // One .glb per mesh variant that a rule with a mesh can place.
     std::vector<std::vector<std::string>> variant_paths(settings_.rules.size());
     for (usize r = 0; r < settings_.rules.size(); ++r) {
         if (!settings_.slots[r].enabled) { report.rules_without_mesh.push_back(settings_.rules[r].name); continue; }
+        std::string stem = FileSafe(settings_.rules[r].name);
+        if (!used_stems.insert(CaseInsensitiveFileKey(stem)).second) {
+            // Sanitized names and case-only differences can both collide on disk.
+            const std::string base = stem;
+            for (usize suffix = 2;; ++suffix) {
+                stem = base + "_" + std::to_string(suffix);
+                const std::string key = CaseInsensitiveFileKey(stem);
+                if (!reserved_stems.contains(key) && used_stems.insert(key).second) break;
+            }
+        }
         const u32 variants = std::max(settings_.slots[r].variants, 1u);
         for (u32 v = 0; v < variants; ++v) {
-            const std::string file = name + "_" + FileSafe(settings_.rules[r].name) + "_" + std::to_string(v) + ".glb";
+            const std::string file = name + "_" + stem + "_" + std::to_string(v) + ".glb";
             if (!write(file, EncodeGlb(BuildMesh(r, v)))) return report;
             variant_paths[r].push_back(relative + "/" + file);
         }
