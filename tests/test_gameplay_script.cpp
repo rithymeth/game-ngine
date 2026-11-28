@@ -181,4 +181,83 @@ AETHER_TEST(GameplayScript_PlayerSendsEventsToTheOwnersScript) {
     CHECK(attrs->Get(e, "Seen") == 2.0f && attrs->Get(e, "Applied") == 1.0f); // Health appeared, then the buff moved it; the buff was applied
 }
 
+
+AETHER_TEST(GameplayScript_EffectsStayInTheirOwnRuntime) {
+    const auto dir = std::filesystem::temp_directory_path() / "aether_two_effect_games";
+    std::filesystem::create_directories(dir);
+    const auto file = dir / "Game.apak";
+    const assets::AssetGuid script_guid = assets::NewAssetGuid();
+    const auto asset = [](const assets::AssetGuid& guid, const char* path, const char* importer) {
+        return nlohmann::json{{"guid", assets::ToString(guid)}, {"path", path}, {"importer", importer}};
+    };
+    const nlohmann::json manifest = {{"$type", "CookManifest"}, {"$version", 1}, {"project", "Effects Worlds"},
+        {"configuration", "Development"}, {"startup_scene", "Scenes/start.ascene"},
+        {"assets", nlohmann::json::array({asset(script_guid, "Scripts/Apply.luau", "Script"),
+                                            asset(assets::NewAssetGuid(), "Effects/buff.aeffect", "GameplayEffect")})}};
+    const nlohmann::json buff = {{"name", "Buff"}, {"duration_policy", "infinite"}, {"granted_tags", {"State.Buffed"}},
+        {"modifiers", nlohmann::json::array({{{"attribute", "Health"}, {"op", "add"}, {"magnitude", 5}}})}};
+    pak::PakWriter writer;
+    CHECK(writer.Add("Manifest.json", manifest.dump()));
+    CHECK(writer.Add("Content/Scenes/start.ascene", std::string(R"({"$type":"Scene","$version":1,"entities":[]})")));
+    CHECK(writer.Add("Content/Effects/buff.aeffect", buff.dump()));
+    CHECK(writer.Add("Content/Scripts/Apply.luau", std::string(R"(
+local Apply = {}
+function Apply:OnStart()
+    local e = self.entity
+    self.handle = Effects.Apply(e, "Buff", e)
+    Attributes.SetBase(e, "Handle", self.handle)
+    Attributes.SetBase(e, "Seen", Effects.GetActiveCount(e) + (Effects.HasActive(e, "Buff") and 10 or 0))
+end
+function Apply:OnUpdate(_dt)
+    local e = self.entity
+    local mode = Attributes.GetBase(e, "Mode")
+    if mode == 1 then
+        Attributes.SetBase(e, "Removed", Effects.Remove(self.handle) and 1 or 0)
+    elseif mode == 2 then
+        Attributes.SetBase(e, "Removed", Effects.RemoveByTag(e, "State"))
+    end
+end
+return Apply
+)")));
+    if (!writer.Write(file.string())) { CHECK(false); return; }
+    player::GamePackage package;
+    std::string error;
+    if (!package.Mount(file.string(), 0, &error) || !package.LoadManifest(&error)) { CHECK(false); return; }
+    player::Game first(package), second(package);
+    if (!first.LoadStartupScene(&error) || !second.LoadStartupScene(&error)) { CHECK(false); return; }
+
+    const auto actor = [&](player::Game& game, f32 health) {
+        AttributeSet attrs;
+        attrs.Define("Health", health);
+        for (const char* name : {"Handle", "Seen", "Mode", "Removed"}) attrs.Define(name, 0);
+        ScriptComponent component;
+        component.script.guid = script_guid;
+        return game.GetWorld().CreateEntity(Transform{}, attrs, component);
+    };
+    const Entity a = actor(first, 25), b = actor(second, 50);
+    CHECK(a == b); // worlds allocate the same handle for these different entities
+
+    first.BeginPlay(); // the other game was loaded most recently
+    auto* a_attrs = first.GameplayForDebugging().attributes;
+    CHECK(a_attrs != nullptr);
+    if (!a_attrs) return;
+    CHECK(a_attrs->Get(a, "Health") == 30 && a_attrs->Get(a, "Seen") == 11);
+    const auto* b_set = second.GetWorld().GetComponent<AttributeSet>(b);
+    CHECK(b_set != nullptr && b_set->Get("Health") == 50);
+    second.BeginPlay();
+    auto* b_attrs = second.GameplayForDebugging().attributes;
+    CHECK(b_attrs != nullptr);
+    if (!b_attrs) return;
+    CHECK(b_attrs->Get(b, "Health") == 55 && b_attrs->Get(b, "Seen") == 11);
+    CHECK(a_attrs->Get(a, "Handle") > 0 && a_attrs->Get(a, "Handle") == b_attrs->Get(b, "Handle"));
+
+    a_attrs->SetBase(a, "Mode", 1);
+    first.Tick(1.0f / 60.0f);
+    CHECK(a_attrs->Get(a, "Health") == 25 && a_attrs->Get(a, "Removed") == 1 && b_attrs->Get(b, "Health") == 55);
+    b_attrs->SetBase(b, "Mode", 2);
+    second.Tick(1.0f / 60.0f);
+    CHECK(b_attrs->Get(b, "Health") == 50 && b_attrs->Get(b, "Removed") == 1);
+    CHECK(first.ScriptErrors().empty() && second.ScriptErrors().empty());
+}
+
 #endif

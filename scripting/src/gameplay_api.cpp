@@ -2,7 +2,7 @@
 
 #include "aether/gameplay/ability_library.h"
 #include "aether/gameplay/attribute_system.h"
-#include "aether/gameplay/effect_library.h"
+#include "aether/gameplay/effect_system.h"
 #include "aether/gameplay/tag_library.h"
 
 namespace aether::script {
@@ -29,9 +29,13 @@ bool NeedNumber(NativeCall& c, usize i, const char* table, const char* what) {
 
 } // namespace
 
-void InstallGameplayApi(LuauHost& host) { InstallGameplayApi(host, nullptr); }
+void InstallGameplayApi(LuauHost& host) { InstallGameplayApi(host, nullptr, nullptr); }
 
 void InstallGameplayApi(LuauHost& host, gas::AttributeSystem* attributes) {
+    InstallGameplayApi(host, attributes, nullptr);
+}
+
+void InstallGameplayApi(LuauHost& host, gas::AttributeSystem* attributes, gas::EffectSystem* effects) {
     // GameplayTags: pure string functions.
     const auto tags = [&](const char* name, NativeFunction fn) { host.RegisterNative("GameplayTags", name, std::move(fn)); };
     tags("IsValid", [](NativeCall& c) {
@@ -88,24 +92,36 @@ void InstallGameplayApi(LuauHost& host, gas::AttributeSystem* attributes) {
         c.Return(current && current->AddBase(c.EntityArg(0), c.String(1), static_cast<f32>(c.Number(2))));
     });
 
-    // Effects.
+    // Effect handles belong to the same runtime as the script that received them.
+    const auto effect_system = [effects] { return effects ? effects : EffectSystem::Active(); };
     const auto fx = [&](const char* name, NativeFunction fn) { host.RegisterNative("Effects", name, std::move(fn)); };
-    fx("Apply", [](NativeCall& c) {
+    fx("Apply", [effect_system](NativeCall& c) {
         if (!NeedEntity(c, 0, "Effects", "the target") || !NeedString(c, 1, "Effects", "the effect")) return;
         const Entity source = c.IsEntity(2) ? c.EntityArg(2) : Entity{};
-        c.Return(static_cast<f64>(Effects::ApplyEffect(c.EntityArg(0), c.String(1), source)));
+        auto* current = effect_system();
+        const i32 handle = current ? static_cast<i32>(current->Apply(c.EntityArg(0), c.String(1), source).handle) : 0;
+        c.Return(static_cast<f64>(handle));
     });
-    fx("Remove", [](NativeCall& c) {
-        if (NeedNumber(c, 0, "Effects", "the handle")) c.Return(Effects::RemoveEffect(static_cast<i32>(c.Number(0))));
+    fx("Remove", [effect_system](NativeCall& c) {
+        if (!NeedNumber(c, 0, "Effects", "the handle")) return;
+        const i32 handle = static_cast<i32>(c.Number(0));
+        auto* current = effect_system();
+        c.Return(current && handle > 0 && current->Remove(static_cast<EffectHandle>(handle)));
     });
-    fx("RemoveByTag", [](NativeCall& c) {
-        if (NeedEntity(c, 0, "Effects", "the target") && NeedString(c, 1, "Effects", "the tag")) c.Return(static_cast<f64>(Effects::RemoveEffectsByTag(c.EntityArg(0), c.String(1))));
+    fx("RemoveByTag", [effect_system](NativeCall& c) {
+        if (!NeedEntity(c, 0, "Effects", "the target") || !NeedString(c, 1, "Effects", "the tag")) return;
+        auto* current = effect_system();
+        c.Return(static_cast<f64>(current ? current->RemoveByTag(c.EntityArg(0), GameplayTag::Make(c.String(1))) : 0));
     });
-    fx("HasActive", [](NativeCall& c) {
-        if (NeedEntity(c, 0, "Effects", "the target") && NeedString(c, 1, "Effects", "the effect")) c.Return(Effects::HasActiveEffect(c.EntityArg(0), c.String(1)));
+    fx("HasActive", [effect_system](NativeCall& c) {
+        if (!NeedEntity(c, 0, "Effects", "the target") || !NeedString(c, 1, "Effects", "the effect")) return;
+        const auto* current = effect_system();
+        c.Return(current && current->HasEffect(c.EntityArg(0), c.String(1)));
     });
-    fx("GetActiveCount", [](NativeCall& c) {
-        if (NeedEntity(c, 0, "Effects", "the target")) c.Return(static_cast<f64>(Effects::GetActiveEffectCount(c.EntityArg(0))));
+    fx("GetActiveCount", [effect_system](NativeCall& c) {
+        if (!NeedEntity(c, 0, "Effects", "the target")) return;
+        const auto* current = effect_system();
+        c.Return(static_cast<f64>(current ? current->ActiveCount(c.EntityArg(0)) : 0));
     });
 
     // Abilities.

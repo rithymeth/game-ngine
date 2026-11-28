@@ -4,7 +4,7 @@
 
 // Luau's gameplay tables (Phase 30 step 5): the
 // same functions as the Blueprint libraries (aether::gas). A game can bind its own
-// attribute system; standalone hosts use the active systems.
+// attribute and effect systems; standalone hosts use the active systems.
 // Entities are the usual entity values; effect and ability handles are numbers
 // (0 means none). Without an active system they return false / 0 / the default.
 //
@@ -26,6 +26,7 @@
 
 namespace aether::gas {
 class AttributeSystem;
+class EffectSystem;
 }
 
 namespace aether::script {
@@ -33,5 +34,7 @@ namespace aether::script {
 void InstallGameplayApi(LuauHost& host);
 // The attribute system must outlive the installed native callbacks.
 void InstallGameplayApi(LuauHost& host, gas::AttributeSystem* attributes);
+// The bound systems must outlive the installed native callbacks.
+void InstallGameplayApi(LuauHost& host, gas::AttributeSystem* attributes, gas::EffectSystem* effects);
 
 } // namespace aether::script
