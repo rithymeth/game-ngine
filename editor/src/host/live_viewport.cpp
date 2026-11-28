@@ -353,6 +353,8 @@ void LiveViewport::BeginPlay() {
     if (impl_ && impl_->game) impl_->game->BeginPlay();
 }
 
+player::Game* LiveViewport::GameForDebugging() const { return impl_ ? impl_->game.get() : nullptr; }
+
 bool LiveViewport::FrameGameCamera(f32 dt) { return RenderFrame(dt, nullptr, nullptr, 0.0f, Projection::Perspective, 0.0f, false); }
 
 bool LiveViewport::RenderFrame(f32 dt, const Vec3* position, const Quaternion* rotation, f32 fov_degrees, Projection projection,

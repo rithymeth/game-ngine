@@ -3,6 +3,7 @@
 #include "workspace/editor_workspace.h"
 #if defined(AETHER_HAS_EDITOR_VULKAN)
 #include "host/live_game_view.h"
+#include "gameplay/gameplay_debugger_document.h"
 #include "host/live_viewport_panel.h"
 #include "host/scene_shading.h"
 #endif
@@ -717,6 +718,61 @@ return PreviewStart
         live.Stop();
         document.Stop();
     }
+}
+
+AETHER_TEST(GameView_LiveGameplaySourceTracksTheCurrentSession) {
+    std::unique_ptr<gfx::rhi::IDevice> device = TryDevice();
+    if (!device) {
+        std::printf("    (no Vulkan device: install a driver, or Mesa's lavapipe, to run this)\n");
+        return;
+    }
+    const stdfs::path project = MakeProject("GameViewDebugger", "blank");
+    const stdfs::path content = project.parent_path() / "Content";
+    ScenePanel scene(content);
+    if (!scene.OpenScene("Scenes/Main.ascene", true)) { AETHER_CHECK(false); return; }
+    SceneDocument& document = scene.Document();
+    const Entity actor = document.CreateEntity("Gameplay probe");
+    gas::AttributeSet attrs;
+    AETHER_CHECK(attrs.Define("LiveProbeCharge", 42));
+    document.GetWorld().AddComponent(actor, attrs);
+
+    LiveGameView live(*device, scene, [&] { return project; });
+    AETHER_CHECK(live.GameplaySource(document).world == nullptr);
+    document.Play();
+    if (!live.Start(document, 128, 72)) { AETHER_CHECK(false); return; }
+
+    // A second preview can be the process's active system, but it must not receive debugger edits.
+    World unrelated;
+    gas::AttributeSystem unrelated_attributes(unrelated);
+    document.Pause();
+    const auto current = live.GameplaySource(document);
+    AETHER_CHECK(current.world != nullptr && current.world != &document.GetWorld());
+    AETHER_CHECK(current.attributes != nullptr && current.attributes != &unrelated_attributes &&
+                 current.effects != nullptr && current.abilities != nullptr && current.effect_library != nullptr &&
+                 current.ability_library != nullptr);
+    if (!current.world || !current.attributes) return;
+    GameplayDebuggerDocument debugger;
+    debugger.SetWorld(current.world);
+    debugger.SetSystems(current.attributes, current.effects, current.abilities);
+    debugger.Rebuild();
+    AETHER_CHECK(debugger.Entities().size() == 1);
+    if (debugger.Entities().size() != 1) return;
+    const Entity running_actor = debugger.Entities().front().entity;
+    AETHER_CHECK(current.attributes->GetBase(running_actor, "LiveProbeCharge") == 42);
+    debugger.SetBase(running_actor, "LiveProbeCharge", 17);
+    AETHER_CHECK(current.attributes->GetBase(running_actor, "LiveProbeCharge") == 17);
+    AETHER_CHECK(!current.attributes->Events().empty() && current.attributes->Events().back().new_value == 17);
+    AETHER_CHECK(document.GetWorld().GetComponent<gas::AttributeSet>(actor)->Get("LiveProbeCharge") == 42);
+    debugger.SetWorld(nullptr);
+    debugger.SetSystems(nullptr, nullptr, nullptr);
+
+    document.Stop();
+    AETHER_CHECK(live.GameplaySource(document).world == nullptr); // before hidden Game View has serviced teardown
+    document.Play();
+    AETHER_CHECK(live.GameplaySource(document).world == nullptr); // never attach to the prior preview
+    live.Stop();
+    AETHER_CHECK(live.GameplaySource(document).world == nullptr);
+    document.Stop();
 }
 
 #if defined(AETHER_HAS_EDITOR_VULKAN)

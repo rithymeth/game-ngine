@@ -1,6 +1,7 @@
 #include "host/live_game_view.h"
 
 #include "aether/scene/serialization.h"
+#include "aether/player/game.h"
 #include "core/scene_preview.h"
 #include "host/preview_assets.h"
 
@@ -29,6 +30,7 @@ bool LiveGameView::Start(const SceneDocument& document, u32 width, u32 height) {
         return false;
     }
     viewport_.BeginPlay();
+    play_session_id_ = document.PlaySessionId();
     note_.clear();
     return true;
 }
@@ -47,7 +49,16 @@ const ImageTexture& LiveGameView::Picture() const {
     return has_picture_ ? texture_ : empty;
 }
 
+EditorWorkspace::GameplaySource LiveGameView::GameplaySource(const SceneDocument& document) const {
+    if (play_session_id_ == 0 || document.PlaySessionId() != play_session_id_) return {};
+    const auto* game = viewport_.GameForDebugging();
+    if (!game) return {};
+    const auto runtime = game->GameplayForDebugging();
+    return {runtime.world, runtime.attributes, runtime.effects, runtime.abilities, runtime.effect_library, runtime.ability_library};
+}
+
 void LiveGameView::Stop() {
+    play_session_id_ = 0;
     has_picture_ = false;
     viewport_.Unload();
     note_.clear();

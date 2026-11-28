@@ -5337,6 +5337,7 @@
   type struct Asset
   type struct GameManifest
   type struct GameStats
+  type struct GameplayDebugContext
   type struct HeldControl
   type struct RebindableInput
   type struct RenderSize
@@ -5348,6 +5349,7 @@
   Game&operator=(const Game&)=delete
   Game(const Game&)=delete
   GameStats Stats()const
+  GameplayDebugContext GameplayForDebugging()const
   GuidIndex&Guids()
   Lifecycle&GetLifecycle()
   PhysicsScene*PhysicsQueries()

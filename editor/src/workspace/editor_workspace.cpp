@@ -412,6 +412,8 @@ struct EditorWorkspace::Impl {
     gas::AbilityLibrary gameplay_abilities;
     std::unique_ptr<GameplayDebuggerDocument> gameplay_doc;
     std::unique_ptr<GameplayDebuggerPanel> gameplay_panel;
+    EditorWorkspace::GameplaySource gameplay_source;
+    std::function<EditorWorkspace::GameplaySource()> gameplay_source_provider;
     // World.
     terrain::TerrainData terrain_data;
     terrain::TerrainSettings terrain_settings;
@@ -585,12 +587,18 @@ struct EditorWorkspace::Impl {
              [this] { loc_panel->Draw(); }},
             {"Gameplay Debugger", "Debug", "Inspect gameplay attributes, effects, abilities and tags.",
              [this] {
-                 if (gameplay_doc->GetWorld() == &gameplay_sample) {
-                     ImGui::TextDisabled("Sample data only. No project gameplay world is attached.");
-                 } else {
-                     ImGui::TextDisabled("Attached gameplay world.");
-                 }
+                 const auto source = gameplay_source_provider ? gameplay_source_provider() : gameplay_source;
+                 gameplay_doc->SetWorld(source.world ? source.world : &gameplay_sample);
+                 gameplay_doc->SetSystems(source.world ? source.attributes : nullptr, source.world ? source.effects : nullptr,
+                                          source.world ? source.abilities : nullptr);
+                 gameplay_doc->SetLibraries(source.world ? source.effect_library : &gameplay_effects,
+                                            source.world ? source.ability_library : &gameplay_abilities);
+                 ImGui::TextDisabled("%s", source.world ? "Attached gameplay world." : "Sample data only. No project gameplay world is attached.");
                  gameplay_panel->Draw();
+                 // The provider may replace its world on the next game tick. Do not retain borrowed pointers.
+                 gameplay_doc->SetWorld(nullptr);
+                 gameplay_doc->SetSystems(nullptr, nullptr, nullptr);
+                 gameplay_doc->SetLibraries(nullptr, nullptr);
              }},
             {"Net Play", "Networking", "Host or join a session and watch network traffic.",
              [this] { net_panel->Draw(); }},
@@ -1720,8 +1728,11 @@ ExtensionRegistry& EditorWorkspace::Extensions() { return impl_->extensions; }
 EditorScripts& EditorWorkspace::Scripts() { return impl_->editor_scripts; }
 
 void EditorWorkspace::SetGameplayWorld(World* world, gas::AttributeSystem* attributes, gas::EffectSystem* effects, gas::AbilitySystem* abilities) {
-    impl_->gameplay_doc->SetWorld(world ? world : &impl_->gameplay_sample);
-    impl_->gameplay_doc->SetSystems(world ? attributes : nullptr, world ? effects : nullptr, world ? abilities : nullptr);
+    impl_->gameplay_source = {world, attributes, effects, abilities};
+}
+
+void EditorWorkspace::SetGameplaySourceProvider(std::function<GameplaySource()> provider) {
+    impl_->gameplay_source_provider = std::move(provider);
 }
 
 usize EditorWorkspace::ToolCount() const { return impl_->tools.size(); }

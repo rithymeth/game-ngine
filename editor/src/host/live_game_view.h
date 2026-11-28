@@ -4,6 +4,7 @@
 #include "ui/image_texture.h"
 #include "world/game_view_panel.h"
 #include "world/scene_panel.h"
+#include "workspace/editor_workspace.h"
 
 #include <filesystem>
 #include <functional>
@@ -25,6 +26,7 @@ public:
     const ImageTexture& Picture() const override;
     const std::string& Note() const override { return note_; }
     void Stop() override;
+    EditorWorkspace::GameplaySource GameplaySource(const SceneDocument& document) const;
 
     // The running scene, for a host or a test that wants the pixels or the counters.
     LiveViewport& Viewport() { return viewport_; }
@@ -36,6 +38,7 @@ private:
     LiveViewport viewport_;
     ImageTexture texture_; // keep the allocation across sessions for safe backend reuse
     bool has_picture_ = false;
+    u64 play_session_id_ = 0;
     std::string note_;
 };
 

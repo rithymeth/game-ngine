@@ -1089,6 +1089,11 @@ std::vector<RuntimeError> Game::RuntimeErrors() const {
     return errors;
 }
 
+Game::GameplayDebugContext Game::GameplayForDebugging() const {
+    if (!IsPlaying() || !runtime_) return {};
+    return {world_.get(), runtime_->attributes.get(), runtime_->effects.get(), runtime_->abilities.get(), &effects_, &abilities_};
+}
+
 void Game::BeginPlay() {
     if (IsPlaying()) return;
 #if AETHER_GAME_PHYSICS

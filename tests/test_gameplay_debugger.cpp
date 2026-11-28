@@ -252,6 +252,35 @@ AETHER_TEST(GameplayDebugger_PanelDrawsInEveryState) {
     CHECK(r.doc.Entities().empty());
 }
 
+AETHER_TEST(GameplayDebugger_QueriesTheCurrentSourceAtDrawTime) {
+    EditorWorkspace ws;
+    const i64 tool = ws.FindTool("Gameplay Debugger");
+    CHECK(tool >= 0);
+    if (tool < 0) return;
+
+    World first, second;
+    AttributeSet first_attr, second_attr;
+    first_attr.Define("FirstPreviewCharge", 42);
+    second_attr.Define("SecondPreviewCharge", 84);
+    first.CreateEntity(first_attr);
+    second.CreateEntity(second_attr);
+    World* active = nullptr;
+    ws.SetGameplaySourceProvider([&] { return EditorWorkspace::GameplaySource{.world = active}; });
+    HeadlessImGui imgui;
+    const auto draw = [&] { return imgui.CaptureText([&] { ws.DrawTool(static_cast<usize>(tool)); }); };
+
+    CHECK(draw().find("Sample data only") != std::string::npos);
+    active = &first;
+    const auto one = draw();
+    CHECK(one.find("FirstPreviewCharge") != std::string::npos && one.find("Sample Hero") == std::string::npos);
+    active = &second;
+    const auto two = draw();
+    CHECK(two.find("SecondPreviewCharge") != std::string::npos && two.find("FirstPreviewCharge") == std::string::npos);
+    active = nullptr;
+    const auto stopped = draw();
+    CHECK(stopped.find("Sample Hero") != std::string::npos && stopped.find("SecondPreviewCharge") == std::string::npos);
+}
+
 AETHER_TEST(GameplayDebugger_WorkspaceHasTheTool) {
     EditorWorkspace ws;
     const i64 tool = ws.FindTool("Gameplay Debugger");

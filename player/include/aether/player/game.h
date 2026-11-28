@@ -99,6 +99,12 @@ namespace aether::vfx {
 class ParticleWorld;
 }
 
+namespace aether::gas {
+class AttributeSystem;
+class EffectSystem;
+class AbilitySystem;
+}
+
 namespace aether::player {
 
 // Manifest.json, as the cooker writes it (§25.2).
@@ -247,6 +253,17 @@ public:
     void BeginPlay();
     void EndPlay();
     bool IsPlaying() const { return lifecycle_ && lifecycle_->IsPlaying(); }
+
+    // Borrowed from this instance, never the process-global active systems. Re-query after Tick or a scene load.
+    struct GameplayDebugContext {
+        World* world = nullptr;
+        gas::AttributeSystem* attributes = nullptr;
+        gas::EffectSystem* effects = nullptr;
+        gas::AbilitySystem* abilities = nullptr;
+        const gas::EffectLibrary* effect_library = nullptr;
+        const gas::AbilityLibrary* ability_library = nullptr;
+    };
+    GameplayDebugContext GameplayForDebugging() const;
 
     // One frame of `dt` seconds: PreUpdate, the fixed steps owed (physics,
     // then lifecycle FixedUpdate), Update, LateUpdate, PreRender.

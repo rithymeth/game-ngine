@@ -115,10 +115,12 @@ The filter matches entity names and numeric labels, as well as attributes, effec
 Type a number into an attribute's base to set it, press Remove on an effect or Cancel on a running
 ability, or add and remove tags.
 
-Check the source label before making changes. In the stock editor, the debugger shows an
-editable sample, even after you press Play. Edits to the sample don't affect your project.
-An editor host can attach a running world and its gameplay systems. With those systems attached,
-debugger edits go through them so scripts and Blueprints hear the changes.
+Check the source label before making changes. Press Play and open Game View to start its
+preview, then open the Gameplay Debugger. The debugger reads and edits the preview's copy,
+not the scene you're authoring. Keep Game View visible alongside the debugger if you want the
+game to keep advancing. Debugger edits use the preview's gameplay systems, so scripts and
+Blueprints hear the changes. Before Game View starts or after you press Stop, the debugger
+shows a labeled sample instead.
 
 ## Good to know
 

@@ -431,6 +431,7 @@ int main(int argc, char** argv) {
         GameViewPanel game_view_panel;
         LiveGameView game_view(*device, workspace.Scene(), [&workspace] { return workspace.ProjectFile(); });
         game_view_panel.surface = &game_view;
+        workspace.SetGameplaySourceProvider([&] { return game_view.GameplaySource(workspace.Scene().Document()); });
         workspace.Extensions().AddPanel({"Game View", "Scene",
                                          [&game_view_panel, &workspace, &frame_dt] { game_view_panel.Draw(workspace.Scene().Document(), frame_dt); },
                                          "shell"});

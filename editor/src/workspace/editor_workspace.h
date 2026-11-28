@@ -28,6 +28,8 @@ namespace gas {
 class AttributeSystem;
 class EffectSystem;
 class AbilitySystem;
+class EffectLibrary;
+class AbilityLibrary;
 } // namespace gas
 } // namespace aether
 
@@ -98,6 +100,17 @@ public:
     // clears it with nullptr, which goes back to the built-in sample), and the running gameplay
     // systems its actions go through (any may be null).
     void SetGameplayWorld(World* world, gas::AttributeSystem* attributes = nullptr, gas::EffectSystem* effects = nullptr, gas::AbilitySystem* abilities = nullptr);
+
+    struct GameplaySource {
+        World* world = nullptr;
+        gas::AttributeSystem* attributes = nullptr;
+        gas::EffectSystem* effects = nullptr;
+        gas::AbilitySystem* abilities = nullptr;
+        const gas::EffectLibrary* effect_library = nullptr;
+        const gas::AbilityLibrary* ability_library = nullptr;
+    };
+    // Queried immediately before each debug draw. A missing world shows the sample instead.
+    void SetGameplaySourceProvider(std::function<GameplaySource()> provider);
 
     usize ToolCount() const;
     const char* ToolName(usize tool) const;
