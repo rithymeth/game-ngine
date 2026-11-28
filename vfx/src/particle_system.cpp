@@ -229,6 +229,8 @@ void ParticleWorld::Update(f32 dt, const ParticleCamera* camera) {
         }
         bool restart = false;
         if (!live.instance) {
+            // Completion belongs to the instance that actually started.
+            live.started = false;
             const ParticleSystemAsset* data = assets_ ? assets_(ps.asset) : nullptr;
             live.entity = e;
             live.asset = ps.asset;

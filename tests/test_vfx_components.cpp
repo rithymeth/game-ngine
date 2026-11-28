@@ -190,6 +190,44 @@ AETHER_TEST(VFX_ParticleWorld) {
     CHECK(problems.size() == 4 && reported("'Nope' couldn't be found") && reported("its entity has no Transform"));
 }
 
+AETHER_TEST(VFX_ParticleReplacementWaitsForManualActivation) {
+    Library lib;
+    World world;
+    ParticleWorld pw(world, lib.Lookup());
+    ParticleSystem ps;
+    ps.asset = "Smoke";
+    ps.auto_activate = false;
+    ps.destroy_when_finished = true;
+    const Entity effect = world.CreateEntity(At({0, 0, 0}), ps);
+    world.GetComponent<ParticleSystem>(effect)->Activate();
+    pw.Update(0.1f);
+    CHECK(pw.InstanceOf(effect) != nullptr && pw.InstanceOf(effect)->Count() == 1);
+
+    world.GetComponent<ParticleSystem>(effect)->SetAsset("Burst");
+    pw.Update(0.05f);
+    CHECK(pw.Events().empty());
+    CHECK(world.IsAlive(effect));
+    if (!world.IsAlive(effect)) return;
+
+    const ParticleSystemInstance* burst = pw.InstanceOf(effect);
+    CHECK(burst != nullptr && burst->Emitter(0).Asset().settings.name == "Burst" && burst->Count() == 0);
+    CHECK(!world.GetComponent<ParticleSystem>(effect)->IsActive());
+    pw.Update(0.5f);
+    CHECK(world.IsAlive(effect) && pw.Events().empty());
+    if (!world.IsAlive(effect)) return;
+
+    world.GetComponent<ParticleSystem>(effect)->Activate();
+    pw.Update(0.05f);
+    CHECK(pw.InstanceOf(effect) != nullptr && pw.InstanceOf(effect)->Count() == 5);
+    std::vector<ParticleSystemFinishedEvent> finished;
+    for (int i = 0; i < 20; ++i) {
+        pw.Update(0.05f);
+        finished.insert(finished.end(), pw.Events().begin(), pw.Events().end());
+    }
+    CHECK(finished.size() == 1 && finished.front().entity == effect && finished.front().asset == "Burst");
+    CHECK(!world.IsAlive(effect));
+}
+
 AETHER_TEST(VFX_ParticleWorldCullingAndDrawing) {
     Library lib;
     World world;
