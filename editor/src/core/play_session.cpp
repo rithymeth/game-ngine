@@ -3,9 +3,13 @@
 #include "aether/core/log.h"
 #include "aether/scene/serialization.h"
 
+#include <atomic>
+
 namespace aether::editor {
 
 namespace {
+
+std::atomic<u64> next_session_id{1};
 
 std::vector<Entity> AllEntities(const World& world) {
     std::vector<Entity> entities;
@@ -29,6 +33,7 @@ void PlaySession::Play(CommandContext& ctx, CommandStack& stack, bool simulate) 
         return;
     }
     snapshot_ = SaveSceneToMemory(ctx.world);
+    id_ = next_session_id.fetch_add(1, std::memory_order_relaxed);
     stack.BreakMergeChain();
     stack.SetFrozen(true);
     state_ = State::Playing;

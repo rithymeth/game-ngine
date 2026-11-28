@@ -129,6 +129,7 @@ AETHER_TEST(GameView_StartsWithTheSessionAndFollowsItPausedAndStepped) {
     document.Simulate(); // while paused this is Resume: the session stays the Play it was
     imgui.Frame([&] { panel.Draw(document, 1.0f / 60.0f); });
     AETHER_CHECK(!panel.LastState().simulating && !panel.LastState().paused);
+    AETHER_CHECK(game.starts == 1 && game.stops == 0);
     document.Stop();
     imgui.Frame([&] { panel.Draw(document, 1.0f / 60.0f); });
     AETHER_CHECK(game.stops == 1);
@@ -153,6 +154,44 @@ AETHER_TEST(GameView_StopsWithTheSessionAndStartsAFreshOneNextTime) {
     imgui.Frame([&] { panel.Draw(document, 1.0f / 60.0f); });
     AETHER_CHECK(panel.Running() && game.starts == 2); // a new session starts a new game
     AETHER_CHECK(panel.LastState().has_picture && game.stops == 1);
+}
+
+AETHER_TEST(GameView_RestartsWhenStopAndPlayHappenWhileItIsHidden) {
+    HeadlessImGui imgui;
+    SceneDocument document;
+    document.NewScene();
+    FakeGameView game;
+    GameViewPanel panel;
+    panel.surface = &game;
+    const auto draw = [&] { imgui.Frame([&] { panel.Draw(document, 1.0f / 60.0f); }); };
+
+    document.Play();
+    draw();
+    AETHER_CHECK(panel.Running() && game.starts == 1 && game.stops == 0);
+    document.Stop(); // another editor tool is visible; Game View never sees the Editing frame
+    document.Simulate();
+    draw();
+    AETHER_CHECK(panel.Running() && panel.LastState().simulating && game.starts == 2 && game.stops == 1);
+}
+
+AETHER_TEST(GameView_RetriesAFailedStartAfterAHiddenRestart) {
+    HeadlessImGui imgui;
+    SceneDocument document;
+    document.NewScene();
+    FakeGameView game;
+    game.start_ok = false;
+    GameViewPanel panel;
+    panel.surface = &game;
+    const auto draw = [&] { imgui.Frame([&] { panel.Draw(document, 1.0f / 60.0f); }); };
+
+    document.Play();
+    draw();
+    AETHER_CHECK(!panel.Running() && game.starts == 1);
+    document.Stop();
+    game.start_ok = true;
+    document.Play();
+    draw();
+    AETHER_CHECK(panel.Running() && panel.LastState().has_picture && game.starts == 2 && game.stops == 0);
 }
 
 AETHER_TEST(GameView_ASimulateSessionIsReported) {

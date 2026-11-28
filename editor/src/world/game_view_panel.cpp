@@ -14,6 +14,15 @@ void GameViewPanel::Draw(SceneDocument& document, f32 frame_dt) {
     state_.paused = play_state == PlaySession::State::Paused;
     state_.simulating = document.IsSimulating();
 
+    const u64 session_id = document.PlaySessionId();
+    if (session_id_ != session_id) {
+        // A hidden Game View can miss the Editing frame between Stop and the next Play.
+        if (running_ && surface != nullptr) surface->Stop();
+        running_ = false;
+        start_failed_ = false;
+        start_error_.clear();
+        session_id_ = session_id;
+    }
     if (playing && !running_ && !start_failed_) {
         if (surface == nullptr) {
             state_.note = "The Game View needs the Vulkan editor: this build has no renderer.";
@@ -26,12 +35,6 @@ void GameViewPanel::Draw(SceneDocument& document, f32 frame_dt) {
         }
     }
     if (start_failed_ && playing) state_.note = start_error_; // the failure stands for the whole session
-    if (!playing && (running_ || start_failed_)) { // Stop: this session's game is let go (the next Play starts a fresh one)
-        if (running_ && surface != nullptr) surface->Stop();
-        running_ = false;
-        start_failed_ = false;
-        start_error_.clear();
-    }
     if (running_ && surface != nullptr) {
         surface->Frame(document.PlayDelta(frame_dt)); // paused: zero, and the last picture stands; Step: exactly one frame
         if (surface->Picture().Valid()) state_.has_picture = true;

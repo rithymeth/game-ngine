@@ -123,6 +123,7 @@ public:
     CommandContext& Context() { return context_; }
     CommandStack& Commands() { return commands_; }
     PlaySession::State PlayState() const { return play_session_.GetState(); }
+    u64 PlaySessionId() const { return play_session_.Id(); }
     void Play();
     // As Play, but the session simulates with the editor's camera left alone: the running game keeps its own
     // camera and the host's view is free (the Scene View does not possess or restore it on Stop).

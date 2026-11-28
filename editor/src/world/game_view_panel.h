@@ -59,6 +59,7 @@ public:
 
 private:
     State state_;
+    u64 session_id_ = 0;
     bool running_ = false;
     bool start_failed_ = false; // this session's start failed already; do not cook again on every frame
     std::string start_error_;   // why it failed, said on every draw of the session

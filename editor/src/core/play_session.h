@@ -29,6 +29,8 @@ public:
     enum class State { Editing, Playing, Paused };
 
     State GetState() const { return state_; }
+    // A fresh ID on every new session, including across documents. Zero while editing; pause/resume keeps the same ID.
+    u64 Id() const { return state_ == State::Editing ? 0 : id_; }
     bool IsEditing() const { return state_ == State::Editing; }
 
     // Editing -> Playing (takes the snapshot), or Paused -> Playing. `simulate` only matters on the
@@ -52,6 +54,7 @@ public:
 
 private:
     State state_ = State::Editing;
+    u64 id_ = 0;
     bool step_pending_ = false;
     bool simulate_ = false; // this session was started by Simulate
     std::vector<u8> snapshot_;
