@@ -322,6 +322,24 @@ AETHER_TEST(ProceduralEditor_ApplyReplacesTheTerrainAndFoliageEditorsContent) {
     CHECK(foliage.Undo() && foliage.Layer().instances.empty()); // one step back
 }
 
+AETHER_TEST(ProceduralEditor_RuleCountsRequireCurrentGeneration) {
+    ProceduralWorldDocument doc(Small());
+    CHECK(doc.CountsByRule().empty());
+    doc.Generate();
+    const auto counts = doc.CountsByRule();
+    CHECK(counts.size() > 1 && counts[0] > 0);
+    CHECK(doc.RemoveRule(0));
+    CHECK(doc.Stale() && !doc.Instances().empty()); // keep the existing preview
+    CHECK(doc.CountsByRule().empty());
+
+    doc.Generate();
+    const auto regenerated = doc.CountsByRule();
+    CHECK(regenerated.size() == doc.Settings().rules.size());
+    usize total = 0;
+    for (const usize count : regenerated) total += count;
+    CHECK(total == doc.Instances().size());
+}
+
 AETHER_TEST(ProceduralEditor_StaleScatterCannotReachOutput) {
     auto settings = Small();
     settings.rules = {

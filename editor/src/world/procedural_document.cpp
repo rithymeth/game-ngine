@@ -225,6 +225,8 @@ void ProceduralWorldDocument::Generate() {
 }
 
 std::vector<usize> ProceduralWorldDocument::CountsByRule() const {
+    // Cached instances' indices belong to the rules used at generation time.
+    if (Stale()) return {};
     std::vector<usize> counts(settings_.rules.size(), 0);
     for (const ScatterInstance& i : instances_)
         if (i.rule < counts.size()) ++counts[i.rule];

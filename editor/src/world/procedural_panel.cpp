@@ -105,11 +105,13 @@ void ProceduralWorldPanel::DrawTerrainSettings(ProceduralWorldSettings& s, bool&
 void ProceduralWorldPanel::DrawRules(ProceduralWorldSettings& s, bool& changed) {
     if (s.rules.empty()) { ImGui::TextDisabled("No scatter rules."); }
     const std::vector<usize> counts = doc_.CountsByRule();
+    if (!s.rules.empty() && counts.empty()) ImGui::TextDisabled("Press Generate to refresh the rule counts.");
     selected_rule = std::min(selected_rule, s.rules.empty() ? 0 : s.rules.size() - 1);
     for (usize i = 0; i < s.rules.size(); ++i) {
-        char label[160];
-        std::snprintf(label, sizeof(label), "%s  (%zu)##rule%zu", s.rules[i].name.c_str(), i < counts.size() ? counts[i] : 0, i);
-        if (ImGui::Selectable(label, selected_rule == i)) selected_rule = i;
+        std::string label = s.rules[i].name;
+        if (i < counts.size()) label += "  (" + std::to_string(counts[i]) + ")";
+        label += "###rule" + std::to_string(i);
+        if (ImGui::Selectable(label.c_str(), selected_rule == i)) selected_rule = i;
     }
     if (ImGui::Button("Add rule")) doc_.AddRule(ScatterRule{.name = "New rule"});
     ImGui::SameLine();
