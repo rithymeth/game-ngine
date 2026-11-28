@@ -1382,6 +1382,13 @@ struct EditorWorkspace::Impl {
             if (ext == ".atileset") {
                 // A tileset has no window of its own: it is edited with a map, so open one that uses it.
                 const assets::AssetRecord* tileset = database->FindByPath(relative);
+                if (tileset && tilemap_doc && tilemap_doc->dirty() &&
+                    tilemap_doc->TilesetFile() == file && tilemap_doc->Map().tileset == tileset->guid) {
+                    // This shared tileset is already being edited. Focus the
+                    // live document rather than trying to replace its map.
+                    ShowTool("Tilemap");
+                    return true;
+                }
                 const assets::AssetRecord* map = nullptr;
                 for (const assets::AssetRecord* user : tileset != nullptr ? database->Referencers(tileset->guid) : std::vector<const assets::AssetRecord*>{}) {
                     if (user->importer == "Tilemap") {

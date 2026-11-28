@@ -1052,6 +1052,16 @@ AETHER_TEST(Openers_TilemapsAndTilesetsOpenTheirEditor) {
     CHECK(sprite2d::LoadTilemap(paths.content / "Maps/Level_02.atilemap", reread, &error));
     CHECK(reread.Get(0, 0, 0) == 3);
     CHECK(ws.OpenAsset("Maps/Third.atilemap", &error));
+    const auto third = ws.Tilemap().TilemapFile();
+    ws.Tilemap().brush = 5;
+    ws.Tilemap().Apply(1, 0);
+    const auto third_revision = ws.Tilemap().Revision();
+    // A shared tileset should focus the map already using it, not try to
+    // replace the map with the alphabetically first referencer.
+    CHECK(ws.OpenAsset("Tilesets/Ground.atileset", &error));
+    CHECK(error.empty() && ShowingTool(ws, "Tilemap"));
+    CHECK(ws.Tilemap().TilemapFile() == third && ws.Tilemap().Revision() == third_revision);
+    CHECK(ws.Tilemap().dirty() && ws.Tilemap().CanUndo() && ws.Tilemap().Map().Get(0, 1, 0) == 5);
 
     std::error_code ec;
     stdfs::remove_all(project, ec);
