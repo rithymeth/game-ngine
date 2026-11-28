@@ -41,6 +41,7 @@ namespace aether::player {
 
 // Scene-scoped systems share the World, GUID index, and script hosts from Game.
 struct Game::Runtime {
+    u64 world_generation = 0;
     kit::KitEventBus kit_events;
     std::map<std::string, SystemDesc> stages;
     audio::SoundBank sounds;

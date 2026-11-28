@@ -595,7 +595,7 @@ struct EditorWorkspace::Impl {
                  gameplay_doc->SetLibraries(source.world ? source.effect_library : &gameplay_effects,
                                             source.world ? source.ability_library : &gameplay_abilities);
                  ImGui::TextDisabled("%s", source.world ? "Attached gameplay world." : "Sample data only. No project gameplay world is attached.");
-                 gameplay_panel->Draw();
+                 gameplay_panel->Draw(source.world_generation);
                  // The provider may replace its world on the next game tick. Do not retain borrowed pointers.
                  gameplay_doc->SetWorld(nullptr);
                  gameplay_doc->Select(kNullEntity);

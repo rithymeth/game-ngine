@@ -70,7 +70,8 @@ EditorWorkspace::GameplaySource LiveGameView::GameplaySource(const SceneDocument
             selected = game->Guids().Find(*runtime.world, id->guid);
         }
     }
-    return {runtime.world, runtime.attributes, runtime.effects, runtime.abilities, runtime.effect_library, runtime.ability_library, selected};
+    return {runtime.world, runtime.attributes, runtime.effects, runtime.abilities, runtime.effect_library,
+            runtime.ability_library, selected, runtime.world_generation};
 }
 
 void LiveGameView::Stop() {

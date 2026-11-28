@@ -110,6 +110,7 @@ public:
         const gas::EffectLibrary* effect_library = nullptr;
         const gas::AbilityLibrary* ability_library = nullptr;
         Entity selected = kNullEntity; // a handle in world, never the authoring scene's handle
+        u64 world_generation = 0; // providers may distinguish different lifetimes at the same address
     };
     // Queried immediately before each debug draw. A missing world shows the sample instead.
     void SetGameplaySourceProvider(std::function<GameplaySource()> provider);

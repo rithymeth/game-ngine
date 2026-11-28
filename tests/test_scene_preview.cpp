@@ -753,6 +753,7 @@ AETHER_TEST(GameView_LiveGameplaySourceTracksTheCurrentSession) {
     AETHER_CHECK(current.attributes != nullptr && current.attributes != &unrelated_attributes &&
                  current.effects != nullptr && current.abilities != nullptr && current.effect_library != nullptr &&
                  current.ability_library != nullptr);
+    AETHER_CHECK(current.world_generation != 0 && live.GameplaySource(document).world_generation == current.world_generation);
     if (!current.world || !current.attributes) return;
     GameplayDebuggerDocument debugger;
     debugger.SetWorld(current.world);
@@ -772,6 +773,17 @@ AETHER_TEST(GameView_LiveGameplaySourceTracksTheCurrentSession) {
     AETHER_CHECK(document.GetWorld().GetComponent<gas::AttributeSet>(actor)->Get("LiveProbeCharge") == 42);
     debugger.SetWorld(nullptr);
     debugger.SetSystems(nullptr, nullptr, nullptr);
+
+    // Replace the scene within the same play session; the debugger must get a
+    // new interaction identity without needing the Game View to restart.
+    const auto play_session_id = document.PlaySessionId();
+    const auto scene_bytes = SaveSceneToMemory(document.GetWorld());
+    if (!live.Viewport().SetScene(scene_bytes)) { AETHER_CHECK(false); return; }
+    live.Viewport().BeginPlay(); // the new scene lifecycle, within the same editor session
+    const auto replaced = live.GameplaySource(document);
+    AETHER_CHECK(document.PlaySessionId() == play_session_id && replaced.world != nullptr);
+    AETHER_CHECK(replaced.world_generation != 0 && replaced.world_generation != current.world_generation);
+    AETHER_CHECK(live.GameplaySource(document).world_generation == replaced.world_generation);
 
     document.Stop();
     AETHER_CHECK(live.GameplaySource(document).world == nullptr); // before hidden Game View has serviced teardown

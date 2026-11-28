@@ -5,7 +5,7 @@
 
 namespace aether::editor {
 
-void GameplayDebuggerPanel::Draw() {
+void GameplayDebuggerPanel::Draw(u64 world_generation) {
     if (doc_.GetWorld() == nullptr) {
         ImGui::TextDisabled("No world to show: play the game, or open a level.");
         return;
@@ -22,8 +22,13 @@ void GameplayDebuggerPanel::Draw() {
     ImGui::TextDisabled("%zu of %zu entities with gameplay data", doc_.Entities().size(), doc_.TotalEntities());
     if (!message_.empty()) ImGui::TextUnformatted(message_.c_str());
     const std::vector<DebugEntityRows> entities = doc_.Entities(); // actions below rebuild next frame
+    // A stale press or text edit must not transfer to an identically numbered
+    // actor in a replacement world, or to a reused entity slot in this world.
+    ImGui::PushID(doc_.GetWorld());
+    ImGui::PushID(std::to_string(world_generation).c_str());
     for (const DebugEntityRows& rows : entities) {
         ImGui::PushID(static_cast<int>(rows.entity.index));
+        ImGui::PushID(static_cast<int>(rows.entity.generation));
         // Use the unframed text path; a framed header hides literal "##" in authored names.
         constexpr ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_NoTreePushOnOpen |
                                              ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_FramePadding;
@@ -113,7 +118,10 @@ void GameplayDebuggerPanel::Draw() {
             }
         }
         ImGui::PopID();
+        ImGui::PopID();
     }
+    ImGui::PopID();
+    ImGui::PopID();
 }
 
 } // namespace aether::editor
