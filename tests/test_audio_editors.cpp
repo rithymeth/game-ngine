@@ -473,6 +473,29 @@ AETHER_TEST(AudioEditor_CueEditorDrawsAndPreviews) {
     AETHER_CHECK(!editor.SaveNow() && editor.Status().find("Save failed") == 0);
 }
 
+AETHER_TEST(AudioEditor_MeterPeakFallsOnlyAfterTheHoldExpires) {
+    MeterBallistics single_frame, split_frames;
+    for (auto* meter : {&single_frame, &split_frames}) {
+        meter->Update(1.0f, 0.01f);
+        meter->Update(0.0f, 0.75f);
+        AETHER_CHECK(meter->peak_db == 0.0f);
+    }
+
+    // A hitch straddling the release must decay only for the final quarter second.
+    single_frame.Update(0.0f, 0.5f);
+    split_frames.Update(0.0f, 0.25f);
+    AETHER_CHECK(split_frames.peak_db == 0.0f);
+    split_frames.Update(0.0f, 0.25f);
+    AETHER_CHECK(std::fabs(single_frame.peak_db + 6.0f) < 1e-3f);
+    AETHER_CHECK(std::fabs(single_frame.peak_db - split_frames.peak_db) < 1e-3f);
+
+    single_frame.Update(0.0f, 0.25f);
+    AETHER_CHECK(std::fabs(single_frame.peak_db + 12.0f) < 1e-3f);
+    single_frame.Update(1.0f, 0.01f);
+    single_frame.Update(0.0f, 0.75f);
+    AETHER_CHECK(single_frame.peak_db == 0.0f); // a new peak starts a new hold
+}
+
 AETHER_TEST(AudioEditor_MixerPanelMetersFadersAndEffects) {
     // Ballistics: rises at once, falls at 24 dB/s; the peak holds for a second.
     MeterBallistics m;

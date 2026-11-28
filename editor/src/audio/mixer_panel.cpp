@@ -19,8 +19,10 @@ void MeterBallistics::Update(f32 input, f32 dt) {
         peak_db = db;
         held_for = 0.0f;
     } else {
+        // A frame can straddle the end of the hold; only its remaining time decays.
+        const f32 decay_time = dt - std::max(0.0f, hold_seconds - held_for);
         held_for += dt;
-        if (held_for > hold_seconds) peak_db = std::max(level_db, peak_db - fall_db_per_second * dt);
+        if (decay_time > 0.0f) peak_db = std::max(level_db, peak_db - fall_db_per_second * decay_time);
     }
 }
 
