@@ -841,6 +841,23 @@ return CountUpdates
     constexpr f32 dt = 0.1f;
     {
         LiveSceneShading shading(*device, scene, [&] { return project; });
+        shading.reload_interval = 0.0f;
+        SceneViewCamera camera;
+        const auto draw = [&] { return shading.Advance(document, camera, 128, 72, SceneViewMode::Lit, dt); };
+        AETHER_CHECK(draw() && position_is(shading.Viewport(), 0));
+        AETHER_CHECK(shading.Viewport().ScriptInstanceCount() == 1);
+        const u64 frame = shading.Viewport().FrameCount();
+        camera.yaw += 0.2f;
+        AETHER_CHECK(draw() && shading.Viewport().FrameCount() == frame + 1);
+        AETHER_CHECK(position_is(shading.Viewport(), 0));
+
+        AETHER_CHECK(document.SetPosition(actor, Vec3(4.0f, 0.0f, 0.0f), true));
+        AETHER_CHECK(draw() && position_is(shading.Viewport(), 4));
+        AETHER_CHECK(document.SetPosition(actor, Vec3(0.0f, 0.0f, 0.0f), true));
+        shading.Stop();
+    }
+    {
+        LiveSceneShading shading(*device, scene, [&] { return project; });
         SceneViewCamera camera;
         const auto draw = [&] { return shading.Advance(document, camera, 128, 72, SceneViewMode::Lit, dt); };
         document.Play();
