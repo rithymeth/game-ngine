@@ -239,8 +239,9 @@ void ParticleWorld::Update(f32 dt, const ParticleCamera* camera) {
         }
         bool restart = false;
         if (!live.instance) {
-            // Completion belongs to the instance that actually started.
+            // Activation and completion belong to an actual instance.
             live.started = false;
+            ps.active = false;
             const ParticleSystemAsset* data = assets_ ? assets_(ps.asset) : nullptr;
             live.entity = e;
             live.asset = ps.asset;
@@ -253,7 +254,6 @@ void ParticleWorld::Update(f32 dt, const ParticleCamera* camera) {
             live.instance = Acquire(ps.asset, *data, e);
             EmitterPose pose;
             if (WorldPose(e, pose)) live.instance->Teleport(pose);
-            ps.active = false;
             restart = ps.auto_activate;
             // Everything spawned so far was for the old instance; it starts clean.
             for (usize i = 0; i < live.instance->EmitterCount(); ++i) live.instance->Emitter(i).Stop();

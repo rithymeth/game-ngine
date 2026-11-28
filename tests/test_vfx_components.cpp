@@ -262,6 +262,32 @@ AETHER_TEST(VFX_ParticleReplacementWaitsForManualActivation) {
     CHECK(!world.IsAlive(effect));
 }
 
+AETHER_TEST(VFX_ParticleMissingReplacementClearsActiveState) {
+    Library lib;
+    World world;
+    ParticleWorld pw(world, lib.Lookup());
+    ParticleSystem smoke;
+    smoke.asset = "Smoke";
+    const Entity effect = world.CreateEntity(At({0, 0, 0}), smoke);
+
+    pw.Update(0.1f);
+    auto* ps = world.GetComponent<ParticleSystem>(effect);
+    CHECK(ps != nullptr && ps->IsActive());
+    if (!ps) return;
+
+    ps->SetAsset("Missing");
+    pw.Update(0.1f);
+    CHECK(pw.InstanceOf(effect) == nullptr && !ps->IsActive());
+    CHECK(pw.Events().empty() && pw.Problems().size() == 1);
+
+    // Once that asset becomes available, auto-activation still works.
+    lib.assets.emplace("Missing", lib.assets.at("Burst"));
+    pw.Update(0.05f);
+    const auto* instance = pw.InstanceOf(effect);
+    CHECK(ps->IsActive() && instance != nullptr && instance->Count() == 5);
+    CHECK(pw.Events().empty());
+}
+
 AETHER_TEST(VFX_ParticleAttachmentLostBeforeFirstUpdate) {
     Library lib;
     World world;
