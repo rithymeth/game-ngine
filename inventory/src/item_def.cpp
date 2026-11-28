@@ -1,6 +1,7 @@
 #include "aether/inventory/item_def.h"
 
 #include <cmath>
+#include <limits>
 
 namespace aether::inv {
 
@@ -59,8 +60,14 @@ bool ItemFromJson(const std::string& text, ItemDef& out, std::string* error) {
         return false;
     }
     if (j.contains("max_stack")) {
-        if (!j["max_stack"].is_number_integer()) return Fail(error, "item.bad_stack: 'max_stack' is a whole number");
-        item.max_stack = j["max_stack"].get<i32>();
+        const Json& field = j["max_stack"];
+        if (!field.is_number_integer()) return Fail(error, "item.bad_stack: 'max_stack' is a whole number");
+        // JSON integers can be signed or unsigned. A negative signed value
+        // converts to a large unsigned value, which also fails this range check.
+        const u64 stack = field.get<u64>();
+        if (stack == 0 || stack > static_cast<u64>(std::numeric_limits<i32>::max()))
+            return Fail(error, "item.bad_stack: 'max_stack' must be between 1 and 2147483647");
+        item.max_stack = static_cast<i32>(stack);
     }
     if (j.contains("weight")) {
         if (!j["weight"].is_number()) return Fail(error, "item.bad_weight: 'weight' is a number");

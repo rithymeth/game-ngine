@@ -95,7 +95,13 @@ AETHER_TEST(Inventory_ItemJsonRoundTripAndErrors) {
     };
     CHECK(fails("nonsense", "item.bad_json"));
     CHECK(fails("{}", "item.name_empty"));
+    CHECK(ItemFromJson(R"({"name":"x","max_stack":2147483647})", back, &err) && back.max_stack == std::numeric_limits<i32>::max());
     CHECK(fails(R"({"name":"x","max_stack":0})", "item.bad_stack"));
+    CHECK(fails(R"({"name":"x","max_stack":1.0})", "item.bad_stack"));
+    CHECK(fails(R"({"name":"x","max_stack":2147483648})", "item.bad_stack"));
+    CHECK(fails(R"({"name":"x","max_stack":4294967297})", "item.bad_stack")); // previously narrowed to 1
+    CHECK(fails(R"({"name":"x","max_stack":-4294967295})", "item.bad_stack")); // also narrowed to 1
+    CHECK(fails(R"({"name":"x","max_stack":9223372036854775809})", "item.bad_stack"));
     CHECK(fails(R"({"name":"x","weight":-1})", "item.bad_weight"));
     CHECK(fails(R"({"name":"x","tags":["bad tag!"]})", "item.bad_tag"));
     CHECK(fails(R"({"name":"x","equip_effects":["A"]})", "item.equip_effects_without_slot"));
@@ -350,7 +356,10 @@ std::filesystem::path MakePackage(const char* dir_name, const std::vector<std::t
 } // namespace
 
 AETHER_TEST(Inventory_PlayerLoadsItemsAndRunsTheSystem) {
-    const std::filesystem::path file = MakePackage("aether_inventory_player_tests", {});
+    const std::filesystem::path file = MakePackage("aether_inventory_player_tests", {
+        {"Items/wrapped.aitem", "ItemDefinition", R"({"name":"WrappedStack","max_stack":4294967297})", assets::NewAssetGuid()},
+        {"Items/maximum.aitem", "ItemDefinition", R"({"name":"MaximumStack","max_stack":2147483647})", assets::NewAssetGuid()},
+    });
     std::string error;
     player::GamePackage package;
     CHECK(package.Mount(file.string(), 0, &error) && package.LoadManifest(&error));
@@ -359,6 +368,9 @@ AETHER_TEST(Inventory_PlayerLoadsItemsAndRunsTheSystem) {
     bool warned = false;
     for (const std::string& w : game.Warnings()) warned = warned || (w.find("bad.aitem") != std::string::npos && w.find("item.unknown_effect") != std::string::npos);
     CHECK(warned); // the item naming a missing effect is reported, the good one loads
+    bool warned_stack = false;
+    for (const std::string& w : game.Warnings()) warned_stack |= w.find("wrapped.aitem") != std::string::npos && w.find("item.bad_stack") != std::string::npos;
+    CHECK(warned_stack);
     InventorySystem* sys = InventorySystem::Active();
     CHECK(sys != nullptr && gas::AttributeSystem::Active() != nullptr);
     if (!sys) return;
@@ -367,6 +379,9 @@ AETHER_TEST(Inventory_PlayerLoadsItemsAndRunsTheSystem) {
     attrs->Define(e, "Health", 40, 0, 100);
     game.BeginPlay();
     CHECK(sys->Add(e, "Potion", 3) == 3 && sys->Add(e, "Bad", 1) == 0 && sys->Use(e, 0) && Near(attrs->GetBase(e, "Health"), 65));
+    constexpr i32 limit = std::numeric_limits<i32>::max();
+    CHECK(sys->Add(e, "WrappedStack", 1) == 0);
+    CHECK(sys->Add(e, "MaximumStack", limit) == limit && sys->Count(e, "MaximumStack") == limit);
     game.Tick(0.016f);
     CHECK(sys->Events().empty()); // Player.Inventory took them
 }
