@@ -19,8 +19,8 @@ void ParticlePreview::Reset(const ParticleSystemAsset& asset) {
 }
 
 void ParticlePreview::Advance(f32 dt) {
-    if (!instance_) return;
-    carry_ += std::max(dt, 0.0f);
+    if (!instance_ || !std::isfinite(dt) || dt <= 0.0f) return;
+    carry_ += dt;
     while (carry_ >= kStep - 1e-6f) {
         carry_ -= kStep;
         const auto t0 = std::chrono::steady_clock::now();

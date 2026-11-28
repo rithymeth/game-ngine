@@ -10,6 +10,7 @@
 #include <fstream>
 #include <functional>
 #include <iterator>
+#include <limits>
 
 #if defined(__linux__)
 #include <signal.h>
@@ -314,6 +315,23 @@ AETHER_TEST(VfxEditor_LoadingAnotherAssetResetsSelectionAndPreview) {
     const auto stats = editor.Preview().Stats();
     CHECK(stats.size() == 1 && stats.front().name == "Smoke");
     fs::remove_all(dir);
+}
+
+AETHER_TEST(VfxEditor_PreviewIgnoresNonFiniteFrameTime) {
+    ParticleSystemDocument doc;
+    ParticlePreview preview;
+    preview.Reset(doc.Get());
+    const f32 half = ParticlePreview::kStep * 0.5f;
+    preview.Advance(half);
+    preview.Advance(std::numeric_limits<f32>::quiet_NaN());
+    preview.Advance(half);
+    CHECK(Near(preview.Time(), ParticlePreview::kStep, 1e-6f));
+    // Keep the pre-fix regression bounded: an infinite delta used to trap the step loop.
+    if (!Near(preview.Time(), ParticlePreview::kStep, 1e-6f)) return;
+    preview.Advance(std::numeric_limits<f32>::infinity());
+    CHECK(Near(preview.Time(), ParticlePreview::kStep, 1e-6f));
+    preview.Advance(ParticlePreview::kStep);
+    CHECK(Near(preview.Time(), 2.0f * ParticlePreview::kStep, 1e-6f));
 }
 
 AETHER_TEST(VfxEditor_PreviewAndPanel) {
