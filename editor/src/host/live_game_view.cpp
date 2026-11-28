@@ -46,6 +46,13 @@ bool LiveGameView::Frame(f32 play_dt) {
     return true;
 }
 
+void LiveGameView::AdvanceWithoutDrawing(f32 play_dt) {
+    if (!(play_dt > 0.0f) || !viewport_.Loaded()) return;
+    viewport_.Advance(play_dt);
+    // The cached image now describes an older tick. Draw a fresh image even if paused when the tab returns.
+    has_picture_ = false;
+}
+
 const ImageTexture& LiveGameView::Picture() const {
     static const ImageTexture empty;
     return has_picture_ ? texture_ : empty;

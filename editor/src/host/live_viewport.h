@@ -90,6 +90,8 @@ public:
     // the game has left it in (one is made here when the scene has none), with nothing borrowed from the editor. This is the Game View's
     // frame: what a player would see. False if nothing is loaded or the picture could not be read.
     bool FrameGameCamera(f32 dt, FrameMode mode = FrameMode::Advance);
+    // Advance the loaded game without submitting graphics work or reading back pixels.
+    void Advance(f32 dt);
     // The look of the next frames: the scene pass's lit shading, or the editor's unlit and normals debug views.
     void SetViewMode(player::SceneRenderer::ViewMode mode);
     // The last picture: Width() * Height() * 4 bytes, top row first.

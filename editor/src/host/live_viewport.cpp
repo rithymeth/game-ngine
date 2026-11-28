@@ -359,12 +359,16 @@ bool LiveViewport::FrameGameCamera(f32 dt, FrameMode mode) {
     return RenderFrame(dt, nullptr, nullptr, 0.0f, Projection::Perspective, 0.0f, false, mode);
 }
 
+void LiveViewport::Advance(f32 dt) {
+    if (impl_) impl_->game->Tick(std::clamp(dt, 0.0f, 0.1f));
+}
+
 bool LiveViewport::RenderFrame(f32 dt, const Vec3* position, const Quaternion* rotation, f32 fov_degrees, Projection projection,
                                f32 ortho_height, bool free_camera, FrameMode mode) {
     if (!impl_) return false;
     Impl& live = *impl_;
     if (mode == FrameMode::Advance) {
-        live.game->Tick(std::clamp(dt, 0.0f, 0.1f));
+        Advance(dt);
     } else if (mode == FrameMode::SyncAndDraw) {
         live.game->GetLifecycle().Sync(); // create or retire edited scripts without running OnUpdate
     }

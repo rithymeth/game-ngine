@@ -117,9 +117,9 @@ ability, or add and remove tags.
 
 Check the source label before making changes. Press Play and open Game View to start its
 preview, then open the Gameplay Debugger. The debugger reads and edits the preview's copy,
-not the scene you're authoring. Keep Game View visible alongside the debugger if you want the
-game to keep advancing. Debugger edits use the preview's gameplay systems, so scripts and
-Blueprints hear the changes. Before Game View starts or after you press Stop, the debugger
+not the scene you're authoring. Once the preview starts, switching to the debugger doesn't
+stop it. Debugger edits use the preview's gameplay systems, so scripts and Blueprints hear
+the changes. Before Game View starts or after you press Stop, the debugger
 shows a labeled sample instead.
 
 To inspect one entity, select it in the scene hierarchy and turn on **Selected only**.

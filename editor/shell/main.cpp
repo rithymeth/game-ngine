@@ -532,8 +532,8 @@ int main(int argc, char** argv) {
             if (frame > 0 && frame % 300 == 0) workspace.RefreshSourceControl(); // a checkout outside the editor shows up within a few seconds
             select_pending();
             DrawEditor(workspace, layouts, backend_label);
-            // The toolbar can end play even if Game View was not drawn this frame.
-            game_view_panel.SyncSession(workspace.Scene().Document());
+            // Keep a started preview ticking, or allow Stop to release it, even if Game View is hidden.
+            game_view_panel.EndHostFrame(workspace.Scene().Document(), frame_dt);
             ImGui::Render();
 
             device->WaitForFence(fence); // one command list: the last frame must be done with it

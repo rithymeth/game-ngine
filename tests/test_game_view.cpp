@@ -55,6 +55,7 @@ struct FakeGameView : GameViewSurface {
     int starts = 0;
     int stops = 0;
     int frames = 0;
+    int hidden_ticks = 0;
     f32 last_play_dt = -1.0f;
     u32 start_width = 0;
     u32 start_height = 0;
@@ -71,6 +72,10 @@ struct FakeGameView : GameViewSurface {
         last_play_dt = play_dt;
         if (picture_ok) picture.Set(320, 180, std::vector<u8>(320u * 180u * 4u, 96));
         return true;
+    }
+    void AdvanceWithoutDrawing(f32 play_dt) override {
+        ++hidden_ticks;
+        last_play_dt = play_dt;
     }
     const ImageTexture& Picture() const override { return picture; }
     const std::string& Note() const override { return note_text; }
@@ -154,6 +159,36 @@ AETHER_TEST(GameView_StopsWithTheSessionAndStartsAFreshOneNextTime) {
     imgui.Frame([&] { panel.Draw(document, 1.0f / 60.0f); });
     AETHER_CHECK(panel.Running() && game.starts == 2); // a new session starts a new game
     AETHER_CHECK(panel.LastState().has_picture && game.stops == 1);
+}
+
+AETHER_TEST(GameView_HostFrameAdvancesOnlyAStartedHiddenView) {
+    HeadlessImGui imgui;
+    SceneDocument document;
+    document.NewScene();
+    FakeGameView game;
+    GameViewPanel panel;
+    panel.surface = &game;
+    constexpr f32 dt = 1.0f / 60.0f;
+    document.Play();
+    panel.EndHostFrame(document, dt);
+    AETHER_CHECK(game.starts == 0 && game.hidden_ticks == 0);
+
+    imgui.Frame([&] { panel.Draw(document, dt); });
+    panel.EndHostFrame(document, dt);
+    AETHER_CHECK(game.starts == 1 && game.frames == 1 && game.hidden_ticks == 0);
+    panel.EndHostFrame(document, dt);
+    AETHER_CHECK(game.frames == 1 && game.hidden_ticks == 1 && game.last_play_dt == dt);
+
+    document.Pause();
+    panel.EndHostFrame(document, dt);
+    AETHER_CHECK(game.hidden_ticks == 1);
+    document.Step();
+    panel.EndHostFrame(document, dt);
+    panel.EndHostFrame(document, dt);
+    AETHER_CHECK(game.frames == 1 && game.hidden_ticks == 2);
+    document.Stop();
+    panel.EndHostFrame(document, dt);
+    AETHER_CHECK(!panel.Running() && game.stops == 1 && game.hidden_ticks == 2);
 }
 
 AETHER_TEST(GameView_StopsWhileHiddenWithoutDrawing) {

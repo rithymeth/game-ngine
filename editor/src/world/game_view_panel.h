@@ -22,6 +22,8 @@ public:
     // Advances the running game by `play_dt` (the document's PlayDelta: zero while paused) and draws it from its own camera. True if a
     // new picture was read back; the last one stands when nothing moved.
     virtual bool Frame(f32 play_dt) = 0;
+    // Advance without rendering or reading back the hidden view's picture.
+    virtual void AdvanceWithoutDrawing(f32 play_dt) = 0;
     virtual const ImageTexture& Picture() const = 0;
     // Why there is no picture, or what is wrong.
     virtual const std::string& Note() const = 0;
@@ -44,8 +46,10 @@ public:
     // `frame_dt` is the frame's real time; the game gets the document's play time for it (zero while paused, one frame after Step).
     void Draw(SceneDocument& document, f32 frame_dt);
     // Run each host frame, including when the panel is hidden, to tear down an ended session.
-    // Synchronizing never starts a game, renders, or consumes a pending Step; Draw handles those.
+    // Synchronizing never starts a game, renders, or consumes a pending Step.
     void SyncSession(const SceneDocument& document);
+    // Call once after drawing the editor's tools. An already running hidden view advances without rendering.
+    void EndHostFrame(SceneDocument& document, f32 frame_dt);
 
     // What the last draw did, for a host or a test without the pixels.
     struct State {
@@ -63,6 +67,7 @@ public:
 private:
     State state_;
     u64 session_id_ = 0;
+    bool drew_this_frame_ = false;
     bool running_ = false;
     bool start_failed_ = false; // this session's start failed already; do not cook again on every frame
     std::string start_error_;   // why it failed, said on every draw of the session

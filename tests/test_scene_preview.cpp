@@ -911,6 +911,45 @@ return CountUpdates
         AETHER_CHECK(panel.Advance(dt) && position_is(panel.Viewport(), 1));
         panel.Stop();
     }
+    {
+        LiveGameView live(*device, scene, [&] { return project; });
+        GameViewPanel panel;
+        panel.surface = &live;
+        panel.width = 128;
+        panel.height = 72;
+        const auto draw = [&] {
+            imgui.Frame();
+            ImGui::Begin("game");
+            panel.Draw(document, dt);
+            ImGui::End();
+        };
+        document.Play();
+        draw();
+        panel.EndHostFrame(document, dt);
+        AETHER_CHECK(panel.Running() && position_is(live.Viewport(), 1));
+        const u64 initial_pictures = live.Viewport().FrameCount();
+        panel.EndHostFrame(document, dt); // another tool is visible, so skip Draw
+        AETHER_CHECK(position_is(live.Viewport(), 2));
+        AETHER_CHECK(live.Viewport().FrameCount() == initial_pictures);
+
+        document.Pause();
+        panel.EndHostFrame(document, dt);
+        AETHER_CHECK(position_is(live.Viewport(), 2));
+        document.Step();
+        panel.EndHostFrame(document, dt);
+        AETHER_CHECK(position_is(live.Viewport(), 3));
+        panel.EndHostFrame(document, dt);
+        AETHER_CHECK(position_is(live.Viewport(), 3));
+        AETHER_CHECK(live.Viewport().FrameCount() == initial_pictures);
+
+        draw(); // paused on return, so refresh the picture without another tick
+        panel.EndHostFrame(document, dt);
+        AETHER_CHECK(live.Viewport().FrameCount() == initial_pictures + 1 && panel.LastState().has_picture);
+        AETHER_CHECK(position_is(live.Viewport(), 3));
+        document.Stop();
+        panel.EndHostFrame(document, dt);
+        AETHER_CHECK(!live.Viewport().Loaded());
+    }
 }
 
 #if defined(AETHER_HAS_EDITOR_VULKAN)

@@ -16,6 +16,15 @@ void GameViewPanel::SyncSession(const SceneDocument& document) {
     session_id_ = session_id;
 }
 
+void GameViewPanel::EndHostFrame(SceneDocument& document, f32 frame_dt) {
+    SyncSession(document);
+    const bool drew = drew_this_frame_;
+    drew_this_frame_ = false;
+    if (drew || !running_ || !surface) return;
+    const f32 play_dt = document.PlayDelta(frame_dt, PlaySession::StepTarget::GameView);
+    if (play_dt > 0.0f) surface->AdvanceWithoutDrawing(play_dt);
+}
+
 void GameViewPanel::Draw(SceneDocument& document, f32 frame_dt) {
     SyncSession(document);
     const PlaySession::State play_state = document.PlayState();
@@ -38,6 +47,7 @@ void GameViewPanel::Draw(SceneDocument& document, f32 frame_dt) {
     }
     if (start_failed_ && playing) state_.note = start_error_; // the failure stands for the whole session
     if (running_ && surface != nullptr) {
+        drew_this_frame_ = true;
         surface->Frame(document.PlayDelta(frame_dt, PlaySession::StepTarget::GameView)); // paused: zero, and the last picture stands; Step: exactly one frame
         if (surface->Picture().Valid()) state_.has_picture = true;
         else state_.note = surface->Note();

@@ -23,6 +23,7 @@ public:
 
     bool Start(const SceneDocument& document, u32 width, u32 height) override;
     bool Frame(f32 play_dt) override;
+    void AdvanceWithoutDrawing(f32 play_dt) override;
     const ImageTexture& Picture() const override;
     const std::string& Note() const override { return note_; }
     void Stop() override;
