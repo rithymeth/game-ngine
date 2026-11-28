@@ -1,6 +1,7 @@
 #include "test_framework.h"
 
 #include "aether/assets/content_browser.h"
+#include "aether/assets/png_writer.h"
 #include "aether/project/project.h"
 #include "content/content_browser_panel.h"
 
@@ -8,6 +9,7 @@
 
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <string>
 
@@ -146,6 +148,42 @@ AETHER_TEST(ContentBrowserGrid_ThumbnailsRenderOnceAndComeFromDiskTheSecondTime)
         CHECK(changed.Thumbnails().LoadedFromDisk() == textures - 1);
         CHECK(CountPngs(thumbnails) == textures);
     }
+}
+
+AETHER_TEST(ContentBrowserGrid_RefreshDetectsSameSizeSameTimeTextureChanges) {
+    ProjectPaths paths;
+    if (!FreshProject("same_stamp", paths)) return;
+    const auto file = paths.content / "Textures" / "color.png";
+    stdfs::create_directories(file.parent_path());
+    const auto write_color = [&](std::vector<u8> rgba) {
+        const auto png = EncodePngRgba8(1, 1, rgba);
+        std::ofstream out(file, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
+        out.close();
+        return out.good();
+    };
+    if (!write_color({255, 0, 0, 255})) { CHECK(false); return; }
+    const auto time = stdfs::last_write_time(file);
+    const auto bytes = stdfs::file_size(file);
+    ContentBrowserPanel panel(paths.file);
+    panel.OpenFolder("Textures");
+    const auto get_picture = [&] {
+        if (panel.Rows().size() != 1) return ThumbnailStore::Picture{};
+        panel.Thumbnails().Get(panel.Rows().front());
+        panel.Thumbnails().Wait();
+        return panel.Thumbnails().Get(panel.Rows().front());
+    };
+    const auto before = get_picture();
+    CHECK(before.image && before.image->rgba.size() >= 4 && before.image->rgba[0] == 255 && before.image->rgba[2] == 0);
+
+    if (!write_color({0, 0, 255, 255})) { CHECK(false); return; }
+    stdfs::last_write_time(file, time);
+    CHECK(stdfs::file_size(file) == bytes && stdfs::last_write_time(file) == time);
+    CHECK(panel.Refresh());
+    const auto after = get_picture();
+    CHECK(after.key != before.key);
+    CHECK(after.image && after.image->rgba.size() >= 4 && after.image->rgba[0] == 0 && after.image->rgba[2] == 255);
+    CHECK(panel.Thumbnails().Rendered() == 2);
 }
 
 AETHER_TEST(ContentBrowserGrid_KindsWithoutAPictureGetATypeTile) {

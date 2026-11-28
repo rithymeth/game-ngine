@@ -81,6 +81,8 @@ std::string ThumbnailStore::KeyFor(const assets::AssetDatabase& database, const 
     const assets::AssetRecord* source = record->IsSubAsset() ? database.Find(record->parent) : record;
     if (source == nullptr || source->missing) return {};
     u64 stamp = Mix(kSize, FileStamp(content_ / source->path));
+    // Reuse the scan hash to detect byte changes with the same size and mtime.
+    for (const unsigned char c : source->source_hash) stamp = Mix(stamp, c);
     stamp = Mix(stamp, MetaStamp(database, record->guid));
     for (const char c : record->importer) stamp = Mix(stamp, static_cast<unsigned char>(c));
     for (const assets::AssetGuid& dependency : record->dependencies) { // a material's texture changing changes its picture

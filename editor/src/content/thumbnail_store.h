@@ -22,7 +22,7 @@ namespace aether::editor {
 
 // The Content Browser's grid pictures: up to 96 px thumbnails of the assets that have one (textures and materials, through
 // AssetThumbnail), rendered on a worker thread so a folder full of new textures never stalls a frame. A picture is remembered in
-// memory and on disk under Saved/Thumbnails, keyed by the asset and by a stamp of its source (size and modified time), its .ameta
+// memory and on disk under Saved/Thumbnails, keyed by the asset and by a stamp of its source (size, modified time and scan hash), its .ameta
 // and its dependencies' source hashes. Reopening the project, or showing a folder twice, decodes the disk copy instead of importing
 // the asset again; a changed source gets a new stamp and is rendered once more.
 class ThumbnailStore {
