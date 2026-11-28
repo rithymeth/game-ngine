@@ -720,6 +720,44 @@ AETHER_TEST(Player_InventoriesFollowTheirEntityThroughASceneChange) {
 }
 #endif
 
+AETHER_TEST(Player_RejectsMalformedSceneWithoutEndingPlay) {
+    const stdfs::path pak = TestDir("RejectSceneLoad") / "Game.apak";
+    const json scene = {{"$type", "Scene"}, {"$version", 1}, {"entities", json::array({
+        {{"components", {{"EntityName", {{"$v", 1}, {"value", "Still here"}}}}}}})}};
+    pak::PakWriter writer;
+    CHECK(writer.Add("Manifest.json", Manifest("Scenes/start.ascene", "unused").dump()));
+    CHECK(writer.Add("Content/Scenes/start.ascene", scene.dump()));
+    CHECK(writer.Add("Content/Scenes/broken-json.ascene", std::string("{ incomplete")));
+    CHECK(writer.Add("Content/Scenes/broken-binary.ascene", std::string("AESC")));
+    CHECK(writer.Write(pak.string()));
+
+    GamePackage package;
+    std::string error;
+    if (!package.Mount(pak.string(), 0, &error)) { CHECK(false); return; }
+    Game game(package);
+    if (!game.LoadStartupScene(&error)) { CHECK(false); return; }
+    game.BeginPlay();
+    game.Tick(1.0f / 60.0f);
+    World& original = game.GetWorld();
+    const auto* physics = game.Physics2D();
+    CHECK(physics != nullptr && original.EntityCount() == 1);
+
+    for (const char* path : {"Scenes/broken-json.ascene", "Scenes/broken-binary.ascene"}) {
+        CHECK(!game.LoadScene(path, &error));
+        CHECK(error.find(path) != std::string::npos);
+        CHECK(game.SceneName() == "Scenes/start.ascene");
+        CHECK(&game.GetWorld() == &original);
+        CHECK(game.GetWorld().EntityCount() == 1);
+        CHECK(game.IsPlaying());
+        CHECK(game.Physics2D() != nullptr && game.Physics2D() == physics);
+        if (game.IsPlaying()) {
+            const auto before = game.Stats().frames;
+            game.Tick(1.0f / 60.0f);
+            CHECK(game.Stats().frames == before + 1);
+        }
+    }
+}
+
 // A script can move the game to another scene (a door, a fast-travel point): Scene.Load asks, the game swaps at the start of the next frame, the new
 // scene's scripts run, and a scene that is missing or does not parse leaves the current one running.
 AETHER_TEST(Player_ScriptsCanLoadAnotherScene) {

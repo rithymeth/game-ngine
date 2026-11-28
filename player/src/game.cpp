@@ -512,7 +512,6 @@ bool Game::LoadScene(const std::string& path, std::string* error) {
     // The UDP client keeps a pointer to this World. Replacing it mid-session
     // would leave replication writing to freed ECS memory.
     if (authoritative_physics_client_) return Fail(error, "Can't replace a scene while authoritative multiplayer is active");
-    shake_.Reset(); // the world it shook is about to go
     StartModules(); // their components, before the scene names them
     bp::RegisterBlueprintComponents(); // BlueprintInstance, before scene deserialization
     ui::RegisterWidgetComponents(); // WidgetComponent (§18.4)
@@ -536,6 +535,15 @@ bool Game::LoadScene(const std::string& path, std::string* error) {
     if (!package_.ReadContent(path, bytes, &read_error)) {
         return Fail(error, "Can't read the scene " + path + (read_error.empty() ? "" : ": " + read_error));
     }
+    // Do not tear down the running scene until its replacement has parsed.
+    auto world = std::make_unique<World>();
+    // JSON scenes start with '{' (after any whitespace); binary ones with "AESC".
+    const auto first = std::find_if(bytes.begin(), bytes.end(), [](u8 c) { return c != ' ' && c != '\n' && c != '\r' && c != '\t'; });
+    const bool is_json = first != bytes.end() && *first == '{';
+    const bool loaded = is_json ? LoadSceneJsonFromMemory(*world, bytes, path) : LoadSceneFromMemory(*world, bytes, path);
+    if (!loaded) return Fail(error, "Can't load the scene " + path);
+
+    shake_.Reset(); // the world it shook is about to go
     LoadInputAssets();
     LoadLocalization();
     LoadKitAssets(); // dependency order loads effects before abilities, items and quests
@@ -544,12 +552,6 @@ bool Game::LoadScene(const std::string& path, std::string* error) {
     sequences_.clear(); // players in the old runtime must release their sequence assets first
     physics2d_.reset();
     physics_.reset();
-    auto world = std::make_unique<World>();
-    // JSON scenes start with '{' (after any whitespace); binary ones with "AESC".
-    const auto first = std::find_if(bytes.begin(), bytes.end(), [](u8 c) { return c != ' ' && c != '\n' && c != '\r' && c != '\t'; });
-    const bool is_json = first != bytes.end() && *first == '{';
-    const bool loaded = is_json ? LoadSceneJsonFromMemory(*world, bytes, path) : LoadSceneFromMemory(*world, bytes, path);
-    if (!loaded) return Fail(error, "Can't load the scene " + path);
 
 #if AETHER_KIT_QUESTS
     // Quest logs follow their entity into the next scene: the new scene's entity with the same GUID (the player is the usual one) keeps the quests
@@ -1743,24 +1745,17 @@ void Game::PlaceCharacterAt(const std::string& spawn) {
 #endif
 }
 
-// The scene a script asked for, at a point where nothing of the old one is running. It is read and parsed first (into a scratch world), because
-// LoadScene ends the current runtime before it parses: a scene that cannot load must not leave the game with no scripts and nothing to run.
+// The scene a script asked for, at a point where nothing of the old one is running. LoadScene leaves the old runtime in place if parsing fails.
 void Game::ApplyPendingScene() {
     const std::string path = std::move(pending_scene_);
     const std::string spawn = std::move(pending_spawn_);
     pending_scene_.clear();
     pending_spawn_.clear();
-    std::vector<u8> bytes;
     std::string error;
     const auto refuse = [&](const std::string& why) {
         warnings_.push_back("Scene.Load(\"" + path + "\"): " + why + "; " + scene_ + " keeps running");
         AETHER_LOG_WARN("Player", "%s", warnings_.back().c_str());
     };
-    if (!package_.ReadContent(path, bytes, &error)) return refuse("can't read it" + (error.empty() ? std::string() : " (" + error + ")"));
-    World scratch;
-    const auto first = std::find_if(bytes.begin(), bytes.end(), [](u8 c) { return c != ' ' && c != '\n' && c != '\r' && c != '\t'; });
-    const bool is_json = first != bytes.end() && *first == '{';
-    if (!(is_json ? LoadSceneJsonFromMemory(scratch, bytes, path) : LoadSceneFromMemory(scratch, bytes, path))) return refuse("it does not parse as a scene");
     const bool was_playing = lifecycle_ && lifecycle_->IsPlaying();
     if (!LoadScene(path, &error)) return refuse(error);
     if (!spawn.empty()) PlaceCharacterAt(spawn);
