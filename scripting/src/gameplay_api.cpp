@@ -1,7 +1,7 @@
 #include "aether/script/gameplay_api.h"
 
 #include "aether/gameplay/ability_library.h"
-#include "aether/gameplay/attribute_library.h"
+#include "aether/gameplay/attribute_system.h"
 #include "aether/gameplay/effect_library.h"
 #include "aether/gameplay/tag_library.h"
 
@@ -29,7 +29,9 @@ bool NeedNumber(NativeCall& c, usize i, const char* table, const char* what) {
 
 } // namespace
 
-void InstallGameplayApi(LuauHost& host) {
+void InstallGameplayApi(LuauHost& host) { InstallGameplayApi(host, nullptr); }
+
+void InstallGameplayApi(LuauHost& host, gas::AttributeSystem* attributes) {
     // GameplayTags: pure string functions.
     const auto tags = [&](const char* name, NativeFunction fn) { host.RegisterNative("GameplayTags", name, std::move(fn)); };
     tags("IsValid", [](NativeCall& c) {
@@ -48,33 +50,42 @@ void InstallGameplayApi(LuauHost& host) {
         if (NeedString(c, 0, "GameplayTags", "the tag")) c.Return(static_cast<f64>(GameplayTags::GetDepth(c.String(0))));
     });
 
-    // Attributes.
+    // A player host owns its world; only standalone hosts fall back to the process-wide active system.
+    const auto system = [attributes] { return attributes ? attributes : AttributeSystem::Active(); };
     const auto attrs = [&](const char* name, NativeFunction fn) { host.RegisterNative("Attributes", name, std::move(fn)); };
-    using Getter = f32 (*)(const Entity&, const std::string&, f32);
+    using Getter = f32 (AttributeSystem::*)(Entity, const std::string&, f32) const;
     const auto getter = [&](const char* name, Getter get) {
-        attrs(name, [get](NativeCall& c) {
+        attrs(name, [get, system](NativeCall& c) {
             if (!NeedEntity(c, 0, "Attributes", "the entity") || !NeedString(c, 1, "Attributes", "the name")) return;
-            c.Return(static_cast<f64>(get(c.EntityArg(0), c.String(1), static_cast<f32>(c.Number(2, 0.0)))));
+            const f32 fallback = static_cast<f32>(c.Number(2, 0.0));
+            const auto* current = system();
+            c.Return(static_cast<f64>(current ? (current->*get)(c.EntityArg(0), c.String(1), fallback) : fallback));
         });
     };
-    getter("Get", &Attributes::GetAttribute);
-    getter("GetBase", &Attributes::GetAttributeBase);
-    getter("GetMin", &Attributes::GetAttributeMin);
-    getter("GetMax", &Attributes::GetAttributeMax);
-    attrs("Has", [](NativeCall& c) {
-        if (NeedEntity(c, 0, "Attributes", "the entity") && NeedString(c, 1, "Attributes", "the name")) c.Return(Attributes::HasAttribute(c.EntityArg(0), c.String(1)));
+    getter("Get", &AttributeSystem::Get);
+    getter("GetBase", &AttributeSystem::GetBase);
+    getter("GetMin", &AttributeSystem::GetMin);
+    getter("GetMax", &AttributeSystem::GetMax);
+    attrs("Has", [system](NativeCall& c) {
+        if (!NeedEntity(c, 0, "Attributes", "the entity") || !NeedString(c, 1, "Attributes", "the name")) return;
+        const auto* current = system();
+        c.Return(current && current->Has(c.EntityArg(0), c.String(1)));
     });
-    attrs("Define", [](NativeCall& c) {
+    attrs("Define", [system](NativeCall& c) {
         if (!NeedEntity(c, 0, "Attributes", "the entity") || !NeedString(c, 1, "Attributes", "the name") || !NeedNumber(c, 2, "Attributes", "the base")) return;
-        c.Return(Attributes::DefineAttribute(c.EntityArg(0), c.String(1), static_cast<f32>(c.Number(2)), static_cast<f32>(c.Number(3, -3.0e38)), static_cast<f32>(c.Number(4, 3.0e38))));
+        auto* current = system();
+        c.Return(current && current->Define(c.EntityArg(0), c.String(1), static_cast<f32>(c.Number(2)),
+                                           static_cast<f32>(c.Number(3, -3.0e38)), static_cast<f32>(c.Number(4, 3.0e38))));
     });
-    attrs("SetBase", [](NativeCall& c) {
-        if (NeedEntity(c, 0, "Attributes", "the entity") && NeedString(c, 1, "Attributes", "the name") && NeedNumber(c, 2, "Attributes", "the value"))
-            c.Return(Attributes::SetAttributeBase(c.EntityArg(0), c.String(1), static_cast<f32>(c.Number(2))));
+    attrs("SetBase", [system](NativeCall& c) {
+        if (!NeedEntity(c, 0, "Attributes", "the entity") || !NeedString(c, 1, "Attributes", "the name") || !NeedNumber(c, 2, "Attributes", "the value")) return;
+        auto* current = system();
+        c.Return(current && current->SetBase(c.EntityArg(0), c.String(1), static_cast<f32>(c.Number(2))));
     });
-    attrs("AddBase", [](NativeCall& c) {
-        if (NeedEntity(c, 0, "Attributes", "the entity") && NeedString(c, 1, "Attributes", "the name") && NeedNumber(c, 2, "Attributes", "the amount"))
-            c.Return(Attributes::AddAttributeBase(c.EntityArg(0), c.String(1), static_cast<f32>(c.Number(2))));
+    attrs("AddBase", [system](NativeCall& c) {
+        if (!NeedEntity(c, 0, "Attributes", "the entity") || !NeedString(c, 1, "Attributes", "the name") || !NeedNumber(c, 2, "Attributes", "the amount")) return;
+        auto* current = system();
+        c.Return(current && current->AddBase(c.EntityArg(0), c.String(1), static_cast<f32>(c.Number(2))));
     });
 
     // Effects.

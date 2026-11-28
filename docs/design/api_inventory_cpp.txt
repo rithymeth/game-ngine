@@ -6173,6 +6173,7 @@
   void InstallForcesApi(LuauHost&host)
 [scripting/include/aether/script/gameplay_api.h] experimental
   void InstallGameplayApi(LuauHost&host)
+  void InstallGameplayApi(LuauHost&host,gas::AttributeSystem*attributes)
 [scripting/include/aether/script/interaction_api.h] experimental
   void InstallInteractionApi(LuauHost&host)
 [scripting/include/aether/script/inventory_api.h] experimental

@@ -11,6 +11,7 @@
 #include "aether/reflection/registry.h"
 #include "aether/reflection/serialize.h"
 #include "aether/scene/components.h"
+#include "aether/scene/script_component.h"
 
 #include <nlohmann/json.hpp>
 
@@ -187,4 +188,65 @@ AETHER_TEST(Attributes_PlayerDrainsChangesEveryFrame) {
     // Loading another scene gives a fresh system for the new world.
     CHECK(game.LoadScene("Scenes/start.ascene", &error));
     CHECK(AttributeSystem::Active() != nullptr && !AttributeSystem::Active()->Has(e, "Health"));
+}
+
+AETHER_TEST(Attributes_PlayerScriptsUseTheirOwnRuntime) {
+    if (!player::Game::HasScripting()) return;
+    const auto dir = std::filesystem::temp_directory_path() / "aether_two_attribute_games";
+    std::filesystem::create_directories(dir);
+    const auto file = dir / "Game.apak";
+    const assets::AssetGuid script_id = assets::NewAssetGuid();
+    const nlohmann::json manifest = {{"$type", "CookManifest"}, {"$version", 1}, {"project", "Attr Worlds"},
+        {"configuration", "Development"}, {"startup_scene", "Scenes/start.ascene"},
+        {"assets", nlohmann::json::array({{{"guid", assets::ToString(script_id)}, {"path", "Scripts/Charge.luau"}, {"importer", "Script"}}})}};
+    pak::PakWriter writer;
+    CHECK(writer.Add("Manifest.json", manifest.dump()));
+    CHECK(writer.Add("Content/Scenes/start.ascene", std::string(R"({"$type":"Scene","$version":1,"entities":[]})")));
+    CHECK(writer.Add("Content/Scripts/Charge.luau", std::string(R"(
+local Charge = {}
+function Charge:OnStart()
+    Attributes.SetBase(self.entity, "Charge", Attributes.GetBase(self.entity, "Charge", -1000) + 1)
+end
+function Charge:OnUpdate(_dt)
+    Attributes.AddBase(self.entity, "Charge", 10)
+end
+function Charge:OnDestroy()
+    Attributes.AddBase(self.entity, "Charge", 100)
+end
+return Charge
+)")));
+    if (!writer.Write(file.string())) { CHECK(false); return; }
+    player::GamePackage package;
+    std::string error;
+    if (!package.Mount(file.string(), 0, &error) || !package.LoadManifest(&error)) { CHECK(false); return; }
+
+    player::Game first(package), second(package);
+    if (!first.LoadStartupScene(&error) || !second.LoadStartupScene(&error)) { CHECK(false); return; }
+    const auto actor = [&](player::Game& game, f32 initial) {
+        AttributeSet attrs;
+        attrs.Define("Charge", initial);
+        ScriptComponent script;
+        script.script.guid = script_id;
+        return game.GetWorld().CreateEntity(Transform{Vec3(), Quaternion::Identity()}, attrs, script);
+    };
+    const Entity a = actor(first, 25), b = actor(second, 200);
+    CHECK(a == b); // handles overlap across these independent worlds
+    const auto value = [](player::Game& game, Entity e) {
+        const auto* attrs = game.GetWorld().GetComponent<AttributeSet>(e);
+        return attrs ? attrs->Get("Charge") : -1000.0f;
+    };
+
+    first.BeginPlay(); // the second game was loaded most recently
+    CHECK(value(first, a) == 26 && value(second, b) == 200);
+    second.BeginPlay();
+    CHECK(value(first, a) == 26 && value(second, b) == 201);
+    first.Tick(1.0f / 60.0f);
+    CHECK(value(first, a) == 36 && value(second, b) == 201);
+    second.Tick(1.0f / 60.0f);
+    CHECK(value(first, a) == 36 && value(second, b) == 211);
+    CHECK(first.ScriptErrors().empty() && second.ScriptErrors().empty());
+    first.EndPlay();
+    CHECK(value(first, a) == 136 && value(second, b) == 211);
+    second.EndPlay();
+    CHECK(value(first, a) == 136 && value(second, b) == 311);
 }

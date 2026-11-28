@@ -3,7 +3,8 @@
 #include "aether/script/luau_host.h"
 
 // Luau's gameplay tables (Phase 30 step 5): the
-// same functions as the Blueprint libraries (aether::gas), on the active systems.
+// same functions as the Blueprint libraries (aether::gas). A game can bind its own
+// attribute system; standalone hosts use the active systems.
 // Entities are the usual entity values; effect and ability handles are numbers
 // (0 means none). Without an active system they return false / 0 / the default.
 //
@@ -23,8 +24,14 @@
 //   OnAbilityFailed (ability, reason)
 // A call with a missing or wrong-typed argument raises a script error.
 
+namespace aether::gas {
+class AttributeSystem;
+}
+
 namespace aether::script {
 
 void InstallGameplayApi(LuauHost& host);
+// The attribute system must outlive the installed native callbacks.
+void InstallGameplayApi(LuauHost& host, gas::AttributeSystem* attributes);
 
 } // namespace aether::script

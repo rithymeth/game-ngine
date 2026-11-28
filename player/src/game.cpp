@@ -21,6 +21,9 @@
 #include "aether/reflection/serialize.h"
 #include "aether/scene/gameplay.h"
 #include "aether/scene/serialization.h"
+#if AETHER_GAME_SCRIPTING
+#include "aether/script/gameplay_api.h"
+#endif
 #include "aether/sprite2d/components.h"
 #include "aether/sprite2d/lights2d.h"
 #include "aether/sprite2d/physics2d.h"
@@ -1029,7 +1032,10 @@ void Game::StartRuntime() {
     runtime_->scripts->BindPhysicsScene(physics_ ? physics_->scene.get() : nullptr);
 #endif
     kit::KitScriptApiContext api_context;
-    api_context.install = [this](const std::string& kit_name) { runtime_->scripts->InstallKitApi(kit_name); };
+    api_context.install = [this](const std::string& kit_name) {
+        if (kit_name == "Gameplay") script::InstallGameplayApi(runtime_->host, runtime_->attributes.get());
+        else runtime_->scripts->InstallKitApi(kit_name);
+    };
     kits_.InstallScriptApi(&api_context);
 #endif
 }
