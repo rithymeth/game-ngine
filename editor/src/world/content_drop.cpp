@@ -67,10 +67,20 @@ std::string PlaceTilemap(SceneDocument& document, const std::filesystem::path& c
     sprite2d::Tileset tileset_data;
     if (!sprite2d::LoadTileset(database.SourcePath(tileset->guid), tileset_data, &error))
         return "Could not place " + path + ": " + tileset->path + ": " + error;
+    const bool textured = !tileset_data.texture.IsNull();
+    if (textured) {
+        const auto* texture = database.Find(tileset_data.texture);
+        const auto dependency = "Could not place " + path + ": " + tileset->path + " references ";
+        if (!texture)
+            return dependency + "a missing texture (" + assets::ToString(tileset_data.texture) + ").";
+        if (texture->missing)
+            return dependency + "a missing texture: " + texture->path + ".";
+        if (texture->importer != "Texture")
+            return dependency + texture->path + ", which is not a texture.";
+    }
     if (map.width != 0) {
         // Only texture-backed concrete IDs must fit a UV grid. Autotile
         // references need a rule even when painted for collision alone.
-        const bool textured = !tileset_data.texture.IsNull();
         const u32 count = tileset_data.TileCount();
         for (usize layer = 0; layer < map.layers.size(); ++layer) {
             const auto& cells = map.layers[layer].cells;
