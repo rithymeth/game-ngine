@@ -1,4 +1,5 @@
 #include "vfx/vfx_document.h"
+#include "ui/staged_asset_write.h"
 
 #include <algorithm>
 #include <cmath>
@@ -127,21 +128,15 @@ bool ParticleSystemDocument::Load(const std::filesystem::path& path, std::string
 }
 
 bool ParticleSystemDocument::Save(std::string* error) {
-    if (path_.empty()) return Fail(error, "the particle system has no file yet (Save As)");
-    std::ofstream f(path_, std::ios::binary | std::ios::trunc);
-    if (!f) return Fail(error, "can't write '" + path_.string() + "'");
-    f << Text();
-    if (!f) return Fail(error, "can't write '" + path_.string() + "'");
-    dirty_ = false;
-    return true;
+    return SaveAs(path_, error);
 }
 
 bool ParticleSystemDocument::SaveAs(const std::filesystem::path& path, std::string* error) {
-    const std::filesystem::path old = path_;
+    if (path.empty()) return Fail(error, "the particle system has no file yet (Save As)");
+    if (!WriteStagedAsset(path, Text())) return Fail(error, "can't write '" + path.string() + "'");
     path_ = path;
-    if (Save(error)) return true;
-    path_ = old;
-    return false;
+    dirty_ = false;
+    return true;
 }
 
 std::string ParticleSystemDocument::Name() const { return path_.empty() ? std::string("Untitled") : path_.stem().string(); }

@@ -6,7 +6,14 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <functional>
+#include <iterator>
+
+#if defined(__linux__)
+#include <signal.h>
+#include <sys/resource.h>
+#endif
 
 // Phase 19 step 6: the particle editor's document (emitters, modules and
 // their fields, settings, parameters, bindings that follow edits,
@@ -132,6 +139,56 @@ AETHER_TEST(VfxEditor_Document) {
     CHECK(AddColorKey(g, 1.0f, {1, 0, 0, 1}) == 1 && Near(g.Evaluate(0.5f).g, 0.5f) && MoveColorKey(g, 1, 0.0f) == 0 && g.colors.size() == 1);
     CHECK(AddAlphaKey(g, 1.0f, 0.0f) == 1 && Near(g.Evaluate(0.5f).a, 0.5f) && RemoveAlphaKey(g, 1) && !RemoveAlphaKey(g, 0) && !RemoveColorKey(g, 0));
 }
+
+#if defined(__linux__)
+AETHER_TEST(VfxEditor_FailedSavePreservesParticleAssets) {
+    namespace fs = std::filesystem;
+    const auto dir = fs::temp_directory_path() / "aether_vfx_write_failure";
+    fs::create_directories(dir);
+    const auto original = dir / "Sparks.avfx";
+    const auto other = dir / "Backup.avfx";
+    const auto read = [](const fs::path& path) {
+        std::ifstream in(path, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(in), {});
+    };
+
+    ParticleSystemDocument doc;
+    CHECK(doc.SaveAs(other) && doc.SaveAs(original));
+    const auto original_before = read(original);
+    const auto other_before = read(other);
+    CHECK(!original_before.empty() && !other_before.empty());
+    CHECK(doc.AddEmitter("Smoke") == 1);
+    const auto pending = doc.Text();
+
+    struct rlimit previous_limit{};
+    struct sigaction previous_signal{}, ignore{};
+    ignore.sa_handler = SIG_IGN;
+    sigemptyset(&ignore.sa_mask);
+    const bool read_limit = getrlimit(RLIMIT_FSIZE, &previous_limit) == 0;
+    CHECK(read_limit);
+    if (!read_limit) return;
+    const bool changed_signal = sigaction(SIGXFSZ, &ignore, &previous_signal) == 0;
+    CHECK(changed_signal);
+    if (!changed_signal) return;
+    const struct rlimit blocked{0, previous_limit.rlim_max};
+    const bool limited = setrlimit(RLIMIT_FSIZE, &blocked) == 0;
+    std::string save_error, copy_error;
+    const bool saved = limited && doc.Save(&save_error);
+    const bool copied = limited && doc.SaveAs(other, &copy_error);
+    const bool restored = !limited || setrlimit(RLIMIT_FSIZE, &previous_limit) == 0;
+    const bool signal_restored = sigaction(SIGXFSZ, &previous_signal, nullptr) == 0;
+    CHECK(limited && restored && signal_restored);
+
+    CHECK(!saved && !save_error.empty() && !copied && !copy_error.empty());
+    CHECK(read(original) == original_before && read(other) == other_before);
+    CHECK(doc.Path() == original && doc.Dirty() && doc.CanUndo() && doc.Text() == pending);
+    CHECK(doc.Save() && !doc.Dirty());
+    ParticleSystemDocument reloaded;
+    CHECK(reloaded.Load(original) && reloaded.Text() == pending && read(other) == other_before);
+    CHECK(std::distance(fs::directory_iterator(dir), fs::directory_iterator{}) == 2);
+    fs::remove_all(dir);
+}
+#endif
 
 AETHER_TEST(VfxEditor_PreviewAndPanel) {
     // A fountain: rate, upward cone, gravity.
