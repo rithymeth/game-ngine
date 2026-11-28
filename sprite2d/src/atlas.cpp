@@ -73,6 +73,14 @@ bool ReadPixels(const nlohmann::json& data, const char* key, Pixel& out) {
     return true;
 }
 
+bool ReadPivotCoordinate(const nlohmann::json& value, f32& out) {
+    if (!value.is_number()) return false;
+    const f64 n = value.get<f64>();
+    if (!std::isfinite(n) || std::abs(n) > std::numeric_limits<f32>::max()) return false;
+    out = static_cast<f32>(n);
+    return true;
+}
+
 bool AtlasFromJsonImpl(const nlohmann::json& data, SpriteAtlas& out, std::string* error) {
     const auto fail = [&](const std::string& why) {
         if (error) *error = why;
@@ -103,9 +111,10 @@ bool AtlasFromJsonImpl(const nlohmann::json& data, SpriteAtlas& out, std::string
         if (!atlas.Uv(frame, uv))
             return fail("frame '" + frame.name + "' is outside the " + std::to_string(atlas.width) +
                         "x" + std::to_string(atlas.height) + " atlas bounds");
-        if (f.contains("pivot") && f["pivot"].is_array() && f["pivot"].size() == 2) {
-            frame.pivot_x = f["pivot"][0].get<f32>();
-            frame.pivot_y = f["pivot"][1].get<f32>();
+        if (const auto pivot = f.find("pivot"); pivot != f.end()) {
+            if (!pivot->is_array() || pivot->size() != 2 ||
+                !ReadPivotCoordinate((*pivot)[0], frame.pivot_x) || !ReadPivotCoordinate((*pivot)[1], frame.pivot_y))
+                return fail("frame '" + frame.name + "' needs two finite pivot coordinates");
         }
         atlas.frames.push_back(std::move(frame));
     }

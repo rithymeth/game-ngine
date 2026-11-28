@@ -193,6 +193,29 @@ AETHER_TEST(Sprite2D_AtlasRejectsFramesThatWouldDisappear) {
     CHECK(loaded.frames.empty());
 }
 
+AETHER_TEST(Sprite2D_AtlasRejectsInvalidPivotsBeforeReplacingTheAtlas) {
+    const auto good = AtlasFromGrid({}, 16, 16, 8, 8);
+    const auto saved = AtlasToJson(good);
+    SpriteAtlas loaded = good;
+    std::string error;
+    using Json = nlohmann::json;
+    for (const auto& invalid : {Json::array({8e200, 0.5}), Json::array({0.5, -8e200}), Json::array({0.5}),
+                                Json::array({0.5, 0.5, 0.5}), Json::array({"center", 0.5}), Json("center")}) {
+        auto authored = saved;
+        authored["frames"][0]["pivot"] = invalid;
+        CHECK(!AtlasFromJson(authored, loaded, &error));
+        CHECK(error.find("frame_0") != std::string::npos && error.find("pivot") != std::string::npos);
+        CHECK(AtlasToJson(loaded) == saved);
+    }
+
+    auto authored = saved;
+    authored["frames"][0].erase("pivot");
+    authored["frames"][1]["pivot"] = {-0.25, 1.25}; // artists may intentionally anchor outside the frame
+    CHECK(AtlasFromJson(authored, loaded, &error));
+    CHECK(loaded.frames.size() >= 2 && loaded.frames[0].pivot_x == 0.5f && loaded.frames[0].pivot_y == 0.5f &&
+          loaded.frames[1].pivot_x == -0.25f && loaded.frames[1].pivot_y == 1.25f);
+}
+
 AETHER_TEST(Sprite2D_AtlasRefusesAmbiguousClipNamesWithoutReplacingTheLoadedAtlas) {
     SpriteAtlas atlas = HeroAtlas(Guid());
     nlohmann::json authored = AtlasToJson(atlas);
