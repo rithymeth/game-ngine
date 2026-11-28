@@ -168,7 +168,7 @@ bool GradientEditor(const char* id, ColorGradient& g, bool& dragging) {
 
 } // namespace
 
-ParticleEditor::ParticleEditor(ParticleSystemDocument& document) : doc_(document) {}
+ParticleEditor::ParticleEditor(ParticleSystemDocument& document) : doc_(document), seen_load_revision_(document.LastLoadRevision()) {}
 
 void ParticleEditor::SelectEmitter(usize i) {
     emitter_ = static_cast<i64>(i);
@@ -196,7 +196,17 @@ bool ParticleEditor::SaveNow() {
 }
 
 void ParticleEditor::Sync() {
-    // Selections that went away (undo, removal).
+    if (seen_load_revision_ != doc_.LastLoadRevision()) {
+        // A new asset owns these indices and starts its own preview timeline.
+        seen_load_revision_ = doc_.LastLoadRevision();
+        emitter_ = -1;
+        module_.reset();
+        name_edit_.clear();
+        status_.clear();
+        preview_.Reset(doc_.Get());
+        preview_revision_ = doc_.Revision();
+    }
+    // Drop selections that no longer exist.
     const i64 n = static_cast<i64>(doc_.Get().emitters.size());
     if (emitter_ >= n) emitter_ = n - 1;
     if (module_ && (module_->emitter >= static_cast<usize>(std::max<i64>(n, 0)) || module_->index >= doc_.ModuleCount(module_->emitter, module_->stage))) module_.reset();

@@ -64,6 +64,7 @@ private:
     ParticleSystemDocument& doc_;
     ParticlePreview preview_;
     u64 preview_revision_ = 0;
+    u64 seen_load_revision_;
     i64 emitter_ = 0;
     std::optional<ModuleRef> module_;
     bool playing_ = true;

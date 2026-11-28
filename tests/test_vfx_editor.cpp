@@ -282,6 +282,40 @@ AETHER_TEST(VfxEditor_ModuleSelectionFollowsMovedEmitter) {
     CHECK(doc.ModuleCount(0, VfxStage::Spawn) == 0 && doc.ModuleCount(1, VfxStage::Spawn) == 1);
 }
 
+AETHER_TEST(VfxEditor_LoadingAnotherAssetResetsSelectionAndPreview) {
+    namespace fs = std::filesystem;
+    const auto dir = fs::temp_directory_path() / "aether_vfx_asset_switch";
+    fs::create_directories(dir);
+    ParticleSystemDocument doc, second;
+    CHECK(doc.SaveAs(dir / "First.avfx"));
+    CHECK(second.RenameEmitter(0, "Smoke") && second.SaveAs(dir / "Second.avfx"));
+
+    HeadlessImGui ui;
+    ParticleEditor editor(doc);
+    const auto frame = [&] { ui.Frame([&] { editor.Draw(); }); };
+    editor.Pause();
+    const ModuleRef selected{0, VfxStage::Spawn, 0};
+    editor.SelectModule(selected);
+    editor.SetTime(2.0f);
+    CHECK(Near(editor.Time(), 2.0f));
+
+    std::string error;
+    CHECK(!doc.Load(dir / "Missing.avfx", &error) && !error.empty());
+    frame();
+    CHECK(editor.SelectedModule() == selected && Near(editor.Time(), 2.0f));
+    CHECK(doc.SaveAs(dir / "Copy.avfx"));
+    frame();
+    CHECK(editor.SelectedModule() == selected && Near(editor.Time(), 2.0f));
+
+    CHECK(doc.Load(dir / "Second.avfx", &error));
+    frame();
+    CHECK(!editor.SelectedModule() && editor.SelectedEmitter() < 0);
+    CHECK(editor.Time() == 0.0f && !editor.Playing());
+    const auto stats = editor.Preview().Stats();
+    CHECK(stats.size() == 1 && stats.front().name == "Smoke");
+    fs::remove_all(dir);
+}
+
 AETHER_TEST(VfxEditor_PreviewAndPanel) {
     // A fountain: rate, upward cone, gravity.
     ParticleSystemDocument doc;

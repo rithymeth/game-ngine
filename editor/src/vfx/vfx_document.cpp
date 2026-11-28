@@ -123,7 +123,7 @@ bool ParticleSystemDocument::Load(const std::filesystem::path& path, std::string
     path_ = path;
     history_.Clear();
     dirty_ = false;
-    ++revision_;
+    last_load_revision_ = ++revision_;
     return true;
 }
 

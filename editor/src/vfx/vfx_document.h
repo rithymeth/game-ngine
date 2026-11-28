@@ -44,6 +44,7 @@ public:
     std::string Name() const;
     bool Dirty() const { return dirty_; }
     u64 Revision() const { return revision_; }
+    u64 LastLoadRevision() const { return last_load_revision_; }
 
     void Edit(const std::string& label, const std::function<void(vfx::ParticleSystemAsset&)>& change, const std::string& merge_key = {});
     bool Undo();
@@ -102,6 +103,7 @@ private:
     JsonHistory history_;
     bool dirty_ = false;
     u64 revision_ = 1;
+    u64 last_load_revision_ = 0;
     mutable u64 diagnostics_revision_ = 0;
     mutable std::vector<vfx::EmitterDiagnostic> diagnostics_;
 };
