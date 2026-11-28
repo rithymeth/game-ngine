@@ -48,10 +48,10 @@ public:
         io.Fonts->GetTexDataAsRGBA32(&pixels, &w, &h);
     }
     ~HeadlessImGui() { ImGui::DestroyContext(context_); }
-    void Frame(const std::function<void()>& body) {
+    void Frame(const std::function<void()>& body, ImVec2 size = ImVec2(1300, 800)) {
         ImGui::NewFrame();
         ImGui::SetNextWindowPos(ImVec2(0, 0));
-        ImGui::SetNextWindowSize(ImVec2(1300, 800));
+        ImGui::SetNextWindowSize(size);
         ImGui::Begin("Test");
         body();
         ImGui::End();
@@ -3622,6 +3622,50 @@ AETHER_TEST(TilemapEditor_CanSelectAnAutotileAtTheEndOfALargeScrolledList) {
     CHECK(doc.Undo());
     draw();
     CHECK(click_rule(510) && doc.brush == AutotileCell(510));
+}
+
+AETHER_TEST(TilemapEditor_NarrowToolbarKeepsNavigationAndDiagnosticsClickable) {
+    HeadlessImGui ui;
+    auto doc = Doc();
+    doc.brush = AutotileCell(9);
+    // Load malformed authored paint, bypassing the brush guard.
+    TilemapData map = doc.Map();
+    map.Set(0, 5, 4, doc.brush);
+    TilemapEditDocument damaged(std::move(map), doc.GetTileset());
+    TilemapPanel panel(damaged);
+    ImGuiID go = 0, find = 0;
+    ImVec2 start;
+    bool go_open = false;
+    const auto draw = [&] {
+        ui.Frame([&] {
+            start = ImGui::GetCursorScreenPos();
+            go = ImGui::GetID("Go to cell...");
+            find = ImGui::GetID("Find next invalid tile");
+            panel.Draw();
+            go_open = ImGui::IsPopupOpen("Go to tile cell");
+        }, ImVec2(460, 800));
+    };
+    auto& io = ImGui::GetIO();
+    const auto click = [&](ImGuiID id) {
+        const ImVec2 origin = start;
+        for (f32 y = origin.y + 4; y < origin.y + 115; y += 6) {
+            for (f32 x = origin.x + 4; x < 450; x += 14) {
+                io.AddMousePosEvent(x, y);
+                draw();
+                if (ImGui::GetHoveredID() != id) continue;
+                io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+                draw();
+                io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+                draw();
+                return true;
+            }
+        }
+        return false;
+    };
+    draw();
+    CHECK(click(find));
+    CHECK(click(go) && go_open);
+    CHECK(!damaged.dirty() && !damaged.CanUndo() && damaged.Map().Get(0, 5, 4) == AutotileCell(9));
 }
 
 AETHER_TEST(TilemapEditor_ResizeDialogOpensWithoutChangingTheMap) {

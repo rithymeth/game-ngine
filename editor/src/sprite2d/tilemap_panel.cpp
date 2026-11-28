@@ -358,6 +358,19 @@ void TilemapPanel::DrawTools() {
         else if (redo_shift || redo_alt) doc_.Redo();
         save_shortcut = shortcut(ImGuiKey_S);
     }
+    // Docking can make this pane much narrower than the main window.
+    // Keep whole controls on screen without adding rows in a wide pane.
+    const auto& style = ImGui::GetStyle();
+    const auto same_line_if_fits = [&](f32 item_width) {
+        const f32 right = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+        if (ImGui::GetItemRectMax().x + style.ItemSpacing.x + item_width <= right) ImGui::SameLine();
+    };
+    const auto button_width = [&](const char* label) {
+        return ImGui::CalcTextSize(label).x + 2.0f * style.FramePadding.x;
+    };
+    const auto checkbox_width = [&](const char* label) {
+        return ImGui::GetFrameHeight() + style.ItemInnerSpacing.x + ImGui::CalcTextSize(label).x;
+    };
     if (!doc_.TilemapFile().empty()) {
         ImGui::BeginDisabled(!doc_.dirty());
         const bool clicked = ImGui::Button("Save tilemap and tileset");
@@ -368,18 +381,18 @@ void TilemapPanel::DrawTools() {
             save_error_revision_ = doc_.Revision();
         }
         ImGui::EndDisabled();
-        ImGui::SameLine();
+        same_line_if_fits(button_width("Resize map..."));
     }
     DrawResizeDialog();
     if (doc_.TilemapFile().empty()) {
-        ImGui::SameLine();
+        same_line_if_fits(ImGui::CalcTextSize("Practice map (not saved).").x);
         ImGui::TextDisabled("Practice map (not saved).");
         ImGui::TextWrapped("Open a project tilemap in the Content Browser to replace it.");
     } else if (!save_error_.empty() && save_error_revision_ == doc_.Revision()) {
         ImGui::TextWrapped("%s", save_error_.c_str());
     }
     for (int t = 0; t < static_cast<int>(std::size(kToolNames)); ++t) {
-        if (t > 0) ImGui::SameLine();
+        if (t > 0) same_line_if_fits(button_width(kToolNames[t]));
         const bool on = static_cast<int>(doc_.tool) == t;
         if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
         if (ImGui::Button(kToolNames[t])) doc_.tool = static_cast<TileTool>(t);
@@ -387,35 +400,40 @@ void TilemapPanel::DrawTools() {
             ImGui::SetItemTooltip("Drag to preview a straight line. Release to paint it.");
         if (on) ImGui::PopStyleColor();
     }
-    ImGui::SameLine();
+    same_line_if_fits(button_width("Undo"));
     ImGui::BeginDisabled(!doc_.CanUndo());
     if (ImGui::Button("Undo")) doc_.Undo();
     ImGui::SetItemTooltip("%s", show_command ? "Undo (Cmd+Z)" : "Undo (Ctrl+Z)");
     ImGui::EndDisabled();
-    ImGui::SameLine();
+    same_line_if_fits(button_width("Redo"));
     ImGui::BeginDisabled(!doc_.CanRedo());
     if (ImGui::Button("Redo")) doc_.Redo();
     ImGui::SetItemTooltip("%s", show_command ? "Redo (Cmd+Shift+Z)" : "Redo (Ctrl+Y or Ctrl+Shift+Z)");
     ImGui::EndDisabled();
-    ImGui::SameLine();
+    same_line_if_fits(checkbox_width("Grid"));
     ImGui::Checkbox("Grid", &show_grid);
-    ImGui::SameLine();
+    same_line_if_fits(checkbox_width("Solid"));
     ImGui::Checkbox("Solid", &show_solid);
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(100);
+    constexpr f32 zoom_width = 100.0f;
+    same_line_if_fits(zoom_width + style.ItemInnerSpacing.x + ImGui::CalcTextSize("Zoom").x);
+    ImGui::SetNextItemWidth(zoom_width);
     const f32 old_zoom = zoom;
     if (ImGui::SliderFloat("Zoom", &zoom, 6.0f, 64.0f, "%.0f px") && !zoom_before_slider_)
         zoom_before_slider_ = old_zoom;
     ImGui::SetItemTooltip("Zoom around the center of the view.");
-    ImGui::SameLine();
+    same_line_if_fits(button_width("Reset view"));
     if (ImGui::SmallButton("Reset view")) ResetView();
     ImGui::SetItemTooltip("Return to the lower-left corner at the default zoom.");
-    ImGui::SameLine();
+    same_line_if_fits(button_width("Go to cell..."));
     DrawGoToCell();
-    ImGui::SameLine();
     const std::string file = doc_.TilemapFile().empty() ? std::string() : doc_.TilemapFile().filename().string() + "  ";
-    ImGui::TextDisabled("%s%ux%u%s", file.c_str(), doc_.Map().width, doc_.Map().height, doc_.dirty() ? "  (unsaved)" : "");
-    ImGui::SameLine();
+    const std::string status = file + std::to_string(doc_.Map().width) + "x" + std::to_string(doc_.Map().height) +
+                               (doc_.dirty() ? "  (unsaved)" : "");
+    same_line_if_fits(ImGui::CalcTextSize(status.c_str()).x);
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("%s", status.c_str());
+    ImGui::PopTextWrapPos();
+    same_line_if_fits(button_width("Find next invalid tile"));
     if (ImGui::SmallButton("Find next invalid tile")) FindNextInvalidPaint();
     if (doc_.HasMissingAutotileBrush())
         ImGui::TextWrapped("This autotile rule no longer exists. Pick another brush to paint.");
