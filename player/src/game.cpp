@@ -29,6 +29,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <system_error>
 #include <set>
@@ -831,7 +832,9 @@ std::unique_ptr<nav::NavWorld> BakeSceneNavigation(World& world, std::vector<std
 #endif
 
 void Game::StartRuntime() {
+    static std::atomic<u64> next_world_generation{1};
     runtime_ = std::make_unique<Runtime>();
+    runtime_->world_generation = next_world_generation.fetch_add(1, std::memory_order_relaxed);
 #if AETHER_GAME_AI && AETHER_GAME_PHYSICS
     runtime_->navigation = BakeSceneNavigation(*world_, warnings_);
     runtime_->perception = std::make_unique<ai::PerceptionWorld>(*world_);
@@ -1091,7 +1094,8 @@ std::vector<RuntimeError> Game::RuntimeErrors() const {
 
 Game::GameplayDebugContext Game::GameplayForDebugging() const {
     if (!IsPlaying() || !runtime_) return {};
-    return {world_.get(), runtime_->attributes.get(), runtime_->effects.get(), runtime_->abilities.get(), &effects_, &abilities_};
+    return {world_.get(), runtime_->attributes.get(), runtime_->effects.get(), runtime_->abilities.get(),
+            &effects_, &abilities_, runtime_->world_generation};
 }
 
 void Game::BeginPlay() {

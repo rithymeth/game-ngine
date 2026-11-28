@@ -8,6 +8,7 @@
 #include "aether/scene/components.h"
 
 #include <imgui.h>
+#include <imgui_internal.h>
 
 #include <cmath>
 #include <functional>
@@ -279,6 +280,72 @@ AETHER_TEST(GameplayDebugger_QueriesTheCurrentSourceAtDrawTime) {
     active = nullptr;
     const auto stopped = draw();
     CHECK(stopped.find("Sample Hero") != std::string::npos && stopped.find("SecondPreviewCharge") == std::string::npos);
+}
+
+AETHER_TEST(GameplayDebugger_AHeldTagActionDoesNotCrossTargets) {
+    enum class Replacement { World, Runtime, Entity };
+    for (const auto replacement : {Replacement::World, Replacement::Runtime, Replacement::Entity}) {
+        EditorWorkspace ws;
+        const i64 tool = ws.FindTool("Gameplay Debugger");
+        if (tool < 0) { CHECK(false); return; }
+        const GameplayTag probe = GameplayTag::Make("State.Probe");
+        TagContainer tags;
+        CHECK(tags.Add(probe));
+        World first, second;
+        const Entity a = first.CreateEntity(tags);
+        const Entity b = second.CreateEntity(tags);
+        CHECK(a == b); // unrelated actors have identical runtime handles on purpose
+        World* active = &first;
+        u64 generation = 1;
+        ws.SetGameplaySourceProvider([&] {
+            return EditorWorkspace::GameplaySource{.world = active, .world_generation = generation};
+        });
+
+        HeadlessImGui imgui;
+        ImVec2 button{};
+        const auto draw = [&] {
+            const auto start = ImGui::GetCursorScreenPos();
+            ws.DrawTool(static_cast<usize>(tool));
+            // The single tag row precedes the Add tag input/button row.
+            const auto& style = ImGui::GetStyle();
+            button.x = start.x + ImGui::GetFontSize() + ImGui::CalcTextSize("State.Probe  x1").x +
+                       3.0f * style.FramePadding.x + style.ItemSpacing.x + ImGui::CalcTextSize("-").x * 0.5f;
+            button.y = ImGui::GetItemRectMin().y - style.FramePadding.y - style.ItemSpacing.y -
+                       ImGui::GetFontSize() * 0.5f;
+        };
+        auto& io = ImGui::GetIO();
+        imgui.Frame(draw);
+        io.AddMousePosEvent(button.x, button.y);
+        imgui.Frame(draw);
+        const auto hovered = ImGui::GetHoveredID();
+        if (!hovered) { CHECK(hovered != 0); return; }
+        io.AddMouseButtonEvent(0, true);
+        imgui.Frame(draw);
+        CHECK(ImGui::GetActiveID() == hovered);
+        Entity target = a;
+        switch (replacement) {
+            case Replacement::World: active = &second; target = b; break;
+            case Replacement::Runtime: ++generation; break; // same pointer/handle, different provider lifetime
+            case Replacement::Entity:
+                first.DestroyEntity(a);
+                target = first.CreateEntity(tags);
+                CHECK(target.index == a.index && target.generation != a.generation);
+                break;
+        }
+        io.AddMouseButtonEvent(0, false);
+        imgui.Frame(draw);
+        if (replacement == Replacement::World) CHECK(first.GetComponent<TagContainer>(a)->HasTagExact(probe));
+        const bool survived = active->GetComponent<TagContainer>(target)->HasTagExact(probe);
+        CHECK(survived);
+        if (!survived) continue;
+
+        // A fresh click on the replacement still works through the provider's pointer cleanup.
+        io.AddMouseButtonEvent(0, true);
+        imgui.Frame(draw);
+        io.AddMouseButtonEvent(0, false);
+        imgui.Frame(draw);
+        CHECK(!active->GetComponent<TagContainer>(target)->HasTagExact(probe));
+    }
 }
 
 AETHER_TEST(GameplayDebugger_WorkspaceHasTheTool) {

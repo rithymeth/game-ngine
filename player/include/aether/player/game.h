@@ -262,6 +262,7 @@ public:
         gas::AbilitySystem* abilities = nullptr;
         const gas::EffectLibrary* effect_library = nullptr;
         const gas::AbilityLibrary* ability_library = nullptr;
+        u64 world_generation = 0; // distinguishes replacement worlds even if their addresses are reused
     };
     GameplayDebugContext GameplayForDebugging() const;
 
