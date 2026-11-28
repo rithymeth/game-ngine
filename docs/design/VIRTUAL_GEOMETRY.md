@@ -14,8 +14,9 @@ This is built in stages, each tested before the next starts. This document recor
    of the clusters to draw. The CPU selector is its reference. Occlusion (Hi-Z) culling and the indirect draw list are not in this stage.
 3. **Indirect rendering** (done, below). One multi-draw of the surviving clusters; the cooked mesh format gains the hierarchy.
 4. **The player draws through clusters** (done, opt-in, below), measured on a real scene.
-5. **Streaming** of cluster pages by what is visible.
-6. Software rasterization of triangles smaller than a pixel is **not planned**: it is the hardest part and the other stages deliver most of the benefit.
+5. **Clusters cooked into the pak** (done, below).
+6. **Streaming** of cluster pages by what is visible.
+7. Software rasterization of triangles smaller than a pixel is **not planned**: it is the hardest part and the other stages deliver most of the benefit.
 
 ## Stage 1: how the hierarchy works
 
@@ -213,10 +214,34 @@ Two plain runs are identical, so none of that is noise. The renderer's scene tim
 CPU rasterizer less. **Whether it is faster on a GPU is still unmeasured**; the stage 3 benchmark found the GPU path slower at 68k triangles and faster at 212k, and this
 scene's primitives are all small. It will pay off on heavy meshes (scans, sculpts, generated models), not on content already cut into small tiles.
 
+## Stage 5: clusters cooked into the pak, read at load
+
+`aether_cook --clusters` (`CookOptions::cook_clusters`, off by default) bakes each still primitive's cluster hierarchy into its cooked mesh (`Cooked/<mesh guid>.amesh`, AMSC v3).
+With `AETHER_VIRTUAL_GEOMETRY=1` the player reads that instead of building the hierarchy when the model loads. The manifest already named each model's meshes
+(`sub_assets`, `"key": "mesh:0"`); the player now keeps that list. A model's mesh and primitive numbers are the cooked mesh's (the importer numbers every primitive, the empty
+ones too, and the player counts them the same way), and the importer copies the glTF's vertices byte for byte, so the hierarchy's indices are already in the numbering
+of the vertex buffer the player draws with.
+
+The hierarchy is used only when it fits: the same vertex count, no index past the vertices, and leaves that hold exactly the mesh's triangles (`ClusterModel::Adopt`). Anything
+else (a model cooked without clusters, a damaged file, a cooked mesh from another version of the model) falls back to building it at load, with a warning when a hierarchy was
+there and did not fit.
+
+The welding of stage 4 moved into the engine as `cook::BuildPrimitiveClusters` so the cooker builds the same good hierarchy the player would: a model stored with a vertex per
+triangle corner now cooks into many levels, not one. (`MeshCookSettings::build_clusters` used the plain builder before; the cooked-mesh cache version went up with it.)
+
+Measured on the 128-model Abyss scene (every model has 3,500 to 16,000 triangles, so the minimum was lowered to 1,000), lavapipe, one run each:
+
+| | hierarchies | time in them | whole run to the third frame |
+| --- | --- | --- | --- |
+| built when the models load | 129 | 30.2 s (mean 234 ms, the 135,000-triangle seabed 4.5 s) | 47.3 s |
+| read from the pak | 129 | 1.3 s | 11.0 s |
+
+The pak grows by 7.6 MB (313 to 321 MB) for the 128 models. The picture is the same as with the hierarchies built at load (a test compares them pixel for pixel).
+
 ### Known limits of stage 4
 
-- The hierarchy is built when the model loads, on the CPU (17 ms on average here, 1.2 s for 82k triangles). The cooked one (AMSC v3, opt-in at cook time) is not read by
-  the player yet: the pak carries the cooked mesh, the player loads the glTF.
+- Without `aether_cook --clusters` the hierarchy is built when the model loads, on the CPU (17 ms on average on the Woodland, 234 ms on the Abyss models, 1.2 s for 82k
+  triangles): see stage 5.
 - One cull and one indirect draw per draw of a primitive: for many instances of one mesh that is the wrong shape (instancing is the answer there), which is why it
   is opt-in and bounded to 8 draws a primitive a frame.
 - No Hi-Z occlusion, no streaming, no D3D12 (no indirect-count draw there yet), no skinned meshes.

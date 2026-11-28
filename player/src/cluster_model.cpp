@@ -1,5 +1,6 @@
 #include "cluster_model.h"
 
+#include "aether/cook/mesh_cook.h"
 #include <algorithm>
 #include <cmath>
 
@@ -12,27 +13,26 @@ ClusterModel::~ClusterModel() {
     if (device_ != nullptr && index_buffer_.IsValid()) device_->DestroyBuffer(index_buffer_);
 }
 
-bool ClusterModel::Build(IDevice& device, std::span<const Vec3> positions, std::span<const u32> indices, std::span<const u32> vertex_ids, std::string* error) {
-    cook::ClusterParams params;
-    if (!cook::BuildClusterHierarchy(positions, indices, params, hierarchy_, error)) return false;
-    if (hierarchy_.clusters.empty() || hierarchy_.indices.empty()) {
-        if (error) *error = "the mesh has no clusters";
+bool ClusterModel::Build(IDevice& device, std::span<const assets::MeshVertex> vertices, std::span<const u32> indices, std::string* error) {
+    cook::ClusterHierarchy hierarchy;
+    if (!cook::BuildPrimitiveClusters(vertices, indices, cook::ClusterParams{}, hierarchy, error)) return false;
+    return Adopt(device, std::move(hierarchy), vertices.size(), indices.size(), error);
+}
+
+bool ClusterModel::Adopt(IDevice& device, cook::ClusterHierarchy hierarchy, usize vertex_count, usize index_count, std::string* error) {
+    const auto fail = [&](const char* why) {
+        if (error) *error = why;
         return false;
-    }
-    if (!vertex_ids.empty()) {
-        if (vertex_ids.size() != positions.size()) {
-            if (error) *error = "vertex_ids must have one entry for each position";
-            return false;
-        }
-        for (u32& index : hierarchy_.indices) index = vertex_ids[index];
-    }
+    };
+    if (hierarchy.clusters.empty() || hierarchy.indices.empty()) return fail("the mesh has no clusters");
+    for (const u32 index : hierarchy.indices)
+        if (index >= vertex_count) return fail("a cluster index is past the mesh's vertices");
+    if (hierarchy.leaf_triangles() * 3 != index_count) return fail("the clusters' leaves do not hold the mesh's triangles");
+    hierarchy_ = std::move(hierarchy);
     index_buffer_ = device.CreateIndexBuffer(hierarchy_.indices.data(), hierarchy_.indices.size() * sizeof(u32), IndexFormat::UInt32);
-    if (!index_buffer_.IsValid()) {
-        if (error) *error = "the device could not make the cluster index buffer";
-        return false;
-    }
+    if (!index_buffer_.IsValid()) return fail("the device could not make the cluster index buffer");
     device_ = &device;
-    full_triangles_ = indices.size() / 3;
+    full_triangles_ = index_count / 3;
     return true;
 }
 

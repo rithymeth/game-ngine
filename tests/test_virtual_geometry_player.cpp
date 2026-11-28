@@ -5,6 +5,8 @@
 #include "aether/player/game.h"
 #include "aether/player/scene_renderer.h"
 #include "aether/player/user_paths.h"
+#include "../player/src/cluster_model.h"
+#include "aether/cook/mesh_cook.h"
 #include "aether/reflection/serialize.h"
 #include "test_framework.h"
 
@@ -45,7 +47,7 @@ void SetEnvironmentVariableForTest(const char* name, const char* value) {
 
 // A sphere of 20 * 4^6 = 81,920 triangles and a radius of 1 m (times the scale asked), 9 m from the camera (which looks straight at it, down -Z) unless `z` moves it, lit
 // by the sun and the sky.
-fs::path CookSphereScene(const fs::path& root, std::initializer_list<f32> scale = {1.0f, 1.0f, 1.0f}, f32 z = 0.0f, f32 fov_degrees = 50.0f) {
+fs::path CookSphereScene(const fs::path& root, std::initializer_list<f32> scale = {1.0f, 1.0f, 1.0f}, f32 z = 0.0f, f32 fov_degrees = 50.0f, bool clusters = false) {
     fs::create_directories(root / "Content/models");
     fs::create_directories(root / "Content/Scenes");
     const fs::path games = fs::path(AETHER_REPO_ASSETS_DIR).parent_path() / "games/AETHER-01";
@@ -78,6 +80,7 @@ fs::path CookSphereScene(const fs::path& root, std::initializer_list<f32> scale 
     cook::CookOptions options;
     options.project_file = root / "ClusterScene.aproject";
     options.output_dir = root / "cooked";
+    options.cook_clusters = clusters;   // aether_cook --clusters: each mesh's cluster hierarchy goes into the pak
     const auto cooked = cook::Cook(options);
     AETHER_CHECK(cooked.ok);
     return cooked.ok ? cooked.pak_file : fs::path();
@@ -259,4 +262,73 @@ AETHER_TEST(VirtualGeometryPlayer_ClustersOutsideTheViewAreLeftOut) {
     if (!whole.supported || whole.pixels.empty()) return;
     AETHER_CHECK(whole.stats.draws == 1 && cropped.stats.draws == 1);
     AETHER_CHECK(cropped.stats.triangles_drawn > 0 && cropped.stats.triangles_drawn < whole.stats.triangles_drawn * 9 / 10);
+}
+
+AETHER_TEST(VirtualGeometryPlayer_ClustersCookedIntoThePakAreReadAndDrawTheSamePicture) {
+    if (!rhi::IsBackendAvailable(rhi::Backend::Vulkan)) return;
+    SetEnvironmentVariableForTest("AETHER_RENDER_TAA", "0");
+    const fs::path root = fs::temp_directory_path() / "aether_vg_scene" / assets::ToString(assets::NewAssetGuid());
+    const fs::path plain_pak = CookSphereScene(root / "plain");                                       // no clusters in the pak
+    const fs::path cooked_pak = CookSphereScene(root / "cooked", {1.0f, 1.0f, 1.0f}, 0.0f, 50.0f, true); // the same scene cooked with them
+    if (plain_pak.empty() || cooked_pak.empty()) return;
+    SetEnvironmentVariableForTest("AETHER_VIRTUAL_GEOMETRY", "1");
+    SetEnvironmentVariableForTest("AETHER_VIRTUAL_GEOMETRY_PIXELS", "1");
+    const Frame built = Render(root / "plain", plain_pak, kW, kH);   // built when the model loads
+    const Frame read = Render(root / "cooked", cooked_pak, kW, kH);  // read from the pak
+    SetEnvironmentVariableForTest("AETHER_VIRTUAL_GEOMETRY", "");
+    const Frame off = Render(root / "cooked", cooked_pak, kW, kH);   // the pak has clusters, the switch is off: they are not used
+    SetEnvironmentVariableForTest("AETHER_VIRTUAL_GEOMETRY_PIXELS", "");
+    if (!built.supported || built.pixels.empty()) return;
+    AETHER_CHECK(built.stats.primitives == 1 && built.stats.primitives_cooked == 0);
+    AETHER_CHECK(read.stats.primitives == 1 && read.stats.primitives_cooked == 1);
+    // The same algorithm on the same mesh: the same clusters, the same picture.
+    AETHER_CHECK(read.stats.triangles_drawn == built.stats.triangles_drawn && read.stats.triangles_drawn > 0);
+    AETHER_CHECK(Compare(built.pixels, read.pixels).differing == 0);
+    AETHER_CHECK(!off.stats.enabled && off.stats.primitives == 0 && off.stats.draws == 0);
+}
+
+AETHER_TEST(VirtualGeometryPlayer_AHierarchyThatDoesNotFitItsMeshIsRefused) {
+    if (!rhi::IsBackendAvailable(rhi::Backend::Vulkan)) return;
+    std::unique_ptr<rhi::IDevice> device;
+    try {
+        device = rhi::CreateDevice(rhi::Backend::Vulkan, false);
+    } catch (const std::exception&) {
+    }
+    if (!device) return;
+    // A little mesh (a 12 x 12 grid of quads) and its hierarchy.
+    std::vector<assets::MeshVertex> vertices;
+    std::vector<u32> indices;
+    for (u32 z = 0; z <= 12; ++z)
+        for (u32 x = 0; x <= 12; ++x) {
+            assets::MeshVertex v{};
+            v.position[0] = static_cast<f32>(x);
+            v.position[2] = static_cast<f32>(z);
+            v.normal[1] = 1.0f;
+            vertices.push_back(v);
+        }
+    for (u32 z = 0; z < 12; ++z)
+        for (u32 x = 0; x < 12; ++x) {
+            const u32 a = z * 13 + x, b = a + 1, c = a + 13, d = c + 1;
+            for (const u32 i : {a, c, b, b, c, d}) indices.push_back(i);
+        }
+    cook::ClusterHierarchy hierarchy;
+    AETHER_CHECK(cook::BuildPrimitiveClusters(vertices, indices, cook::ClusterParams{}, hierarchy));
+    std::string why;
+    {
+        player::ClusterModel model;
+        AETHER_CHECK(model.Adopt(*device, hierarchy, vertices.size(), indices.size(), &why));   // it fits
+        AETHER_CHECK(model.FullTriangles() == indices.size() / 3);
+    }
+    {
+        player::ClusterModel model;
+        AETHER_CHECK(!model.Adopt(*device, hierarchy, vertices.size() - 1, indices.size(), &why) && !why.empty()); // the last vertex is gone: an index is past them
+    }
+    {
+        player::ClusterModel model;
+        AETHER_CHECK(!model.Adopt(*device, hierarchy, vertices.size(), indices.size() + 3, &why) && !why.empty()); // a mesh with another triangle
+    }
+    {
+        player::ClusterModel model;
+        AETHER_CHECK(!model.Adopt(*device, cook::ClusterHierarchy{}, vertices.size(), indices.size(), &why) && !why.empty()); // no clusters
+    }
 }

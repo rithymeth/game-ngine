@@ -98,6 +98,7 @@ public:
     struct VirtualGeometryStats {
         bool enabled = false;
         u32 primitives = 0;
+        u32 primitives_cooked = 0; // of those, how many took their hierarchy from the pak (aether_cook --clusters) instead of building it at load
         u32 draws = 0;
         u64 triangles_drawn = 0;
         u64 triangles_full = 0;

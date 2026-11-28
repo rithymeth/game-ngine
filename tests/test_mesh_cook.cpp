@@ -3,8 +3,13 @@
 #include "aether/cook/mesh_cook.h"
 #include "aether/pak/pak.h"
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
+#include <span>
+#include <string>
+#include <vector>
 
 // Cooked meshes (Phase 39 step 6a): round trip, determinism, LOD shape, and a reader that survives bad bytes.
 
@@ -269,4 +274,102 @@ AETHER_TEST(MeshCook_RefusesClusterHierarchiesThatPointOutsideThemselves) {
     refused("infinite parent sphere", [](ClusterHierarchy& h) { h.clusters[0].parent_radius = INFINITY; });
     refused("negative extent", [](ClusterHierarchy& h) { h.mesh_extent = -1.0f; });
     refused("absurd level count", [](ClusterHierarchy& h) { h.level_count = 100000; });
+}
+
+// --- BuildPrimitiveClusters: a model stored with a vertex for every corner of every triangle ------------------------------------------------------------------------------
+namespace {
+
+// MakeGridMesh with every triangle given vertices of its own (a "soup"), the tangent made per triangle as an exporter that makes them a triangle at a time would,
+// and `unused` stray vertices that no triangle uses.
+assets::MeshPrimitiveData MakeSoup(u32 n, u32 unused = 0) {
+    const assets::MeshPrimitiveData grid = MakeGridMesh(n).primitives[0];
+    assets::MeshPrimitiveData soup;
+    for (usize t = 0; t + 2 < grid.indices.size(); t += 3) {
+        for (usize k = 0; k < 3; ++k) {
+            assets::MeshVertex v = grid.vertices[grid.indices[t + k]];
+            v.tangent[0] = 1.0f;
+            v.tangent[3] = static_cast<f32>(t % 7) * 0.05f + 1.0f; // differs from triangle to triangle at one position
+            soup.vertices.push_back(v);
+            soup.indices.push_back(static_cast<u32>(soup.vertices.size() - 1));
+        }
+    }
+    for (u32 i = 0; i < unused; ++i) {
+        assets::MeshVertex v = grid.vertices[i % grid.vertices.size()];
+        soup.vertices.push_back(v); // the same position, normal and UV as a used vertex, but no triangle uses it
+    }
+    return soup;
+}
+
+// The triangles of a primitive as a sorted list of their corners' positions, whatever vertex numbers they use.
+std::vector<std::array<f32, 9>> TrianglesByPosition(std::span<const assets::MeshVertex> vertices, std::span<const u32> indices) {
+    std::vector<std::array<f32, 9>> out;
+    for (usize t = 0; t + 2 < indices.size(); t += 3) {
+        std::array<f32, 9> corners{};
+        for (usize k = 0; k < 3; ++k)
+            for (usize a = 0; a < 3; ++a) corners[k * 3 + a] = vertices[indices[t + k]].position[a];
+        out.push_back(corners);
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+} // namespace
+
+AETHER_TEST(MeshCook_ClustersOfATriangleSoupAreWeldedAndKeepTheMeshExactly) {
+    const assets::MeshPrimitiveData soup = MakeSoup(40, 25);
+    // The control: the plain builder takes every triangle for a loose piece, so nothing merges and there is a single level.
+    {
+        std::vector<Vec3> positions;
+        for (const assets::MeshVertex& v : soup.vertices) positions.push_back(Vec3(v.position[0], v.position[1], v.position[2]));
+        ClusterHierarchy plain;
+        AETHER_CHECK(BuildClusterHierarchy(positions, soup.indices, ClusterParams{}, plain));
+        AETHER_CHECK(plain.level_count == 1);
+    }
+    ClusterHierarchy welded;
+    std::string error;
+    AETHER_CHECK(BuildPrimitiveClusters(soup.vertices, soup.indices, ClusterParams{}, welded, &error));
+    AETHER_CHECK(welded.level_count > 2);
+    // Its indices are in the soup's own numbering, and its leaves are the mesh's triangles, corner for corner (by position: the welded vertex stands for its copies).
+    for (const u32 index : welded.indices) AETHER_CHECK(index < soup.vertices.size());
+    std::vector<u32> leaf_indices;
+    for (u32 c = 0; c < welded.leaf_count; ++c) {
+        const Cluster& cluster = welded.clusters[c];
+        leaf_indices.insert(leaf_indices.end(), welded.indices.begin() + cluster.index_offset, welded.indices.begin() + cluster.index_offset + cluster.triangle_count * 3);
+    }
+    AETHER_CHECK(leaf_indices.size() == soup.indices.size());
+    AETHER_CHECK(TrianglesByPosition(soup.vertices, leaf_indices) == TrianglesByPosition(soup.vertices, soup.indices));
+    // Deterministic.
+    ClusterHierarchy again;
+    AETHER_CHECK(BuildPrimitiveClusters(soup.vertices, soup.indices, ClusterParams{}, again) && again.indices == welded.indices && again.clusters.size() == welded.clusters.size());
+}
+
+AETHER_TEST(MeshCook_ClustersOfAMeshThatAlreadySharesItsVerticesAreAsBeforeAndBadInputIsRefused) {
+    const assets::MeshPrimitiveData grid = MakeGridMesh(24).primitives[0];
+    std::vector<Vec3> positions;
+    for (const assets::MeshVertex& v : grid.vertices) positions.push_back(Vec3(v.position[0], v.position[1], v.position[2]));
+    ClusterHierarchy direct, via;
+    AETHER_CHECK(BuildClusterHierarchy(positions, grid.indices, ClusterParams{}, direct));
+    AETHER_CHECK(BuildPrimitiveClusters(grid.vertices, grid.indices, ClusterParams{}, via));
+    AETHER_CHECK(direct.indices == via.indices && direct.level_count == via.level_count);
+    std::string error;
+    std::vector<u32> bad = grid.indices;
+    bad.back() = static_cast<u32>(grid.vertices.size()); // one past the vertices
+    ClusterHierarchy out;
+    AETHER_CHECK(!BuildPrimitiveClusters(grid.vertices, bad, ClusterParams{}, out, &error) && !error.empty());
+    AETHER_CHECK(BuildPrimitiveClusters({}, {}, ClusterParams{}, out) && out.clusters.empty()); // nothing to build is not an error
+}
+
+AETHER_TEST(MeshCook_CookingASoupWithClustersGivesThePlayerAUsableHierarchy) {
+    assets::MeshData mesh;
+    mesh.primitives.push_back(MakeSoup(30));
+    MeshCookSettings settings;
+    settings.build_clusters = true;
+    CookedMesh cooked;
+    std::string error;
+    AETHER_CHECK(CookMesh(mesh, settings, cooked, &error));
+    AETHER_CHECK(cooked.primitives.size() == 1 && cooked.primitives[0].clusters.level_count > 2);
+    // Through the file and back.
+    CookedMesh loaded;
+    AETHER_CHECK(LoadAmesh(SaveAmesh(cooked), loaded, &error));
+    AETHER_CHECK(loaded.primitives[0].clusters.indices == cooked.primitives[0].clusters.indices && loaded.primitives[0].clusters.leaf_triangles() * 3 == mesh.primitives[0].indices.size());
 }

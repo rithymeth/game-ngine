@@ -153,6 +153,9 @@ bool ParseGameManifest(std::string_view text, GameManifest& out, std::string* er
                 asset.imported = a.value("imported", false);
                 asset.cooked = a.value("cooked", "");
                 asset.cooked_format = a.value("cooked_format", "");
+                if (const auto subs = a.find("sub_assets"); subs != a.end() && subs->is_array()) {
+                    for (const json& sub : *subs) asset.sub_assets.push_back({sub.value("guid", ""), sub.value("key", ""), sub.value("importer", "")});
+                }
                 if (asset.guid.empty() || asset.path.empty()) return Fail(error, "Manifest.json lists an asset with no GUID or path");
                 g.assets.push_back(std::move(asset));
             }
