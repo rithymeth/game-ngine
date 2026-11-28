@@ -38,7 +38,7 @@ void GameViewPanel::Draw(SceneDocument& document, f32 frame_dt) {
     }
     if (start_failed_ && playing) state_.note = start_error_; // the failure stands for the whole session
     if (running_ && surface != nullptr) {
-        surface->Frame(document.PlayDelta(frame_dt)); // paused: zero, and the last picture stands; Step: exactly one frame
+        surface->Frame(document.PlayDelta(frame_dt, PlaySession::StepTarget::GameView)); // paused: zero, and the last picture stands; Step: exactly one frame
         if (surface->Picture().Valid()) state_.has_picture = true;
         else state_.note = surface->Note();
     }

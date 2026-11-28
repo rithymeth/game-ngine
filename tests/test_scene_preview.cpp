@@ -858,6 +858,43 @@ return CountUpdates
         live.Stop();
         document.Stop();
     }
+    // Both real preview copies must receive the same Step, even if the host draws them in opposite orders.
+    for (const bool game_first : {false, true}) {
+        LiveSceneShading shading(*device, scene, [&] { return project; });
+        LiveGameView live(*device, scene, [&] { return project; });
+        GameViewPanel panel;
+        panel.surface = &live;
+        panel.width = 128;
+        panel.height = 72;
+        SceneViewCamera camera;
+        const auto draw_game = [&] {
+            imgui.Frame();
+            ImGui::Begin("game");
+            panel.Draw(document, dt);
+            ImGui::End();
+        };
+        const auto draw_scene = [&] { return shading.Advance(document, camera, 128, 72, SceneViewMode::Lit, dt); };
+        const auto draw_both = [&] {
+            if (game_first) draw_game();
+            AETHER_CHECK(draw_scene());
+            if (!game_first) draw_game();
+        };
+        document.Play();
+        draw_both();
+        AETHER_CHECK(position_is(live.Viewport(), 1));
+        AETHER_CHECK(position_is(shading.Viewport(), 1));
+        document.Pause();
+        document.Step();
+        draw_both();
+        AETHER_CHECK(position_is(live.Viewport(), 2));
+        AETHER_CHECK(position_is(shading.Viewport(), 2));
+        draw_both();
+        AETHER_CHECK(position_is(live.Viewport(), 2));
+        AETHER_CHECK(position_is(shading.Viewport(), 2));
+        document.Stop();
+        panel.SyncSession(document);
+        shading.Stop();
+    }
 }
 
 #if defined(AETHER_HAS_EDITOR_VULKAN)

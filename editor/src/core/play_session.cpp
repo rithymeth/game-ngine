@@ -26,7 +26,7 @@ std::vector<Entity> AllEntities(const World& world) {
 
 void PlaySession::Play(CommandContext& ctx, CommandStack& stack, bool simulate) {
     if (state_ == State::Paused) {
-        step_pending_ = false; // a queued Step belongs to the pause we are leaving
+        pending_steps_ = 0; // a queued Step belongs to the pause we are leaving
         state_ = State::Playing;
         return;
     }
@@ -38,7 +38,7 @@ void PlaySession::Play(CommandContext& ctx, CommandStack& stack, bool simulate) 
     stack.BreakMergeChain();
     stack.SetFrozen(true);
     state_ = State::Playing;
-    step_pending_ = false;
+    pending_steps_ = 0;
     simulate_ = simulate;
 }
 
@@ -50,16 +50,18 @@ void PlaySession::Pause() {
 
 void PlaySession::Step() {
     if (state_ == State::Paused) {
-        step_pending_ = true;
+        pending_steps_ = static_cast<u8>(StepTarget::Default) | static_cast<u8>(StepTarget::GameView) |
+                         static_cast<u8>(StepTarget::SceneView);
     }
 }
 
-bool PlaySession::ShouldSimulate() {
+bool PlaySession::ShouldSimulate(StepTarget target) {
     if (state_ == State::Playing) {
         return true;
     }
-    if (state_ == State::Paused && step_pending_) {
-        step_pending_ = false;
+    const u8 bit = static_cast<u8>(target);
+    if (state_ == State::Paused && (pending_steps_ & bit) != 0) {
+        pending_steps_ &= static_cast<u8>(~bit);
         return true;
     }
     return false;
@@ -88,7 +90,7 @@ void PlaySession::Stop(CommandContext& ctx, CommandStack& stack) {
     snapshot_.shrink_to_fit();
     stack.SetFrozen(false);
     state_ = State::Editing;
-    step_pending_ = false;
+    pending_steps_ = 0;
     simulate_ = false;
 }
 

@@ -141,7 +141,7 @@ bool LiveSceneShading::Advance(SceneDocument& document, const SceneViewCamera& c
     const bool ortho = camera.projection == SceneViewProjection::Orthographic;
     // A normal play frame or Step advances gameplay. A paused redraw can move the editor camera without running Update.
     // Keep the existing editing preview path, including its zero-time updates.
-    const f32 play_dt = document.PlayDelta(dt);
+    const f32 play_dt = document.PlayDelta(dt, PlaySession::StepTarget::SceneView);
     const auto frame_mode = document.PlayState() == PlaySession::State::Paused && !(play_dt > 0.0f)
                                 ? LiveViewport::FrameMode::DrawOnly
                                 : LiveViewport::FrameMode::Advance;

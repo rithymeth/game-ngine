@@ -656,8 +656,8 @@ void SceneDocument::Stop() {
     pending_scale_entity_ = {};
 }
 
-f32 SceneDocument::PlayDelta(f32 frame_dt) {
-    if (!play_session_.ShouldSimulate()) return 0.0f;
+f32 SceneDocument::PlayDelta(f32 frame_dt, PlaySession::StepTarget target) {
+    if (!play_session_.ShouldSimulate(target)) return 0.0f;
     return std::clamp(frame_dt, 0.0f, 0.1f);
 }
 

@@ -136,3 +136,29 @@ AETHER_TEST(PlaySession_ResumeDiscardsPendingStep) {
     f.session.Pause();
     AETHER_CHECK(!f.session.ShouldSimulate());
 }
+
+AETHER_TEST(PlaySession_EachPreviewConsumesItsOwnPausedStep) {
+    Fixture f;
+    using Target = PlaySession::StepTarget;
+    f.session.Play(f.ctx, f.stack);
+    f.session.Pause();
+    for (const auto first : {Target::GameView, Target::SceneView}) {
+        const auto second = first == Target::GameView ? Target::SceneView : Target::GameView;
+        f.session.Step();
+        AETHER_CHECK(f.session.ShouldSimulate(first));
+        AETHER_CHECK(!f.session.ShouldSimulate(first));
+        AETHER_CHECK(f.session.ShouldSimulate(second));
+        AETHER_CHECK(!f.session.ShouldSimulate(second));
+        AETHER_CHECK(f.session.ShouldSimulate());
+        AETHER_CHECK(!f.session.ShouldSimulate());
+    }
+    f.session.Step();
+    AETHER_CHECK(f.session.ShouldSimulate(Target::SceneView));
+    f.session.Play(f.ctx, f.stack);
+    f.session.Pause();
+    AETHER_CHECK(!f.session.ShouldSimulate(Target::GameView));
+    f.session.Step();
+    f.session.Stop(f.ctx, f.stack);
+    AETHER_CHECK(!f.session.ShouldSimulate(Target::GameView));
+    AETHER_CHECK(!f.session.ShouldSimulate(Target::SceneView));
+}

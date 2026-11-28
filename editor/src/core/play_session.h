@@ -27,6 +27,8 @@ namespace aether::editor {
 class PlaySession {
 public:
     enum class State { Editing, Playing, Paused };
+    // The two editor previews simulate separate worlds, so neither can consume the other's Step.
+    enum class StepTarget : u8 { Default = 1, GameView = 2, SceneView = 4 };
 
     State GetState() const { return state_; }
     // A fresh ID on every new session, including across documents. Zero while editing; pause/resume keeps the same ID.
@@ -39,7 +41,7 @@ public:
     void Play(CommandContext& ctx, CommandStack& stack, bool simulate = false);
     // Playing -> Paused. No-op otherwise.
     void Pause();
-    // While paused, lets exactly one simulation step run (see ShouldSimulate).
+    // While paused, requests one simulation step for each target (see ShouldSimulate).
     void Step();
     // Playing/Paused -> Editing, restoring the snapshot. No-op when editing.
     void Stop(CommandContext& ctx, CommandStack& stack);
@@ -47,15 +49,15 @@ public:
     // the host leaves its own camera under the person's control and does not eject it on Stop.
     bool IsSimulating() const { return state_ != State::Editing && simulate_; }
 
-    // Call once per frame: whether the game/physics should advance this frame.
-    bool ShouldSimulate();
+    // Call once per frame and target: whether this running world should advance.
+    bool ShouldSimulate(StepTarget target = StepTarget::Default);
 
     usize SnapshotBytes() const { return snapshot_.size(); }
 
 private:
     State state_ = State::Editing;
     u64 id_ = 0;
-    bool step_pending_ = false;
+    u8 pending_steps_ = 0;
     bool simulate_ = false; // this session was started by Simulate
     std::vector<u8> snapshot_;
 };
