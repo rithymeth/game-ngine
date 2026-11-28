@@ -464,6 +464,40 @@ AETHER_TEST(Commands_DataLayerPanelSwitchesThroughTheStack) {
     AETHER_CHECK(world.GetComponent<Active>(b) == nullptr || world.GetComponent<Active>(b)->active);
     AETHER_CHECK(world.GetComponent<Active>(c) == nullptr || world.GetComponent<Active>(c)->active);
 }
+AETHER_TEST(Commands_DataLayerToggleTracksActualSwitchStateChanges) {
+    World world;
+    GuidIndex guids;
+    CommandStack stack;
+    CommandContext ctx{world, guids};
+    const Entity hidden = world.CreateEntity(DataLayer{"Props"}, Active{false});
+    const Entity shown = world.CreateEntity(DataLayer{"Props"});
+    DataLayerPanel panel{world, guids, stack};
+
+    const auto enabled = [&] {
+        const auto rows = panel.Rows();
+        return rows.size() == 1 && rows[0].enabled && !rows[0].active;
+    };
+    // The layer is on even though one entity was manually turned off.
+    AETHER_CHECK(enabled());
+    AETHER_CHECK(!panel.SetLayerActive("Props", true) && !stack.CanUndo());
+    AETHER_CHECK(panel.SetLayerActive("Props", false));
+    AETHER_CHECK(!IsDataLayerActive(world, "Props") && !enabled());
+    AETHER_CHECK(world.GetComponent<DataLayer>(hidden)->captured && world.GetComponent<DataLayer>(shown)->captured);
+    AETHER_CHECK(panel.SetLayerActive("Props", true));
+    AETHER_CHECK(!panel.SetLayerActive("Props", true) && enabled());
+    AETHER_CHECK(!world.GetComponent<Active>(hidden)->active && world.GetComponent<Active>(shown)->active);
+
+    AETHER_CHECK(stack.Undo(ctx)); // hides the layer again, not an ineffective "show"
+    AETHER_CHECK(world.GetComponent<DataLayer>(hidden)->captured && !world.GetComponent<Active>(shown)->active);
+
+    // Switching an all-manually-off layer changes capture state even if no entity flips.
+    const Entity inactive = world.CreateEntity(DataLayer{"All off"}, Active{false});
+    AETHER_CHECK(panel.SetLayerActive("All off", false));
+    AETHER_CHECK(world.GetComponent<DataLayer>(inactive)->captured);
+    AETHER_CHECK(panel.SetLayerActive("All off", true));
+    AETHER_CHECK(!world.GetComponent<DataLayer>(inactive)->captured && !world.GetComponent<Active>(inactive)->active);
+}
+
 AETHER_TEST(Commands_DataLayerRowsMatchSceneCountsAndRemainSorted) {
     World world;
     GuidIndex guids;

@@ -18,11 +18,12 @@ public:
     DataLayerPanel(World& world, GuidIndex& guids, CommandStack& stack);
 
     // What the panel lists, re-read each time: every layer in the scene, how many entities belong to
-    // it, and whether it is currently on.
+    // it, whether all its members are active, and whether the layer itself is enabled.
     struct Row {
         std::string layer;
         usize entities = 0;
-        bool active = true;
+        bool active = true;  // every member is active
+        bool enabled = true; // not switched off as a layer
     };
     std::vector<Row> Rows() const;
 

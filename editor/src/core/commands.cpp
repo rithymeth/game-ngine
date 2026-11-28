@@ -508,12 +508,12 @@ std::unique_ptr<ICommand> SetDataLayerActiveCommand::Make(const CommandContext& 
                 member.captured = layers[i].captured;
                 member.active_when_layer_on = layers[i].active_when_layer_on;
                 command->members_.push_back(member);
-                if (member.active != active) changes = true;
+                if (active ? member.captured : (!member.captured || member.active)) changes = true;
             }
         }
     });
-    // Nothing to do: no layer by that name, or every member is already in the wanted state. Return null
-    // so the caller does not record a history entry that changes nothing.
+    // Match what SetDataLayerActive actually changes: turning on restores
+    // captures, and turning off can capture state without flipping Active.
     if (!changes) return nullptr;
     return command;
 }
