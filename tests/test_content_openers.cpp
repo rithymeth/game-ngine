@@ -1512,6 +1512,40 @@ AETHER_TEST(Openers_DroppedSpriteAtlasSurvivesStrictShipping) {
     CHECK(runtime_frame() == "frame_1");
 }
 
+AETHER_TEST(Openers_TilemapDropRefusesAnUnreadableTileset) {
+    ProjectPaths paths;
+    FreshProject("drop_invalid_tileset", paths);
+    const auto set_file = paths.content / "Ground.atileset";
+    sprite2d::Tileset tileset;
+    tileset.texture_width = tileset.texture_height = 16;
+    tileset.tile_width = tileset.tile_height = 8;
+    if (!sprite2d::SaveTileset(set_file, tileset)) { CHECK(false); return; }
+    assets::AssetDatabase database(paths.content);
+    database.Scan();
+    const auto* record = database.FindByPath("Ground.atileset");
+    if (!record) { CHECK(false); return; }
+
+    sprite2d::TilemapData map;
+    map.tileset = record->guid;
+    map.Resize(2, 2);
+    map.AddLayer("Ground");
+    map.Set(0, 0, 0, 0);
+    if (!sprite2d::SaveTilemap(paths.content / "Ground.atilemap", map)) { CHECK(false); return; }
+    std::ofstream(set_file) << R"({"$type":"Tileset","texture_size":[16,16],"tile_size":[0,8]})";
+
+    SceneDocument scene;
+    scene.Commands().Clear();
+    const auto before = scene.Entities().size();
+    bool placed = true;
+    const auto error = PlaceContentAsset(scene, paths.content, "Ground.atilemap", Vec3{}, &placed);
+    CHECK(!placed && error.find("Ground.atileset") != std::string::npos && error.find("tile size is zero") != std::string::npos);
+    CHECK(scene.Entities().size() == before && !scene.CanUndo());
+
+    if (!sprite2d::SaveTileset(set_file, tileset)) { CHECK(false); return; }
+    PlaceContentAsset(scene, paths.content, "Ground.atilemap", Vec3{}, &placed);
+    CHECK(placed && scene.Entities().size() == before + 1 && scene.CanUndo());
+}
+
 AETHER_TEST(Openers_AuthoredTilemapWorksInAnIndependentStrictShippingPackage) {
     ProjectPaths paths;
     FreshProject("place_authored_tilemap", paths);

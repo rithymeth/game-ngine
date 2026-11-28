@@ -64,6 +64,9 @@ std::string PlaceTilemap(SceneDocument& document, const std::filesystem::path& c
     const auto* tileset = database.Find(map.tileset);
     if (!tileset || tileset->missing || tileset->importer != "Tileset")
         return "Could not place " + path + ": its tileset is missing.";
+    sprite2d::Tileset tileset_data;
+    if (!sprite2d::LoadTileset(database.SourcePath(tileset->guid), tileset_data, &error))
+        return "Could not place " + path + ": " + tileset->path + ": " + error;
     sprite2d::TilemapRenderer renderer;
     renderer.tilemap.guid = record->guid;
     return Create2DEntity(document, path, at, renderer, placed, parent);
