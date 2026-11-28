@@ -7,12 +7,31 @@
 #include <string>
 
 // Blueprint function library for inventories (Phase 30 step 7a, §30.8), acting on
-// InventorySystem::Active(); without one everything returns 0 / false / "".
+// the current call scope, or InventorySystem::Active() for standalone calls.
 // `Event.OnItemAdded` / `OnItemRemoved` (item, count), `Event.OnItemEquipped` /
 // `OnItemUnequipped` (item, slot) and `Event.OnItemUsed` (item) are what an entity's
 // Blueprint hears.
 
 namespace aether::inv {
+
+class InventorySystem;
+
+// A synchronous reflected call uses its owning inventory, even when null.
+// With no scope, retain standalone active-system behavior.
+class InventoryLibraryScope {
+public:
+    explicit InventoryLibraryScope(InventorySystem* system);
+    ~InventoryLibraryScope();
+    InventoryLibraryScope(const InventoryLibraryScope&) = delete;
+    InventoryLibraryScope& operator=(const InventoryLibraryScope&) = delete;
+
+    static InventorySystem* Current();
+
+private:
+    static thread_local const InventoryLibraryScope* current_;
+    const InventoryLibraryScope* previous_;
+    InventorySystem* system_;
+};
 
 struct Items {
     static bool ConfigureInventory(const Entity& owner, i32 capacity, f32 max_weight);

@@ -47,10 +47,17 @@ bool ReadCount(NativeCall& c, i32& out) {
     return true;
 }
 
-} // namespace
-
-void InstallInventoryApi(LuauHost& host) {
-    const auto def = [&](const char* name, NativeFunction fn) { host.RegisterNative("Inventory", name, std::move(fn)); };
+void Install(LuauHost& host, inv::InventorySystem* system, bool bound) {
+    const auto def = [&](const char* name, NativeFunction fn) {
+        if (!bound) {
+            host.RegisterNative("Inventory", name, std::move(fn));
+            return;
+        }
+        host.RegisterNative("Inventory", name, [system, fn = std::move(fn)](NativeCall& c) {
+            InventoryLibraryScope scope(system);
+            fn(c);
+        });
+    };
     def("Configure", [](NativeCall& c) {
         i32 capacity;
         if (NeedEntity(c) && ReadInt(c, 1, "the capacity", capacity))
@@ -111,9 +118,15 @@ void InstallInventoryApi(LuauHost& host) {
     });
 }
 
+} // namespace
+
+void InstallInventoryApi(LuauHost& host) { Install(host, nullptr, false); }
+void InstallInventoryApi(LuauHost& host, inv::InventorySystem* system) { Install(host, system, true); }
+
 #else
 
 void InstallInventoryApi(LuauHost&) {}
+void InstallInventoryApi(LuauHost&, inv::InventorySystem*) {}
 
 #endif
 
