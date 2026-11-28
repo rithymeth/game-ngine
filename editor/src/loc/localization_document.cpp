@@ -22,6 +22,7 @@ bool LocalizationDocument::Open(const stdfs::path& file) {
         errors_.insert(errors_.begin(), "Couldn't open " + file.string());
         return false;
     }
+    if (file_ != file) last_gather_ = {};
     file_ = file;
     table_ = std::move(loaded);
     dirty_ = false;
@@ -168,6 +169,7 @@ bool LocalizationDocument::ExportPo(const std::string& language, const stdfs::pa
 bool LocalizationDocument::Gather(const stdfs::path& content_dir, bool check) {
     if (!IsOpen()) return false;
     if (!check && dirty_) {
+        last_gather_ = {};
         errors_.push_back("Save the table before gathering: the gather rewrites the file");
         return false;
     }

@@ -239,6 +239,32 @@ AETHER_TEST(LocEditor_PoImportOnlyDirtiesTheTableWhenTranslationsChange) {
     CHECK(doc.ImportPo("de", changed) && doc.Dirty() && doc.Revision() == dirty_revision);
 }
 
+AETHER_TEST(LocEditor_GatherReportBelongsToTheCurrentTableAndAttempt) {
+    const stdfs::path root = Dir("gather_report");
+    const stdfs::path first = MakeTable(root);
+    const stdfs::path second = root / "alternate.astrings";
+    const stdfs::path content = root / "Content";
+    Write(second, "key,en\nother,Other\n");
+    Write(content / "UI/menu.aui", R"({"root":{"type":"Text","text":"Settings","text_key":"menu.settings"}})");
+
+    LocalizationDocument doc;
+    CHECK(doc.Open(first));
+    const auto has_report = [&] {
+        return doc.LastGather().ok && doc.LastGather().merge.added == 1 && doc.LastGather().gathered.entries.size() == 1;
+    };
+    CHECK(doc.Gather(content, true) && has_report());
+    CHECK(!doc.Open(root / "missing.astrings") && doc.File() == first && has_report());
+
+    CHECK(doc.Open(second) && doc.Table().HasKey("other"));
+    CHECK(!doc.LastGather().ok && doc.LastGather().gathered.entries.empty() && doc.LastGather().messages.empty());
+    CHECK(doc.Gather(content, true) && has_report());
+    CHECK(doc.AddKey("pending") && !doc.Gather(content, false));
+    CHECK(!doc.LastGather().ok && doc.LastGather().gathered.entries.empty() && doc.Dirty());
+
+    CHECK(doc.Save());
+    CHECK(doc.Gather(content, false) && doc.Table().HasKey("menu.settings") && has_report());
+}
+
 AETHER_TEST(LocEditor_PoRoundTripAndGather) {
     const stdfs::path root = Dir("po_gather");
     const stdfs::path file = MakeTable(root);
