@@ -6172,7 +6172,9 @@
 [scripting/include/aether/script/forces_api.h] experimental
   void InstallForcesApi(LuauHost&host)
 [scripting/include/aether/script/gameplay_api.h] experimental
+  type struct GameplayApiSystems
   void InstallGameplayApi(LuauHost&host)
+  void InstallGameplayApi(LuauHost&host,GameplayApiSystems systems)
   void InstallGameplayApi(LuauHost&host,gas::AttributeSystem*attributes)
   void InstallGameplayApi(LuauHost&host,gas::AttributeSystem*attributes,gas::EffectSystem*effects)
 [scripting/include/aether/script/interaction_api.h] experimental

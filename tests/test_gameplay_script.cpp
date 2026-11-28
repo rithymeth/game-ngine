@@ -260,4 +260,85 @@ return Apply
     CHECK(first.ScriptErrors().empty() && second.ScriptErrors().empty());
 }
 
+
+AETHER_TEST(GameplayScript_AbilitiesStayInTheirOwnRuntime) {
+    const auto dir = std::filesystem::temp_directory_path() / "aether_two_ability_games";
+    std::filesystem::create_directories(dir);
+    const auto file = dir / "Game.apak";
+    const auto script_guid = assets::NewAssetGuid();
+    const auto asset = [](const assets::AssetGuid& guid, const char* path, const char* importer) {
+        return nlohmann::json{{"guid", assets::ToString(guid)}, {"path", path}, {"importer", importer}};
+    };
+    const nlohmann::json manifest = {{"$type", "CookManifest"}, {"$version", 1}, {"project", "Ability Worlds"},
+        {"configuration", "Development"}, {"startup_scene", "Scenes/start.ascene"},
+        {"assets", nlohmann::json::array({asset(script_guid, "Scripts/Dash.luau", "Script"),
+            asset(assets::NewAssetGuid(), "Abilities/dash.aability", "GameplayAbility"),
+            asset(assets::NewAssetGuid(), "Effects/cost.aeffect", "GameplayEffect")})}};
+    pak::PakWriter writer;
+    CHECK(writer.Add("Manifest.json", manifest.dump()));
+    CHECK(writer.Add("Content/Scenes/start.ascene", std::string(R"({"$type":"Scene","$version":1,"entities":[]})")));
+    CHECK(writer.Add("Content/Abilities/dash.aability",
+                     std::string(R"({"name":"Dash","cost":"DashCost","commit_on_activate":false})")));
+    CHECK(writer.Add("Content/Effects/cost.aeffect",
+                     std::string(R"({"name":"DashCost","modifiers":[{"attribute":"Stamina","op":"add","magnitude":-10}]})")));
+    CHECK(writer.Add("Content/Scripts/Dash.luau", std::string(R"(
+local Dash = {}
+function Dash:OnStart()
+    local e = self.entity
+    local ready = Abilities.Grant(e, "Dash") and Abilities.IsGranted(e, "Dash") and Abilities.CanActivate(e, "Dash")
+    self.handle = Abilities.TryActivate(e, "Dash")
+    Attributes.SetBase(e, "Handle", self.handle)
+    Attributes.SetBase(e, "Ready", (ready and Abilities.IsActive(e, "Dash") and Abilities.Commit(self.handle)) and 1 or 0)
+end
+function Dash:OnUpdate(_dt)
+    local e = self.entity
+    local mode = Attributes.GetBase(e, "Mode")
+    if mode == 1 then
+        Attributes.SetBase(e, "Done", Abilities.Cancel(self.handle) and 1 or 0)
+    elseif mode == 2 then
+        local done = Abilities.End(self.handle) and Abilities.Revoke(e, "Dash")
+        Attributes.SetBase(e, "Done", done and 1 or 0)
+    end
+end
+return Dash
+)")));
+    if (!writer.Write(file.string())) { CHECK(false); return; }
+    player::GamePackage package;
+    std::string error;
+    if (!package.Mount(file.string(), 0, &error) || !package.LoadManifest(&error)) { CHECK(false); return; }
+    player::Game first(package), second(package);
+    if (!first.LoadStartupScene(&error) || !second.LoadStartupScene(&error)) { CHECK(false); return; }
+
+    const auto actor = [&](player::Game& game, f32 stamina) {
+        AttributeSet attrs;
+        attrs.Define("Stamina", stamina, 0, 100);
+        for (const char* name : {"Handle", "Ready", "Mode", "Done"}) attrs.Define(name, 0);
+        ScriptComponent component;
+        component.script.guid = script_guid;
+        return game.GetWorld().CreateEntity(Transform{}, attrs, component);
+    };
+    const Entity a = actor(first, 30), b = actor(second, 50);
+    CHECK(a == b);
+
+    first.BeginPlay(); // the other runtime was loaded last
+    const auto ap = first.GameplayForDebugging();
+    if (!ap.attributes || !ap.abilities) { CHECK(false); return; }
+    CHECK(ap.attributes->Get(a, "Ready") == 1 && ap.attributes->Get(a, "Stamina") == 20);
+    const auto* b_before = second.GetWorld().GetComponent<AttributeSet>(b);
+    CHECK(b_before && b_before->Get("Stamina") == 50);
+    second.BeginPlay();
+    const auto bp = second.GameplayForDebugging();
+    if (!bp.attributes || !bp.abilities) { CHECK(false); return; }
+    CHECK(bp.attributes->Get(b, "Ready") == 1 && bp.attributes->Get(b, "Stamina") == 40);
+    CHECK(ap.attributes->Get(a, "Handle") > 0 && ap.attributes->Get(a, "Handle") == bp.attributes->Get(b, "Handle"));
+
+    ap.attributes->SetBase(a, "Mode", 1);
+    first.Tick(1.0f / 60.0f);
+    CHECK(ap.attributes->Get(a, "Done") == 1 && !ap.abilities->IsActive(a, "Dash") && bp.abilities->IsActive(b, "Dash"));
+    bp.attributes->SetBase(b, "Mode", 2);
+    second.Tick(1.0f / 60.0f);
+    CHECK(bp.attributes->Get(b, "Done") == 1 && !bp.abilities->IsActive(b, "Dash") && !bp.abilities->IsGranted(b, "Dash"));
+    CHECK(ap.abilities->IsGranted(a, "Dash") && first.ScriptErrors().empty() && second.ScriptErrors().empty());
+}
+
 #endif

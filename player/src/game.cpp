@@ -1033,8 +1033,12 @@ void Game::StartRuntime() {
 #endif
     kit::KitScriptApiContext api_context;
     api_context.install = [this](const std::string& kit_name) {
-        if (kit_name == "Gameplay") script::InstallGameplayApi(runtime_->host, runtime_->attributes.get(), runtime_->effects.get());
-        else runtime_->scripts->InstallKitApi(kit_name);
+        if (kit_name == "Gameplay") {
+            script::InstallGameplayApi(runtime_->host, script::GameplayApiSystems{.attributes = runtime_->attributes.get(),
+                .effects = runtime_->effects.get(), .abilities = runtime_->abilities.get()});
+        } else {
+            runtime_->scripts->InstallKitApi(kit_name);
+        }
     };
     kits_.InstallScriptApi(&api_context);
 #endif

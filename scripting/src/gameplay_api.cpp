@@ -1,6 +1,6 @@
 #include "aether/script/gameplay_api.h"
 
-#include "aether/gameplay/ability_library.h"
+#include "aether/gameplay/ability_system.h"
 #include "aether/gameplay/attribute_system.h"
 #include "aether/gameplay/effect_system.h"
 #include "aether/gameplay/tag_library.h"
@@ -29,13 +29,17 @@ bool NeedNumber(NativeCall& c, usize i, const char* table, const char* what) {
 
 } // namespace
 
-void InstallGameplayApi(LuauHost& host) { InstallGameplayApi(host, nullptr, nullptr); }
+void InstallGameplayApi(LuauHost& host) { InstallGameplayApi(host, GameplayApiSystems{}); }
 
 void InstallGameplayApi(LuauHost& host, gas::AttributeSystem* attributes) {
-    InstallGameplayApi(host, attributes, nullptr);
+    InstallGameplayApi(host, GameplayApiSystems{.attributes = attributes});
 }
 
 void InstallGameplayApi(LuauHost& host, gas::AttributeSystem* attributes, gas::EffectSystem* effects) {
+    InstallGameplayApi(host, GameplayApiSystems{.attributes = attributes, .effects = effects});
+}
+
+void InstallGameplayApi(LuauHost& host, GameplayApiSystems systems) {
     // GameplayTags: pure string functions.
     const auto tags = [&](const char* name, NativeFunction fn) { host.RegisterNative("GameplayTags", name, std::move(fn)); };
     tags("IsValid", [](NativeCall& c) {
@@ -55,7 +59,7 @@ void InstallGameplayApi(LuauHost& host, gas::AttributeSystem* attributes, gas::E
     });
 
     // A player host owns its world; only standalone hosts fall back to the process-wide active system.
-    const auto system = [attributes] { return attributes ? attributes : AttributeSystem::Active(); };
+    const auto system = [attributes = systems.attributes] { return attributes ? attributes : AttributeSystem::Active(); };
     const auto attrs = [&](const char* name, NativeFunction fn) { host.RegisterNative("Attributes", name, std::move(fn)); };
     using Getter = f32 (AttributeSystem::*)(Entity, const std::string&, f32) const;
     const auto getter = [&](const char* name, Getter get) {
@@ -93,7 +97,7 @@ void InstallGameplayApi(LuauHost& host, gas::AttributeSystem* attributes, gas::E
     });
 
     // Effect handles belong to the same runtime as the script that received them.
-    const auto effect_system = [effects] { return effects ? effects : EffectSystem::Active(); };
+    const auto effect_system = [effects = systems.effects] { return effects ? effects : EffectSystem::Active(); };
     const auto fx = [&](const char* name, NativeFunction fn) { host.RegisterNative("Effects", name, std::move(fn)); };
     fx("Apply", [effect_system](NativeCall& c) {
         if (!NeedEntity(c, 0, "Effects", "the target") || !NeedString(c, 1, "Effects", "the effect")) return;
@@ -124,31 +128,42 @@ void InstallGameplayApi(LuauHost& host, gas::AttributeSystem* attributes, gas::E
         c.Return(static_cast<f64>(current ? current->ActiveCount(c.EntityArg(0)) : 0));
     });
 
-    // Abilities.
+    // Abilities and their handles are owned by the same runtime as the script.
+    const auto ability_system = [abilities = systems.abilities] { return abilities ? abilities : AbilitySystem::Active(); };
     const auto ab = [&](const char* name, NativeFunction fn) { host.RegisterNative("Abilities", name, std::move(fn)); };
-    using OwnerFn = bool (*)(const Entity&, const std::string&);
-    const auto owner_bool = [&](const char* name, OwnerFn fn) {
-        ab(name, [fn](NativeCall& c) {
-            if (NeedEntity(c, 0, "Abilities", "the owner") && NeedString(c, 1, "Abilities", "the ability")) c.Return(fn(c.EntityArg(0), c.String(1)));
+    const auto owner_bool = [&](const char* name, auto fn) {
+        ab(name, [fn, ability_system](NativeCall& c) {
+            if (!NeedEntity(c, 0, "Abilities", "the owner") || !NeedString(c, 1, "Abilities", "the ability")) return;
+            auto* current = ability_system();
+            c.Return(current && (current->*fn)(c.EntityArg(0), c.String(1)));
         });
     };
-    owner_bool("Grant", &Abilities::GrantAbility);
-    owner_bool("Revoke", &Abilities::RevokeAbility);
-    owner_bool("CanActivate", &Abilities::CanActivateAbility);
-    owner_bool("IsActive", &Abilities::IsAbilityActive);
-    owner_bool("IsGranted", &Abilities::IsAbilityGranted);
-    ab("TryActivate", [](NativeCall& c) {
-        if (NeedEntity(c, 0, "Abilities", "the owner") && NeedString(c, 1, "Abilities", "the ability")) c.Return(static_cast<f64>(Abilities::TryActivateAbility(c.EntityArg(0), c.String(1))));
+    owner_bool("Grant", &AbilitySystem::Grant);
+    owner_bool("Revoke", &AbilitySystem::Revoke);
+    owner_bool("IsActive", &AbilitySystem::IsActive);
+    owner_bool("IsGranted", &AbilitySystem::IsGranted);
+    ab("CanActivate", [ability_system](NativeCall& c) {
+        if (!NeedEntity(c, 0, "Abilities", "the owner") || !NeedString(c, 1, "Abilities", "the ability")) return;
+        const auto* current = ability_system();
+        c.Return(current && current->CanActivate(c.EntityArg(0), c.String(1)) == FailReason::None);
     });
-    using HandleFn = bool (*)(i32);
-    const auto handle_bool = [&](const char* name, HandleFn fn) {
-        ab(name, [fn](NativeCall& c) {
-            if (NeedNumber(c, 0, "Abilities", "the handle")) c.Return(fn(static_cast<i32>(c.Number(0))));
+    ab("TryActivate", [ability_system](NativeCall& c) {
+        if (!NeedEntity(c, 0, "Abilities", "the owner") || !NeedString(c, 1, "Abilities", "the ability")) return;
+        auto* current = ability_system();
+        const i32 handle = current ? static_cast<i32>(current->TryActivate(c.EntityArg(0), c.String(1)).handle) : 0;
+        c.Return(static_cast<f64>(handle));
+    });
+    const auto handle_bool = [&](const char* name, bool (AbilitySystem::*fn)(AbilityHandle)) {
+        ab(name, [fn, ability_system](NativeCall& c) {
+            if (!NeedNumber(c, 0, "Abilities", "the handle")) return;
+            const i32 handle = static_cast<i32>(c.Number(0));
+            auto* current = ability_system();
+            c.Return(current && handle > 0 && (current->*fn)(static_cast<AbilityHandle>(handle)));
         });
     };
-    handle_bool("Commit", &Abilities::CommitAbility);
-    handle_bool("End", &Abilities::EndAbility);
-    handle_bool("Cancel", &Abilities::CancelAbility);
+    handle_bool("Commit", &AbilitySystem::Commit);
+    handle_bool("End", &AbilitySystem::End);
+    handle_bool("Cancel", &AbilitySystem::Cancel);
 }
 
 } // namespace aether::script
