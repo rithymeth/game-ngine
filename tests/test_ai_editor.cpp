@@ -336,6 +336,43 @@ AETHER_TEST(AIEditor_Document) {
     std::filesystem::remove_all(dir);
 }
 
+AETHER_TEST(AIEditor_BehaviorTreeLoadRejectsWrongFieldTypes) {
+    namespace fs = std::filesystem;
+    const auto dir = fs::temp_directory_path() / "aether_bt_invalid_fields";
+    fs::create_directories(dir);
+    const auto original = dir / "Original.abt";
+    const auto invalid = dir / "Invalid.abt";
+    BehaviorTreeDocument doc;
+    CHECK(doc.SaveAs(original));
+    const auto saved_text = doc.Text();
+    CHECK(doc.AddNode({}, BtNodeType::Log));
+    const auto pending = doc.Text();
+    const auto revision = doc.Revision();
+
+    for (const char* contents : {
+             R"({"version":"one","root":{"type":"Wait"}})",
+             R"({"root":{"type":"Wait"},"blackboard":[{"name":42,"type":"Bool"}]})",
+             R"({"root":{"type":"Sequence","children":[{"type":42}]}})",
+         }) {
+        {
+            std::ofstream out(invalid);
+            out << contents;
+        }
+        std::string error;
+        bool loaded = false, threw = false;
+        try {
+            loaded = doc.Load(invalid, &error);
+        } catch (const nlohmann::json::exception&) {
+            threw = true;
+        }
+        CHECK(!threw && !loaded && !error.empty());
+        CHECK(doc.Path() == original && doc.Dirty() && doc.CanUndo());
+        CHECK(doc.Revision() == revision && doc.Text() == pending);
+    }
+    CHECK(doc.Undo() && doc.Text() == saved_text);
+    fs::remove_all(dir);
+}
+
 AETHER_TEST(AIEditor_LayoutAndView) {
     BehaviorTreeDocument doc = GuardDoc();
     const auto layout = LayoutBehaviorTree(doc.Get());

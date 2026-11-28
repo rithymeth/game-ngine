@@ -112,7 +112,10 @@ bool LoadValue(const json& j, const BlackboardAsset& bb, const std::string& key,
 
 bool LoadNode(const json& j, const BlackboardAsset& bb, BtNode& out, const std::string& where, std::string* error) {
     if (!j.is_object()) return Fail(error, where + ": a node is an object");
-    if (!FromName(kNodeNames, j.value("type", std::string()), out.type)) return Fail(error, where + ": unknown node type '" + j.value("type", std::string()) + "'");
+    const auto type = j.find("type");
+    if (type != j.end() && !type->is_string()) return Fail(error, where + ": node type must be a string");
+    const std::string type_name = type == j.end() ? std::string() : type->get<std::string>();
+    if (!FromName(kNodeNames, type_name, out.type)) return Fail(error, where + ": unknown node type '" + type_name + "'");
     const std::string here = where + "/" + std::string(BtNodeTypeName(out.type));
     try {
         out.name = j.value("name", std::string());
@@ -249,7 +252,7 @@ json SaveBehaviorTree(const BehaviorTreeAsset& tree) {
     return {{"version", 1}, {"name", tree.name}, {"blackboard", keys}, {"root", SaveNode(tree.root)}};
 }
 
-bool LoadBehaviorTree(const json& j, BehaviorTreeAsset& out, std::string* error) {
+bool LoadBehaviorTree(const json& j, BehaviorTreeAsset& out, std::string* error) try {
     if (!j.is_object() || !j.contains("root")) return Fail(error, "not a behavior tree (no root)");
     if (j.value("version", 1) > 1) return Fail(error, "made by a newer version");
     BehaviorTreeAsset t;
@@ -268,6 +271,8 @@ bool LoadBehaviorTree(const json& j, BehaviorTreeAsset& out, std::string* error)
     if (!LoadNode(j.at("root"), t.blackboard, t.root, "root", error)) return false;
     out = std::move(t);
     return true;
+} catch (const json::exception& e) {
+    return Fail(error, std::string("behavior tree: ") + e.what());
 }
 
 std::vector<BtProblem> ValidateBehaviorTree(const BehaviorTreeAsset& tree) {
