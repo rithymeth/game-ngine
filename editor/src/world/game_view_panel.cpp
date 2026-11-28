@@ -6,7 +6,18 @@
 
 namespace aether::editor {
 
+void GameViewPanel::SyncSession(const SceneDocument& document) {
+    const u64 session_id = document.PlaySessionId();
+    if (session_id_ == session_id) return;
+    if (running_ && surface != nullptr) surface->Stop();
+    running_ = false;
+    start_failed_ = false;
+    start_error_.clear();
+    session_id_ = session_id;
+}
+
 void GameViewPanel::Draw(SceneDocument& document, f32 frame_dt) {
+    SyncSession(document);
     const PlaySession::State play_state = document.PlayState();
     const bool playing = play_state != PlaySession::State::Editing;
     state_ = State{};
@@ -14,15 +25,6 @@ void GameViewPanel::Draw(SceneDocument& document, f32 frame_dt) {
     state_.paused = play_state == PlaySession::State::Paused;
     state_.simulating = document.IsSimulating();
 
-    const u64 session_id = document.PlaySessionId();
-    if (session_id_ != session_id) {
-        // A hidden Game View can miss the Editing frame between Stop and the next Play.
-        if (running_ && surface != nullptr) surface->Stop();
-        running_ = false;
-        start_failed_ = false;
-        start_error_.clear();
-        session_id_ = session_id;
-    }
     if (playing && !running_ && !start_failed_) {
         if (surface == nullptr) {
             state_.note = "The Game View needs the Vulkan editor: this build has no renderer.";

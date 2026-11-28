@@ -43,6 +43,9 @@ public:
 
     // `frame_dt` is the frame's real time; the game gets the document's play time for it (zero while paused, one frame after Step).
     void Draw(SceneDocument& document, f32 frame_dt);
+    // Run each host frame, including when the panel is hidden, to tear down an ended session.
+    // Synchronizing never starts a game, renders, or consumes a pending Step; Draw handles those.
+    void SyncSession(const SceneDocument& document);
 
     // What the last draw did, for a host or a test without the pixels.
     struct State {

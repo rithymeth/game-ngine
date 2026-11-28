@@ -156,6 +156,33 @@ AETHER_TEST(GameView_StopsWithTheSessionAndStartsAFreshOneNextTime) {
     AETHER_CHECK(panel.LastState().has_picture && game.stops == 1);
 }
 
+AETHER_TEST(GameView_StopsWhileHiddenWithoutDrawing) {
+    HeadlessImGui imgui;
+    SceneDocument document;
+    document.NewScene();
+    FakeGameView game;
+    GameViewPanel panel;
+    panel.surface = &game;
+    const auto draw = [&] { imgui.Frame([&] { panel.Draw(document, 1.0f / 60.0f); }); };
+
+    document.Play();
+    panel.SyncSession(document);
+    AETHER_CHECK(game.starts == 0 && game.frames == 0); // hidden views do not start or render
+    draw();
+    AETHER_CHECK(panel.Running() && game.starts == 1 && game.frames == 1);
+    document.Pause();
+    panel.SyncSession(document);
+    AETHER_CHECK(panel.Running() && game.stops == 0 && game.frames == 1);
+
+    document.Stop(); // the host is drawing another tool
+    panel.SyncSession(document);
+    AETHER_CHECK(!panel.Running() && game.stops == 1 && game.frames == 1);
+    panel.SyncSession(document);
+    AETHER_CHECK(game.stops == 1); // no duplicate teardown on later frames
+    draw();
+    AETHER_CHECK(!panel.LastState().has_picture && game.stops == 1);
+}
+
 AETHER_TEST(GameView_RestartsWhenStopAndPlayHappenWhileItIsHidden) {
     HeadlessImGui imgui;
     SceneDocument document;
