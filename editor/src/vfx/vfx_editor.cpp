@@ -309,9 +309,14 @@ void ParticleEditor::DrawEmitters() {
         doc_.RemoveEmitter(static_cast<usize>(emitter_));
         module_.reset();
     }
-    if (ImGui::ArrowButton("up", ImGuiDir_Up) && emitter_ > 0 && doc_.MoveEmitter(static_cast<usize>(emitter_), static_cast<usize>(emitter_ - 1))) --emitter_;
+    const auto move_selected = [&](i64 next) {
+        if (next < 0 || !doc_.MoveEmitter(static_cast<usize>(emitter_), static_cast<usize>(next))) return;
+        emitter_ = next;
+        if (module_) module_->emitter = static_cast<usize>(next);
+    };
+    if (ImGui::ArrowButton("up", ImGuiDir_Up)) move_selected(emitter_ - 1);
     ImGui::SameLine();
-    if (ImGui::ArrowButton("down", ImGuiDir_Down) && doc_.MoveEmitter(static_cast<usize>(emitter_), static_cast<usize>(emitter_ + 1))) ++emitter_;
+    if (ImGui::ArrowButton("down", ImGuiDir_Down)) move_selected(emitter_ + 1);
     ImGui::EndDisabled();
 }
 

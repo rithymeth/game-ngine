@@ -2,6 +2,7 @@
 #include "vfx/vfx_editor.h"
 
 #include <imgui.h>
+#include <imgui_internal.h>
 
 #include <algorithm>
 #include <cmath>
@@ -223,6 +224,62 @@ AETHER_TEST(VfxEditor_HistoryClearsStaleEmitterAndModuleSelection) {
     editor.SelectModule(first);
     shortcut(ImGuiKey_Y); // no remaining redo; keep the current selection
     CHECK(editor.SelectedModule() == first && editor.SelectedEmitter() == 0);
+}
+
+AETHER_TEST(VfxEditor_ModuleSelectionFollowsMovedEmitter) {
+    HeadlessImGui ui;
+    ParticleSystemDocument doc;
+    CHECK(doc.AddEmitter("Smoke") == 1);
+    ParticleEditor editor(doc);
+    editor.SelectModule({1, VfxStage::Spawn, 0});
+
+    ImGuiWindow* emitters = nullptr;
+    const auto draw = [&] {
+        const ImGuiID id = ImGui::GetID("emitters");
+        const auto* parent = ImGui::GetCurrentWindowRead();
+        editor.Draw();
+        for (auto* child : parent->DC.ChildWindows)
+            if (child->ChildId == id) emitters = child;
+    };
+    ui.Frame(draw);
+    if (!emitters) { CHECK(emitters != nullptr); return; }
+
+    auto& io = ImGui::GetIO();
+    const auto click_arrow = [&](const char* name, int column) {
+        const auto& style = ImGui::GetStyle();
+        const f32 h = ImGui::GetFrameHeight();
+        const ImGuiID id = emitters->GetID(name);
+        const ImVec2 origin = emitters->DC.CursorStartPos;
+        const f32 x = origin.x + h * 0.5f + static_cast<f32>(column) * (h + style.ItemSpacing.x);
+        const f32 end = std::min(emitters->InnerClipRect.Max.y, origin.y + ImGui::GetFrameHeightWithSpacing() * 7.0f);
+        for (f32 y = origin.y; y < end; y += 3.0f) {
+            io.AddMousePosEvent(x, y);
+            ui.Frame(draw);
+            if (ImGui::GetHoveredID() != id) continue;
+            io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+            ui.Frame(draw);
+            io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+            ui.Frame(draw);
+            return true;
+        }
+        return false;
+    };
+
+    CHECK(click_arrow("up", 0));
+    CHECK(doc.EmitterAt(0) != nullptr && doc.EmitterAt(0)->settings.name == "Smoke");
+    CHECK(editor.SelectedEmitter() == 0 && editor.SelectedModule() == ModuleRef{0, VfxStage::Spawn, 0});
+
+    CHECK(click_arrow("down", 1));
+    CHECK(doc.EmitterAt(1) != nullptr && doc.EmitterAt(1)->settings.name == "Smoke");
+    CHECK(editor.SelectedEmitter() == 1 && editor.SelectedModule() == ModuleRef{1, VfxStage::Spawn, 0});
+
+    // Moving once more and deleting must edit Smoke, not the emitter that inherited its old slot.
+    CHECK(click_arrow("up", 0));
+    io.AddKeyEvent(ImGuiKey_Delete, true);
+    ui.Frame(draw);
+    io.AddKeyEvent(ImGuiKey_Delete, false);
+    ui.Frame(draw);
+    CHECK(doc.ModuleCount(0, VfxStage::Spawn) == 0 && doc.ModuleCount(1, VfxStage::Spawn) == 1);
 }
 
 AETHER_TEST(VfxEditor_PreviewAndPanel) {
