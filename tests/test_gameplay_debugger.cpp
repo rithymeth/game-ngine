@@ -47,6 +47,22 @@ public:
         ImGui::End();
         ImGui::Render();
     }
+    std::string CaptureText(const std::function<void()>& body) {
+        std::string rendered;
+        auto& platform = ImGui::GetPlatformIO();
+        platform.Platform_ClipboardUserData = &rendered;
+        platform.Platform_SetClipboardTextFn = [](ImGuiContext*, const char* text) {
+            *static_cast<std::string*>(ImGui::GetPlatformIO().Platform_ClipboardUserData) = text;
+        };
+        Frame([&] {
+            ImGui::LogToClipboard();
+            body();
+            ImGui::LogFinish();
+        });
+        platform.Platform_SetClipboardTextFn = nullptr;
+        platform.Platform_ClipboardUserData = nullptr;
+        return rendered;
+    }
 
 private:
     ImGuiContext* context_ = nullptr;
@@ -143,6 +159,34 @@ AETHER_TEST(GameplayDebugger_FilterAndSelection) {
     CHECK(r.doc.Entities().size() == 1 && r.doc.Entities()[0].entity == r.other && r.doc.TotalEntities() == 1);
 }
 
+AETHER_TEST(GameplayDebugger_FindsNamedEntitiesAndKeepsTheNumericLabel) {
+    Rig r;
+    r.world.AddComponent<EntityName>(r.hero, EntityName{"Training ## Captain"});
+
+    r.doc.SetFilter("## cAPt");
+    r.doc.Rebuild();
+    CHECK(r.doc.Entities().size() == 1);
+    if (!r.doc.Entities().empty()) {
+        const DebugEntityRows& rows = r.doc.Entities().front();
+        CHECK(rows.entity == r.hero);
+        CHECK(rows.label == "Training ## Captain (Entity " + std::to_string(r.hero.index) + ")");
+        CHECK(rows.attributes.size() == 2 && rows.effects.size() == 2 && rows.abilities.size() == 1);
+    }
+
+    r.doc.SetFilter("Entity " + std::to_string(r.hero.index));
+    r.doc.Rebuild();
+    CHECK(r.doc.Entities().size() == 1 && r.doc.Entities().front().entity == r.hero);
+
+    r.doc.SetFilter("");
+    r.doc.Rebuild();
+    CHECK(r.doc.Entities().size() == 2 && r.doc.Entities().back().label == "Entity " + std::to_string(r.other.index));
+
+    HeadlessImGui imgui;
+    GameplayDebuggerPanel panel(r.doc);
+    const std::string rendered = imgui.CaptureText([&] { panel.Draw(); });
+    CHECK(rendered.find("Training ## Captain") != std::string::npos);
+}
+
 AETHER_TEST(GameplayDebugger_ActionsGoThroughTheSystems) {
     Rig r;
     r.attrs.ClearEvents();
@@ -215,23 +259,12 @@ AETHER_TEST(GameplayDebugger_WorkspaceHasTheTool) {
     if (tool < 0) return;
     HeadlessImGui imgui;
     std::string rendered;
-    auto& platform = ImGui::GetPlatformIO();
-    platform.Platform_ClipboardUserData = &rendered;
-    platform.Platform_SetClipboardTextFn = [](ImGuiContext*, const char* text) {
-        *static_cast<std::string*>(ImGui::GetPlatformIO().Platform_ClipboardUserData) = text;
-    };
-    const auto draw = [&] {
-        rendered.clear();
-        imgui.Frame([&] {
-            ImGui::LogToClipboard();
-            ws.DrawTool(static_cast<usize>(tool));
-            ImGui::LogFinish();
-        });
-    };
+    const auto draw = [&] { rendered = imgui.CaptureText([&] { ws.DrawTool(static_cast<usize>(tool)); }); };
     constexpr const char* sample = "Sample data only. No project gameplay world is attached.";
     constexpr const char* attached = "Attached gameplay world.";
     draw();
     CHECK(rendered.find(sample) != std::string::npos);
+    CHECK(rendered.find("Sample Hero") != std::string::npos);
     CHECK(rendered.find("Health") != std::string::npos);
 
     // Pressing Play does not by itself supply the debugger with a running world.

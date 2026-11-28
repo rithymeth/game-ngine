@@ -111,9 +111,9 @@ and call `EndAbility`.
 The **Gameplay Debugger** (Debug tools) shows every entity that has gameplay data: its
 attributes (base, current, bounds, and the modifiers an effect is putting on them), its active
 effects with time left and stacks, its abilities (ready or running) and its tags with counts.
-Type in the filter to narrow it to an entity, attribute, effect, ability or tag. Type a number
-into an attribute's base to set it, press Remove on an effect or Cancel on a running ability,
-or add and remove tags.
+The filter matches entity names and numeric labels, as well as attributes, effects, abilities and tags.
+Type a number into an attribute's base to set it, press Remove on an effect or Cancel on a running
+ability, or add and remove tags.
 
 Check the source label before making changes. In the stock editor, the debugger shows an
 editable sample, even after you press Play. Edits to the sample don't affect your project.

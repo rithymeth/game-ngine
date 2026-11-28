@@ -985,7 +985,7 @@ struct EditorWorkspace::Impl {
         AttributeSystem gameplay_attributes_sys(gameplay_sample);
         EffectSystem gameplay_effects_sys(gameplay_sample, gameplay_attributes_sys, gameplay_effects);
         AbilitySystem gameplay_abilities_sys(gameplay_sample, gameplay_attributes_sys, gameplay_effects_sys, gameplay_abilities, gameplay_effects);
-        const Entity hero = gameplay_sample.CreateEntity(Transform{Vec3(), Quaternion::Identity()});
+        const Entity hero = gameplay_sample.CreateEntity(EntityName{"Sample Hero"}, Transform{Vec3(), Quaternion::Identity()});
         gameplay_attributes_sys.Define(hero, "Health", 100, 0, 100);
         gameplay_attributes_sys.Define(hero, "Mana", 50, 0, 100);
         gameplay_attributes_sys.Define(hero, "Speed", 6);

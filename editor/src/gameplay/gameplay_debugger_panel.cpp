@@ -10,7 +10,7 @@ void GameplayDebuggerPanel::Draw() {
         ImGui::TextDisabled("No world to show: play the game, or open a level.");
         return;
     }
-    if (ImGui::InputTextWithHint("##filter", "Filter: entity, attribute, effect, ability, tag", &filter_)) doc_.SetFilter(filter_);
+    if (ImGui::InputTextWithHint("##filter", "Filter: entity name or ID, attribute, effect, ability, tag", &filter_)) doc_.SetFilter(filter_);
     ImGui::SameLine();
     ImGui::BeginDisabled(doc_.Selected().IsNull() && !selected_only_);
     ImGui::Checkbox("Selected only", &selected_only_);
@@ -21,7 +21,10 @@ void GameplayDebuggerPanel::Draw() {
     const std::vector<DebugEntityRows> entities = doc_.Entities(); // actions below rebuild next frame
     for (const DebugEntityRows& rows : entities) {
         ImGui::PushID(static_cast<int>(rows.entity.index));
-        if (ImGui::CollapsingHeader(rows.label.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+        // Use the unframed text path; a framed header hides literal "##" in authored names.
+        constexpr ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_NoTreePushOnOpen |
+                                             ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_FramePadding;
+        if (ImGui::TreeNodeEx("entity", flags, "%s", rows.label.c_str())) {
             if (!rows.attributes.empty() && ImGui::BeginTable("attrs", 6, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
                 for (const char* h : {"Attribute", "Base", "Current", "Min", "Max", "Modifiers"}) ImGui::TableSetupColumn(h);
                 ImGui::TableHeadersRow();

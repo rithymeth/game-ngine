@@ -1,6 +1,7 @@
 #include "gameplay/gameplay_debugger_document.h"
 
 #include "aether/ecs/component.h"
+#include "aether/scene/components.h"
 
 #include <algorithm>
 #include <cctype>
@@ -53,6 +54,9 @@ void GameplayDebuggerDocument::Rebuild() {
         DebugEntityRows rows;
         rows.entity = e;
         rows.label = "Entity " + std::to_string(e.index);
+        if (const EntityName* name = world_->GetComponent<EntityName>(e); name != nullptr && !name->value.empty()) {
+            rows.label = name->value + " (" + rows.label + ")";
+        }
         const bool entity_matches = !filter.empty() && Has(rows.label, filter);
         const auto keep = [&](const std::string& name) { return filter.empty() || entity_matches || Has(name, filter); };
         if (const AttributeSet* set = world_->GetComponent<AttributeSet>(e)) {
