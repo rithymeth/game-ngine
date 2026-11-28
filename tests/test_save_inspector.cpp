@@ -169,6 +169,40 @@ AETHER_TEST(SaveInspector_TreeIsCapped) {
     CHECK(CountJsonNodes(small, 100) == 5);
 }
 
+AETHER_TEST(SaveInspector_TreeOnlyReportsTruncationWhenNodesWereSkipped) {
+    HeadlessImGui ui;
+    const auto file = Dir("tree_cap_notice") / "slot.asav";
+    SaveInspectorDocument doc;
+    SaveInspectorPanel panel(doc);
+    std::string rendered;
+    auto& platform = ImGui::GetPlatformIO();
+    platform.Platform_ClipboardUserData = &rendered;
+    platform.Platform_SetClipboardTextFn = [](ImGuiContext*, const char* text) {
+        *static_cast<std::string*>(ImGui::GetPlatformIO().Platform_ClipboardUserData) = text;
+    };
+
+    // Root object and its array consume two of the visible node slots.
+    const usize values = SaveInspectorPanel::kMaxTreeNodes - 2;
+    for (bool over : {false, true}) {
+        reflect::Json data = reflect::Json::array();
+        for (usize i = 0; i < values + (over ? 1 : 0); ++i) data.push_back(i);
+        reflect::Json envelope = {{"$type", "aether.save"}, {"format", 1}, {"type", "UnknownTreeFixture"},
+                                  {"data", {{"items", std::move(data)}}}};
+        Spit(file, envelope.dump());
+        if (!doc.Open(file)) { CHECK(false); return; }
+        ui.Frame([&] { panel.Draw(); });
+        ui.Frame([&] {
+            ImGui::LogToClipboard();
+            panel.Draw();
+            ImGui::LogFinish();
+        });
+        const std::string last_visible = "[" + std::to_string(values - 1) + "]: ";
+        const std::string first_hidden = "[" + std::to_string(values) + "]: ";
+        CHECK(rendered.find(last_visible) != std::string::npos && rendered.find(first_hidden) == std::string::npos);
+        CHECK((rendered.find("truncated") != std::string::npos) == over);
+    }
+}
+
 AETHER_TEST(SaveInspector_DeleteRemovesFileAndBackup) {
     const stdfs::path file = MakeBagSave(Dir("delete"));
     stdfs::path backup = file;

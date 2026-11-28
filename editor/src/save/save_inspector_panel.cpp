@@ -71,8 +71,7 @@ std::string Scalar(const Json& v) {
 }
 
 // Draws `value` as a tree; `budget` counts down the nodes left to draw.
-void DrawJsonNode(const std::string& name, const Json& value, usize& budget, usize depth) {
-    if (budget == 0) return;
+void DrawJsonNode(const std::string& name, const Json& value, usize& budget, bool& truncated, usize depth) {
     --budget;
     const std::string label = name.empty() ? std::string("(root)") : name;
     if (value.is_object() || value.is_array()) {
@@ -82,11 +81,15 @@ void DrawJsonNode(const std::string& name, const Json& value, usize& budget, usi
             return;
         }
         if (ImGui::TreeNodeEx(text.c_str(), depth < 2 ? ImGuiTreeNodeFlags_DefaultOpen : 0)) {
-            if (value.is_array()) {
-                usize i = 0;
-                for (const Json& item : value) DrawJsonNode("[" + std::to_string(i++) + "]", item, budget, depth + 1);
-            } else {
-                for (auto it = value.begin(); it != value.end(); ++it) DrawJsonNode(it.key(), it.value(), budget, depth + 1);
+            const bool is_array = value.is_array();
+            usize i = 0;
+            for (auto it = value.begin(); it != value.end(); ++it) {
+                if (budget == 0) {
+                    truncated = true;
+                    break; // Don't visit or format children the tree cannot show.
+                }
+                DrawJsonNode(is_array ? "[" + std::to_string(i++) + "]" : it.key(),
+                             it.value(), budget, truncated, depth + 1);
             }
             ImGui::TreePop();
         }
@@ -285,8 +288,9 @@ void SaveInspectorPanel::DrawContents() {
             ImGui::EndDisabled();
         } else {
             usize budget = kMaxTreeNodes;
-            DrawJsonNode("data", doc_.Info().data, budget, 0);
-            if (budget == 0) ImGui::TextDisabled("... truncated (more than %zu nodes): see Raw JSON", kMaxTreeNodes);
+            bool truncated = false;
+            DrawJsonNode("data", doc_.Info().data, budget, truncated, 0);
+            if (truncated) ImGui::TextDisabled("... truncated (more than %zu nodes): see Raw JSON", kMaxTreeNodes);
         }
         ImGui::EndTabItem();
     }
