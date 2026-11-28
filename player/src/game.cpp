@@ -16,6 +16,10 @@
 #include "aether/gameplay/gameplay_kit.h"
 #if AETHER_KIT_INVENTORY
 #include "aether/inventory/inventory.h"
+#include "aether/inventory/inventory_library.h"
+#if AETHER_GAME_SCRIPTING
+#include "aether/script/inventory_api.h"
+#endif
 #endif
 #include "aether/loc/localized_path.h"
 #include "aether/reflection/serialize.h"
@@ -889,14 +893,20 @@ void Game::StartRuntime() {
     runtime_->attributes = std::make_unique<gas::AttributeSystem>(*world_); // attributes of this scene's entities
     runtime_->effects = std::make_unique<gas::EffectSystem>(*world_, *runtime_->attributes, effects_);
     runtime_->abilities = std::make_unique<gas::AbilitySystem>(*world_, *runtime_->attributes, *runtime_->effects, abilities_, effects_);
+    CreateKitRuntime();
     // Both the VM and these systems are owned by the same scene runtime.
     runtime_->blueprints->VM().SetStaticNativeInvoker(
-        [attrs = runtime_->attributes.get(), effects = runtime_->effects.get(), abilities = runtime_->abilities.get()]
-        (const reflect::FunctionInfo& function, std::span<reflect::Any> args, reflect::Any* result) {
+        [attrs = runtime_->attributes.get(), effects = runtime_->effects.get(), abilities = runtime_->abilities.get()
+#if AETHER_KIT_INVENTORY
+         , inventory = runtime_->kit_runtimes.Get<inv::InventorySystem>("Inventory", "InventorySystem")
+#endif
+        ](const reflect::FunctionInfo& function, std::span<reflect::Any> args, reflect::Any* result) {
             gas::GameplayLibraryScope scope(*attrs, *effects, *abilities);
+#if AETHER_KIT_INVENTORY
+            inv::InventoryLibraryScope inventory_scope(inventory);
+#endif
             return function.Invoke(nullptr, args, result);
         });
-    CreateKitRuntime();
     runtime_->sequences = std::make_unique<seq::SequenceSystem>(
         *world_, guids_, [this](const std::string& path) { return FindSequence(path); }, lifecycle_.get());
     runtime_->sequences->SetSpawner([this](const seq::Track&, Entity parent, const seq::SpawnKey& key) -> Entity {
@@ -1043,6 +1053,10 @@ void Game::StartRuntime() {
         if (kit_name == "Gameplay") {
             script::InstallGameplayApi(runtime_->host, script::GameplayApiSystems{.attributes = runtime_->attributes.get(),
                 .effects = runtime_->effects.get(), .abilities = runtime_->abilities.get()});
+#if AETHER_KIT_INVENTORY
+        } else if (kit_name == "Inventory") {
+            script::InstallInventoryApi(runtime_->host, runtime_->kit_runtimes.Get<inv::InventorySystem>("Inventory", "InventorySystem"));
+#endif
         } else {
             runtime_->scripts->InstallKitApi(kit_name);
         }

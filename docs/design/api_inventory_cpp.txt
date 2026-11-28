@@ -4264,6 +4264,7 @@
   std::unique_ptr<kit::IKit>MakeInventoryKit(ItemLibrary*items=nullptr,const gas::EffectLibrary*effects=nullptr)
   std::vector<ItemAssetDiagnostic>LoadItemAssets(const std::vector<std::string>&paths,std::function<bool(const std::string&,std::vector<u8>&,std::string*)>read_content,const gas::EffectLibrary&effects,ItemLibrary&items)
 [inventory/include/aether/inventory/inventory_library.h] experimental
+  type class InventoryLibraryScope
   type struct Items
   ),AETHER_METHOD(AddItem,Fn_BlueprintCallable,
   ),AETHER_METHOD(EquipItem,Fn_BlueprintCallable,
@@ -4279,6 +4280,10 @@
   ),AETHER_METHOD(UnequipItem,Fn_BlueprintCallable,
   ),AETHER_METHOD(UseItem,Fn_BlueprintCallable,
   AETHER_REFLECT(aether::inv::Items,1,AETHER_METHOD(ConfigureInventory,Fn_BlueprintCallable,
+  InventoryLibraryScope&operator=(const InventoryLibraryScope&)=delete
+  InventoryLibraryScope(const InventoryLibraryScope&)=delete
+  public:explicit InventoryLibraryScope(InventorySystem*system)
+  static InventorySystem*Current()
   static bool ConfigureInventory(const Entity&owner,i32 capacity,f32 max_weight)
   static bool EquipItem(const Entity&owner,i32 slot)
   static bool HasItem(const Entity&owner,const std::string&item,i32 count)
@@ -4293,6 +4298,7 @@
   static i32 GetSlotCount(const Entity&owner,i32 slot)
   static std::string GetEquippedItem(const Entity&owner,const std::string&equip_slot)
   static std::string GetSlotItem(const Entity&owner,i32 slot)
+  ~InventoryLibraryScope()
 [inventory/include/aether/inventory/inventory_system.h] experimental
   type class InventorySystem
   type enum class Kind
@@ -6191,6 +6197,7 @@
   void InstallInteractionApi(LuauHost&host)
 [scripting/include/aether/script/inventory_api.h] experimental
   void InstallInventoryApi(LuauHost&host)
+  void InstallInventoryApi(LuauHost&host,inv::InventorySystem*system)
 [scripting/include/aether/script/loc_api.h] experimental
   void InstallLocApi(LuauHost&host)
 [scripting/include/aether/script/loot_api.h] experimental

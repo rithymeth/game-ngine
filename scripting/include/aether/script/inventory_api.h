@@ -3,7 +3,7 @@
 #include "aether/script/luau_host.h"
 
 // Luau's `Inventory` table (Phase 30 step 7a): the same
-// functions as the `Items` Blueprint library, on the active InventorySystem. Present only
+// functions as the `Items` Blueprint library, bound to an owning InventorySystem. Present only
 // when the inventory kit is built (otherwise the table doesn't exist). Slots count from 0.
 //
 //   Inventory.Configure (owner, capacity, maxWeight)            -> boolean
@@ -22,8 +22,11 @@
 // OnItemUnequipped (item, slot) and OnItemUsed (item). A call with a missing or wrong-typed
 // argument raises a script error; without an active system the functions return 0 / false / "".
 
+namespace aether::inv { class InventorySystem; }
+
 namespace aether::script {
 
-void InstallInventoryApi(LuauHost& host); // does nothing when the kit isn't built
+void InstallInventoryApi(LuauHost& host); // standalone active-system fallback
+void InstallInventoryApi(LuauHost& host, inv::InventorySystem* system); // bound, even when null
 
 } // namespace aether::script

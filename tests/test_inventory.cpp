@@ -3,6 +3,8 @@
 #ifdef AETHER_TEST_HAS_INVENTORY
 
 #include "aether/assets/asset_guid.h"
+#include "aether/blueprint/compiler.h"
+#include "aether/blueprint/system.h"
 #include "aether/ecs/world.h"
 #include "aether/inventory/inventory_library.h"
 #include "aether/inventory/inventory_system.h"
@@ -21,6 +23,7 @@
 
 #include <cmath>
 #include <limits>
+#include <memory>
 #include <tuple>
 
 // Phase 30 step 7a (§30.8): item definitions, inventories, equipment and use.
@@ -456,6 +459,69 @@ return Hero
     game.Tick(0.016f);
     CHECK(game.ScriptErrors().empty());
     CHECK(Near(attrs->Get(e, "Added"), 2) && Near(attrs->Get(e, "Used"), 1)); // the script heard OnItemAdded and OnItemUsed
+}
+
+AETHER_TEST(Inventory_PreviewScriptsAndBlueprintsUseTheirOwnWorld) {
+    const auto script_id = assets::NewAssetGuid();
+    const auto blueprint_id = assets::NewAssetGuid();
+    bp::Blueprint blueprint;
+    blueprint.graphs.emplace_back().name = "EventGraph";
+    bp::GraphBuilder graph(blueprint.graphs.back());
+    const auto begin = graph.Add("Event.BeginPlay");
+    const auto self = graph.Add("Entity.Self");
+    const auto add = graph.Add("Call.Native:Items.AddItem");
+    graph.Connect(begin, "then", add, "exec").Connect(self, "self", add, "owner");
+    graph.Default(add, "item", "Potion").Default(add, "count", 2);
+    const auto file = MakePackage("aether_inventory_two_preview_games", {
+        {"Blueprints/Pack.abp", "Blueprint", bp::BlueprintToJson(blueprint).dump(), blueprint_id},
+        {"Scripts/Pack.luau", "Script", R"(
+local Pack = {}
+function Pack:OnStart() Inventory.Add(self.entity, 'Potion', 1) end
+function Pack:OnUpdate() Inventory.Add(self.entity, 'Potion', 1) end
+function Pack:OnItemAdded(item, count)
+    if item == 'Potion' then Attributes.AddBase(self.entity, 'Received', count) end
+end
+return Pack
+)", script_id},
+    });
+    player::GamePackage package;
+    std::string error;
+    if (!package.Mount(file.string(), 0, &error) || !package.LoadManifest(&error)) { CHECK(false); return; }
+    player::Game first(package);
+    auto second = std::make_unique<player::Game>(package);
+    if (!first.LoadStartupScene(&error)) { CHECK(false); return; }
+    const auto* inventory_a = InventorySystem::Active();
+    if (!second->LoadStartupScene(&error)) { CHECK(false); return; }
+    const auto* inventory_b = InventorySystem::Active();
+    if (!inventory_a || !inventory_b || inventory_a == inventory_b) { CHECK(false); return; }
+    const auto make_actor = [&](player::Game& game) {
+        ScriptComponent script;
+        script.script.guid = script_id;
+        bp::BlueprintInstance instance;
+        instance.blueprint.guid = blueprint_id;
+        gas::AttributeSet attrs;
+        attrs.Define("Received", 0);
+        return game.GetWorld().CreateEntity(IdComponent{NewEntityGuid()}, script, instance, attrs);
+    };
+    const Entity a = make_actor(first), b = make_actor(*second);
+    CHECK(a == b);
+    const auto received = [&](player::Game& game, Entity entity) {
+        return game.GetWorld().GetComponent<gas::AttributeSet>(entity)->Get("Received");
+    };
+
+    first.BeginPlay(); // both APIs must still use A, though B loaded last
+    CHECK(first.ScriptErrors().empty() && first.BlueprintErrors().empty());
+    CHECK(inventory_a->Count(a, "Potion") == 3 && inventory_b->Count(b, "Potion") == 0);
+    CHECK(inventory_a->Events().size() == 2 && inventory_b->Events().empty());
+    first.Tick(1.0f / 60.0f);
+    CHECK(inventory_a->Count(a, "Potion") == 4 && inventory_b->Count(b, "Potion") == 0);
+    CHECK(received(first, a) >= 3 && received(*second, b) == 0 && inventory_b->Events().empty());
+
+    second.reset();
+    const auto previous_events = received(first, a);
+    first.Tick(1.0f / 60.0f);
+    CHECK(inventory_a->Count(a, "Potion") == 5 && received(first, a) > previous_events);
+    CHECK(first.ScriptErrors().empty() && first.BlueprintErrors().empty());
 }
 
 AETHER_TEST(Inventory_LuauRejectsUnrepresentableCountsAndSlots) {
