@@ -569,7 +569,10 @@ AETHER_TEST(AI_BtComponentAndWorld) {
         if (i == 0) before = bt.InstanceOf(s) != nullptr ? 1 : 0;
     }
     CHECK(before == 1);
-    CHECK(Near(static_cast<f32>(bt.InstanceOf(s)->Time()), 2.0f, 0.11f)); // time still adds up
+    // The first frame ticks immediately, then the interval clock advances only on ticks.
+    CHECK(Near(static_cast<f32>(bt.InstanceOf(s)->Time()), 1.6f, 1e-5f));
+    bt.Update(0.1f);
+    CHECK(Near(static_cast<f32>(bt.InstanceOf(s)->Time()), 2.1f, 1e-5f));
     // Not auto-starting, a missing tree, and removal.
     BehaviorTreeComponent manual;
     manual.tree = "Guard";
@@ -586,6 +589,40 @@ AETHER_TEST(AI_BtComponentAndWorld) {
     world.DestroyEntity(e);
     bt.Update(0.1f);
     CHECK(bt.InstanceOf(e) == nullptr);
+}
+
+AETHER_TEST(AI_BtImmediateStartAndRestartUseOnlyElapsedTime) {
+    Library lib;
+    BtNode task = N(BtNodeType::RunLuau);
+    task.event = "Tick";
+    lib.trees["Timed"] = Tree(std::move(task));
+    World world;
+    BehaviorTreeWorld bt(world, lib.Lookup());
+    struct Call {
+        f32 dt;
+        bool first;
+    };
+    std::vector<Call> calls;
+    bt.hooks.run_luau = [&](Entity, const std::string&, f32 dt, bool first) {
+        calls.push_back({dt, first});
+        return BtStatus::Running;
+    };
+    BehaviorTreeComponent component;
+    component.tree = "Timed";
+    component.tick_interval = 0.5f;
+    const Entity actor = world.CreateEntity(component);
+    bt.Update(0.125f);
+    CHECK(calls.size() == 1 && calls.back().first && Near(calls.back().dt, 0.125f, 1e-6f));
+
+    for (int i = 0; i < 3; ++i) bt.Update(0.125f);
+    CHECK(calls.size() == 1);
+    bt.Update(0.125f);
+    CHECK(calls.size() == 2 && !calls.back().first && Near(calls.back().dt, 0.5f, 1e-6f));
+
+    bt.Update(0.125f); // accumulated on the old instance
+    world.GetComponent<BehaviorTreeComponent>(actor)->Restart();
+    bt.Update(0.125f);
+    CHECK(calls.size() == 3 && calls.back().first && Near(calls.back().dt, 0.125f, 1e-6f));
 }
 
 AETHER_TEST(AI_BtMoveToWithAgents) {

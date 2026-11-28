@@ -110,18 +110,21 @@ void BehaviorTreeWorld::Update(f32 dt) {
             if (live.asset == nullptr) Report("tree:" + c.tree, "behavior tree '" + c.tree + "' couldn't be found");
             else c.Board().Adopt(live.asset->blackboard);
         }
+        bool started = false;
         for (const BehaviorTreeCommand& cmd : c.commands) {
             if (cmd.kind == BehaviorTreeCommand::Kind::Stop || cmd.kind == BehaviorTreeCommand::Kind::Restart) StopLive(live, c);
             if ((cmd.kind == BehaviorTreeCommand::Kind::Start || cmd.kind == BehaviorTreeCommand::Kind::Restart) && !live.instance && live.asset != nullptr) {
                 live.instance = std::make_unique<BehaviorTreeInstance>(*live.asset, static_cast<u64>(e.index) + 1);
-                live.accumulated = c.tick_interval; // tick at once
+                live.accumulated = 0.0f;
+                started = true;
                 c.running = true;
             }
         }
         c.commands.clear();
         if (!live.instance) continue;
         live.accumulated += dt;
-        if (live.accumulated + 1e-6f < c.tick_interval) continue;
+        // Start immediately without charging an interval that has not elapsed.
+        if (!started && live.accumulated + 1e-6f < c.tick_interval) continue;
         const f32 step = c.tick_interval > 0.0f ? live.accumulated : dt;
         live.accumulated = 0.0f;
         BtContext ctx{&world_, e, &c.Board(), &hooks};
