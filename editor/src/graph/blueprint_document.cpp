@@ -124,11 +124,11 @@ bool BlueprintDocument::Undo() {
     return true;
 }
 
-void BlueprintDocument::CancelEdit() {
-    if (undo_.empty()) return;
-    Snapshot snap = std::move(undo_.back());
-    undo_.pop_back();
-    Restore(snap.state);
+bool BlueprintDocument::TryEdit(const std::string& label, const std::function<bool(bp::Blueprint&)>& change) {
+    bp::Blueprint candidate = blueprint_;
+    if (!change(candidate)) return false;
+    Edit(label, [&](bp::Blueprint& b) { b = std::move(candidate); });
+    return true;
 }
 
 bool BlueprintDocument::Redo() {
@@ -367,7 +367,7 @@ std::vector<NodeId> BlueprintDocument::PasteNodes(const std::string& graph, cons
     const json clip = json::parse(text, nullptr, false);
     if (!clip.is_object() || !clip.contains("aether.nodes") || !clip.value("nodes", json()).is_array()) return {};
     std::vector<NodeId> added;
-    Edit("Paste", [&](bp::Blueprint& b) {
+    TryEdit("Paste", [&](bp::Blueprint& b) {
         Graph& g = *b.FindGraph(graph);
         std::map<NodeId, NodeId> ids;
         NodeId next = g.NextId();
@@ -396,8 +396,8 @@ std::vector<NodeId> BlueprintDocument::PasteNodes(const std::string& graph, cons
             if (a == ids.end() || c == ids.end()) continue;
             g.links.push_back({{a->second, from[1].get<std::string>()}, {c->second, to[1].get<std::string>()}});
         }
+        return !added.empty();
     });
-    if (added.empty()) CancelEdit(); // nothing pasted: don't leave an empty undo step
     return added;
 }
 

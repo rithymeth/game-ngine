@@ -565,15 +565,22 @@ void BlueprintEditor::HandleGraphResult(const std::string& name, const GraphView
         std::vector<std::string> errors;
         const bool only_moves = r.moved.size() + r.comments_changed.size() > 0 && !r.connect && !r.disconnect &&
                                 r.deleted.empty() && r.deleted_comment < 0;
-        doc_.Edit(only_moves ? "Move" : r.connect ? "Connect" : r.disconnect ? "Break link" : "Delete",
-                  [&](bp::Blueprint& b) { if (bp::Graph* g = b.FindGraph(name)) errors = ApplyGraphEdits(b, *g, r); });
-        if (!errors.empty()) {
-            status_ = errors.front();
-            if (r.connect && !r.disconnect && r.moved.empty() && r.deleted.empty() && r.comments_changed.empty() &&
-                r.deleted_comment < 0) {
-                doc_.CancelEdit(); // a refused link changed nothing: drop its undo step
+        const bool only_connect = r.connect && !r.disconnect && r.moved.empty() && r.deleted.empty() &&
+                                  r.comments_changed.empty() && r.deleted_comment < 0;
+        const auto apply = [&](bp::Blueprint& b) {
+            if (bp::Graph* g = b.FindGraph(name)) {
+                errors = ApplyGraphEdits(b, *g, r);
+                return errors.empty();
             }
+            return false;
+        };
+        if (only_connect) {
+            doc_.TryEdit("Connect", apply);
+        } else {
+            doc_.Edit(only_moves ? "Move" : r.connect ? "Connect" : r.disconnect ? "Break link" : "Delete",
+                      [&](bp::Blueprint& b) { apply(b); });
         }
+        if (!errors.empty()) status_ = errors.front();
         ForgetMissing();
     }
     if (r.open_palette) OpenPalette(r.palette_x, r.palette_y, r.palette_from_pin ? &r.palette_from : nullptr);

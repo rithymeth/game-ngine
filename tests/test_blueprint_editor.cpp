@@ -174,6 +174,55 @@ AETHER_TEST(BlueprintDocument_FailedSavePreservesExistingGraphs) {
 }
 #endif
 
+AETHER_TEST(BlueprintEditor_RefusedEditsPreserveHistoryAndCompileState) {
+    constexpr auto empty_nodes = R"({"aether.nodes":1,"nodes":[],"links":[]})";
+    bp::NodeId begin, branch, get, print;
+    BlueprintDocument doc(Door(begin, branch, get, print));
+    AETHER_CHECK(doc.Compile().Ok());
+    const auto clean_graph = bp::BlueprintToJson(doc.Get());
+
+    HeadlessImGui ui;
+    BlueprintEditor editor(doc);
+    float x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+    bool pins = false;
+    const auto frame = [&] {
+        ui.Frame([&] {
+            editor.Draw();
+            const auto* graph = doc.Get().FindGraph("EventGraph");
+            if (graph == nullptr) return;
+            const auto model = BuildBlueprintView(doc.Get(), *graph);
+            const auto& view = editor.ViewState("EventGraph");
+            pins = PinScreenPosition(model, view, {get, "value", true}, x0, y0) &&
+                   PinScreenPosition(model, view, {print, "exec", false}, x1, y1);
+        });
+    };
+    frame();
+    frame();
+    const auto drag_invalid = [&] {
+        if (!pins) { AETHER_CHECK(pins); return; }
+        auto& io = ImGui::GetIO();
+        io.AddMousePosEvent(x0, y0);
+        frame();
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+        frame();
+        io.AddMousePosEvent(x1, y1);
+        frame();
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+        frame();
+        AETHER_CHECK(editor.Status().find("can't connect") != std::string::npos);
+    };
+    drag_invalid();
+    AETHER_CHECK(!doc.Dirty() && !doc.CanUndo() && bp::BlueprintToJson(doc.Get()) == clean_graph);
+    AETHER_CHECK(doc.CompileStatus() == BlueprintDocument::Status::UpToDate);
+
+    AETHER_CHECK(doc.AddVariable() == "NewVar" && doc.Undo() && doc.CanRedo());
+    const auto before_refusal = bp::BlueprintToJson(doc.Get());
+    AETHER_CHECK(doc.PasteNodes("EventGraph", empty_nodes, 0, 0).empty() && doc.CanRedo());
+    drag_invalid();
+    AETHER_CHECK(bp::BlueprintToJson(doc.Get()) == before_refusal && !doc.CanUndo() && doc.CanRedo());
+    AETHER_CHECK(doc.Redo() && doc.Get().FindVariable("NewVar") != nullptr);
+}
+
 AETHER_TEST(BlueprintDocument_RenamesAndRemovesFollowReferences) {
     bp::NodeId begin, branch, get, print;
     BlueprintDocument doc(Door(begin, branch, get, print));

@@ -37,10 +37,9 @@ public:
     // being typed in) share one undo step.
     void Edit(const std::string& label, const std::function<void(bp::Blueprint&)>& change,
               const std::string& merge_key = {});
+    // Commit only accepted edits; a refusal leaves the graph and history untouched.
+    bool TryEdit(const std::string& label, const std::function<bool(bp::Blueprint&)>& change);
     bool Undo();
-    // Reverts the last Edit without a redo step (an edit that turned out
-    // to change nothing).
-    void CancelEdit();
     bool Redo();
     bool CanUndo() const { return !undo_.empty(); }
     bool CanRedo() const { return !redo_.empty(); }
