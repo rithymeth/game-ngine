@@ -1576,6 +1576,29 @@ AETHER_TEST(Openers_AuthoredTilemapWorksInAnIndependentStrictShippingPackage) {
     painted.SetSolid(3, true);
     if (!painted.Save(&error)) { CHECK(false); return; }
 
+    // Remove only the texture source; its metadata still names the same GUID.
+    {
+        SceneDocument drop;
+        const Entity keep_selected = drop.CreateEntity("Keep selected");
+        drop.CreateEntity("Redo candidate");
+        CHECK(drop.Undo());
+        drop.SetSelection({keep_selected});
+        const auto entities = drop.Entities();
+        const auto texture = paths.content / "Ground.png";
+        const auto held = paths.root.parent_path() / "Held Ground.png";
+        std::error_code move_error;
+        stdfs::rename(texture, held, move_error);
+        if (move_error) { CHECK(false); return; }
+        bool missing_placed = true;
+        const auto problem = PlaceContentAsset(drop, paths.content, "Ground.atilemap", Vec3{}, &missing_placed);
+        CHECK(!missing_placed && problem.find("Ground.atileset") != std::string::npos &&
+              problem.find("missing texture") != std::string::npos && problem.find("Ground.png") != std::string::npos);
+        CHECK(drop.Entities() == entities && drop.Selection() == std::vector<Entity>{keep_selected});
+        CHECK(drop.CanUndo() && drop.CanRedo());
+        stdfs::rename(held, texture, move_error);
+        if (move_error) { CHECK(false); return; }
+    }
+
     SceneDocument scene;
     scene.Commands().Clear();
     bool placed = true;
