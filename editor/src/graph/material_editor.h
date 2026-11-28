@@ -81,6 +81,8 @@ private:
     void ForgetMissing();
 
     MaterialDocument& doc_;
+    u64 seen_load_revision_;
+    u32 palette_popup_id_ = 0;
     Item selected_;
     std::string name_edit_;
     GraphViewState view_;

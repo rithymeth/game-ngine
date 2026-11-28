@@ -327,6 +327,43 @@ AETHER_TEST(MaterialEditor_PaletteSearchFitsTheDraggedPin) {
     AETHER_CHECK(!has(feeds, "Input.TexCoord") && !has(feeds, "Param.Texture:Albedo"));
 }
 
+AETHER_TEST(MaterialEditor_LoadingAnAssetResetsGraphInteraction) {
+    namespace fs = std::filesystem;
+    const auto dir = fs::temp_directory_path() / "aether_material_switch";
+    fs::create_directories(dir);
+    mat::Material next = Lit();
+    next.two_sided = true;
+    AETHER_CHECK(mat::SaveMaterial(next, dir / "Second.amat"));
+
+    HeadlessImGui ui;
+    MaterialDocument doc(Lit());
+    MaterialEditor editor(doc);
+    const auto frame = [&] { ui.Frame([&] { editor.Draw(); }); };
+    frame();
+    editor.FocusNode(4);
+    const GraphPinRef from{4, "result", true};
+    editor.OpenPalette(100, 100, &from);
+    frame();
+    const auto popup_open = [] {
+        return ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+    };
+    AETHER_CHECK(editor.Selected().node == 4 && editor.PaletteOpen() && popup_open());
+
+    std::string error;
+    AETHER_CHECK(!doc.Load(dir / "Missing.amat", &error));
+    frame();
+    AETHER_CHECK(editor.Selected().node == 4 && editor.PaletteOpen() && popup_open());
+
+    editor.View().dragging_link = true;
+    editor.View().link_from = from;
+    AETHER_CHECK(doc.Load(dir / "Second.amat") && doc.Get().two_sided && doc.Get().Find(4) != nullptr);
+    frame();
+    AETHER_CHECK(editor.Selected().kind == MaterialEditor::ItemKind::None && editor.View().selection.empty());
+    AETHER_CHECK(!editor.PaletteOpen() && !popup_open() && !editor.View().dragging_link);
+    AETHER_CHECK(editor.PlaceFromPalette("Input.Time") == 0 && !doc.Dirty());
+    fs::remove_all(dir);
+}
+
 AETHER_TEST(MaterialEditor_PanelsDrawAndEdit) {
     HeadlessImGui imgui;
     MaterialDocument doc(Lit());

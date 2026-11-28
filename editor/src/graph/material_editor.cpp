@@ -73,10 +73,25 @@ bool DragVec(const char* label, Vec4& v, u32 n, float speed = 0.01f) {
 
 } // namespace
 
-MaterialEditor::MaterialEditor(MaterialDocument& document) : doc_(document) { view_.request_fit = true; }
+MaterialEditor::MaterialEditor(MaterialDocument& document) : doc_(document), seen_load_revision_(document.LastLoadRevision()) { view_.request_fit = true; }
 
 void MaterialEditor::Draw() {
     ImGui::PushID(this);
+    if (seen_load_revision_ != doc_.LastLoadRevision()) {
+        seen_load_revision_ = doc_.LastLoadRevision();
+        Select({});
+        view_ = {};
+        view_.request_fit = true;
+        palette_ = {};
+        status_.clear();
+        ImGuiContext& ui = *ImGui::GetCurrentContext();
+        for (int i = 0; palette_popup_id_ != 0 && i < ui.OpenPopupStack.Size; ++i) {
+            if (ui.OpenPopupStack[i].PopupId != palette_popup_id_) continue;
+            ImGui::ClosePopupToLevel(i, false);
+            break;
+        }
+        palette_popup_id_ = 0;
+    }
     HandleKeys();
     DrawToolbar();
     const ImVec2 avail = ImGui::GetContentRegionAvail();
@@ -287,7 +302,8 @@ void MaterialEditor::DrawPalette() {
     if (!palette_.open) return;
     if (palette_.needs_popup) {
         ImGui::SetNextWindowPos(ImVec2(view_.CanvasToScreenX(palette_.x), view_.CanvasToScreenY(palette_.y)), ImGuiCond_Always);
-        ImGui::OpenPopup("##material_palette");
+        palette_popup_id_ = ImGui::GetID("##material_palette");
+        ImGui::OpenPopup(palette_popup_id_);
         palette_.needs_popup = false;
     }
     ImGui::SetNextWindowSize(ImVec2(320, 380), ImGuiCond_Appearing);

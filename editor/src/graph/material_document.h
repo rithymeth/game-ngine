@@ -47,6 +47,7 @@ public:
     std::string UndoLabel() const { return undo_.empty() ? std::string() : undo_.back().label; }
     std::string RedoLabel() const { return redo_.empty() ? std::string() : redo_.back().label; }
     u64 Revision() const { return revision_; }
+    u64 LastLoadRevision() const { return last_load_revision_; }
 
     // The analysis and shader for the current graph (cached per revision).
     const mat::GeneratedMaterial& Generated() const;
@@ -89,6 +90,7 @@ private:
     bool dirty_ = false;
     std::vector<Snapshot> undo_, redo_;
     u64 revision_ = 0;
+    u64 last_load_revision_ = 0;
     mutable u64 generated_revision_ = ~0ull;
     mutable mat::GeneratedMaterial generated_;
 };

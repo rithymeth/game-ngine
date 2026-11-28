@@ -38,6 +38,7 @@ bool MaterialDocument::Load(const std::filesystem::path& path, std::string* erro
     undo_.clear();
     redo_.clear();
     Changed();
+    last_load_revision_ = revision_;
     return true;
 }
 
