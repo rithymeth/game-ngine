@@ -794,6 +794,65 @@ AETHER_TEST(GameView_LiveGameplaySourceTracksTheCurrentSession) {
     document.Stop();
 }
 
+AETHER_TEST(PreviewPause_SceneViewTicksIndependentlyOfPictureThrottle) {
+    auto device = TryDevice();
+    if (!device || !player::Game::HasScripting()) {
+        std::printf("    (requires Vulkan and Luau)\n");
+        return;
+    }
+    Context imgui;
+    const auto project = MakeProject("SceneViewThrottleClock", "blank");
+    const auto content = project.parent_path() / "Content";
+    const char* script_path = "Scripts/IntegrateTime.luau";
+    stdfs::create_directories(content / "Scripts");
+    std::ofstream(content / script_path) << R"(
+local Clock = {}
+function Clock:OnUpdate(dt)
+    local transform = self.entity:Get("Transform")
+    transform.position = transform.position + vector.create(dt, 0, 0)
+end
+return Clock
+)";
+    assets::AssetDatabase database(content);
+    database.Scan();
+    const auto* script = database.FindByPath(script_path);
+    if (!script) { AETHER_CHECK(false); return; }
+    ScenePanel scene(content);
+    if (!scene.OpenScene("Scenes/Main.ascene", true)) { AETHER_CHECK(false); return; }
+    auto& document = scene.Document();
+    const Entity actor = document.CreateEntity("Simulation clock");
+    const EntityGuid guid = document.GetWorld().GetComponent<IdComponent>(actor)->guid;
+    ScriptComponent component;
+    component.script.guid = script->guid;
+    document.GetWorld().AddComponent(actor, component);
+    if (!document.Save()) { AETHER_CHECK(false); return; }
+
+    LiveSceneShading shading(*device, scene, [&] { return project; });
+    SceneViewCamera camera;
+    constexpr f32 dt = 1.0f / 60.0f;
+    const auto draw = [&] { return shading.Advance(document, camera, 96, 64, SceneViewMode::Lit, dt); };
+    const auto position_is = [&](f32 expected) {
+        Vec3 position;
+        return shading.Viewport().PositionOf(guid, position) && std::abs(position.x - expected) < 1e-3f;
+    };
+    document.Play();
+    for (int frame = 0; frame < 120; ++frame) {
+        if (!draw()) { AETHER_CHECK(false); return; }
+    }
+    AETHER_CHECK(shading.Viewport().FrameCount() == 60);
+    AETHER_CHECK(position_is(2.0f)); // 120 simulation ticks at 60 Hz, but only 60 pictures
+
+    document.Pause();
+    AETHER_CHECK(draw() && position_is(2.0f));
+    const u64 paused_picture = shading.Viewport().FrameCount();
+    document.Step();
+    AETHER_CHECK(draw() && shading.Viewport().FrameCount() == paused_picture); // picture deferred
+    AETHER_CHECK(position_is(2.0f + dt)); // Step is not deferred
+    AETHER_CHECK(draw() && shading.Viewport().FrameCount() == paused_picture + 1);
+    AETHER_CHECK(position_is(2.0f + dt)); // a new picture, but no second Step
+    document.Stop();
+}
+
 AETHER_TEST(PreviewPause_RedrawsWithoutRunningUpdateAndStepsOnce) {
     std::unique_ptr<gfx::rhi::IDevice> device = TryDevice();
     if (!device) {

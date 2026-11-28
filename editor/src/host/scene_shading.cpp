@@ -135,17 +135,20 @@ bool LiveSceneShading::Advance(SceneDocument& document, const SceneViewCamera& c
         wanted_height_ = want_height;
         size_still_ = 0.0f;
     }
+    const bool editing = document.PlayState() == PlaySession::State::Editing;
+    if (!editing) {
+        // Play and single-step follow the host clock, not the capped picture rate.
+        const f32 play_dt = document.PlayDelta(dt, PlaySession::StepTarget::SceneView);
+        if (play_dt > 0.0f) viewport_.Advance(play_dt);
+    }
     since_frame_ += dt;
     if (since_frame_ < 1.0f / std::max(max_fps, 1.0f)) return texture_.Valid();
     since_frame_ = 0.0f;
     const bool ortho = camera.projection == SceneViewProjection::Orthographic;
-    // A normal play frame or Step advances gameplay. A paused redraw can move the editor camera without running Update.
-    // Keep the existing editing preview path, including its zero-time updates.
-    const f32 play_dt = document.PlayDelta(dt, PlaySession::StepTarget::SceneView);
-    const auto frame_mode = document.PlayState() == PlaySession::State::Paused && !(play_dt > 0.0f)
-                                ? LiveViewport::FrameMode::DrawOnly
-                                : LiveViewport::FrameMode::Advance;
-    if (!viewport_.Frame(play_dt, camera.Eye(), camera.Rotation(), camera.fov_degrees,
+    // Preserve zero-time updates in the authored editing preview. A play or
+    // paused picture only draws: any gameplay update was already run above.
+    const auto frame_mode = editing ? LiveViewport::FrameMode::Advance : LiveViewport::FrameMode::DrawOnly;
+    if (!viewport_.Frame(0.0f, camera.Eye(), camera.Rotation(), camera.fov_degrees,
                          ortho ? Projection::Orthographic : Projection::Perspective, ortho ? camera.ortho_height : 0.0f,
                          document.IsSimulating(), frame_mode)) {
         return texture_.Valid();
