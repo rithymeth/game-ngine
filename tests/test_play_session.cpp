@@ -116,3 +116,23 @@ AETHER_TEST(PlaySession_PauseAndStep) {
     f.session.Pause();              // no-op when editing
     AETHER_CHECK(f.session.IsEditing() && f.world.EntityCount() == 1);
 }
+
+AETHER_TEST(PlaySession_ResumeDiscardsPendingStep) {
+    Fixture f;
+    f.session.Play(f.ctx, f.stack);
+    f.session.Pause();
+    f.session.Step(); // the viewport has not consumed the step
+    f.session.Play(f.ctx, f.stack);
+    f.session.Pause(); // the original request must not carry over to a later pause
+    AETHER_CHECK(!f.session.ShouldSimulate());
+
+    f.session.Step();
+    AETHER_CHECK(f.session.ShouldSimulate());
+    AETHER_CHECK(!f.session.ShouldSimulate());
+
+    f.session.Step();
+    f.session.Play(f.ctx, f.stack);
+    AETHER_CHECK(f.session.ShouldSimulate()); // ordinary play advances as usual
+    f.session.Pause();
+    AETHER_CHECK(!f.session.ShouldSimulate());
+}

@@ -26,6 +26,7 @@ std::vector<Entity> AllEntities(const World& world) {
 
 void PlaySession::Play(CommandContext& ctx, CommandStack& stack, bool simulate) {
     if (state_ == State::Paused) {
+        step_pending_ = false; // a queued Step belongs to the pause we are leaving
         state_ = State::Playing;
         return;
     }
