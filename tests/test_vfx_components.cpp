@@ -190,6 +190,40 @@ AETHER_TEST(VFX_ParticleWorld) {
     CHECK(problems.size() == 4 && reported("'Nope' couldn't be found") && reported("its entity has no Transform"));
 }
 
+AETHER_TEST(VFX_ParticlePoolRestoresParameterDefaults) {
+    Library lib;
+    World world;
+    ParticleWorld pw(world, lib.Lookup());
+    ParticleSystem smoke;
+    smoke.asset = "Smoke";
+    const Entity previous = world.CreateEntity(At({0, 0, 0}), smoke);
+    ParticleSystem* ps = world.GetComponent<ParticleSystem>(previous);
+    ps->SetFloatParameter("Rate", 50.0f);
+    ps->SetColorParameter("Tint", {1, 0, 0}, 0.5f);
+    pw.Update(0.1f);
+    const auto* old = pw.InstanceOf(previous);
+    CHECK(old != nullptr && old->Count() == 5 && old->Emitter(0).Particles().color[0] == (LinearColor{1, 0, 0, 0.5f}));
+
+    // Restarting for the same owner deliberately keeps its overrides.
+    world.GetComponent<ParticleSystem>(previous)->Restart();
+    pw.Update(0.1f);
+    CHECK(old != nullptr && old->Count() == 5 && old->Emitter(0).Particles().color[0] == (LinearColor{1, 0, 0, 0.5f}));
+
+    world.RemoveComponent<ParticleSystem>(previous);
+    pw.Update(0.1f);
+    CHECK(pw.GetStats().pooled == 1 && pw.InstanceOf(previous) == nullptr);
+    const Entity next = world.CreateEntity(At({0, 0, 0}), smoke);
+    pw.Update(0.1f);
+    const auto* reused = pw.InstanceOf(next);
+    CHECK(pw.GetStats().reused == 1 && pw.GetStats().pooled == 0 && reused != nullptr);
+    if (!reused) return;
+    const auto* rate = reused->GetParameter("Rate");
+    const auto* tint = reused->GetParameter("Tint");
+    CHECK(rate != nullptr && rate->f == 10.0f);
+    CHECK(tint != nullptr && tint->c == (LinearColor{1, 1, 1, 1}));
+    CHECK(reused->Count() == 1 && reused->Emitter(0).Particles().color[0] == (LinearColor{1, 1, 1, 1}));
+}
+
 AETHER_TEST(VFX_ParticleReplacementWaitsForManualActivation) {
     Library lib;
     World world;

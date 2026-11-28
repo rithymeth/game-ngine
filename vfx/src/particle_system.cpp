@@ -109,6 +109,8 @@ std::unique_ptr<ParticleSystemInstance> ParticleWorld::Acquire(const std::string
     if (!pool.empty()) {
         inst = std::move(pool.back());
         pool.pop_back();
+        // A new owner starts with the asset defaults, including the bound emitter fields.
+        for (const ParticleParameter& p : data.parameters) (void)inst->SetParameter(p.name, p.value);
         inst->Restart();
         ++stats_.reused;
     } else {
