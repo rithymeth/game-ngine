@@ -583,6 +583,94 @@ AETHER_TEST(Openers_BehaviorTreeReplacementClearsTheOldSelectionAndPalette) {
     CHECK(!mark(task_header)); // An explicitly selected node can still be deleted.
 }
 
+AETHER_TEST(Openers_ParticleReplacementDismissesTheOldModuleMenu) {
+    HeadlessImGui ui;
+    ProjectPaths paths;
+    FreshProject("particle_menu", paths);
+    EditorWorkspace ws(paths.file);
+    vfx::ParticleSystemAsset asset;
+    vfx::Emitter& emitter = asset.emitters.emplace_back();
+    emitter.settings.name = "First emitter";
+    emitter.spawn.emplace_back(vfx::SpawnRate{});
+    Write(paths.content / "VFX/First.avfx", vfx::SaveParticleSystem(asset));
+    emitter.settings.name = "Second emitter";
+    emitter.spawn.front() = vfx::SpawnBurst{};
+    Write(paths.content / "VFX/Second.avfx", vfx::SaveParticleSystem(asset));
+    Write(paths.content / "VFX/Broken.avfx", "not a particle system");
+
+    if (!ws.OpenAsset("VFX/First.avfx")) { CHECK(false); return; }
+    const i64 tool = ws.FindTool("Particle System");
+    if (tool < 0) { CHECK(false); return; }
+    ImGuiWindow* emitters = nullptr;
+    ImGuiWindow* stack = nullptr;
+    const auto draw = [&] {
+        const auto* parent = ImGui::GetCurrentWindowRead();
+        ImGui::PushID(static_cast<int>(tool));
+        const auto emitters_id = ImGui::GetID("emitters");
+        const auto stack_id = ImGui::GetID("stack");
+        ImGui::PopID();
+        ws.DrawTool(static_cast<usize>(tool));
+        emitters = stack = nullptr;
+        for (ImGuiWindow* child : parent->DC.ChildWindows) {
+            if (child->ChildId == emitters_id) emitters = child;
+            if (child->ChildId == stack_id) stack = child;
+        }
+    };
+    ui.Frame(draw);
+    ui.Frame(draw);
+    auto& io = ImGui::GetIO();
+    const auto click = [&](const ImGuiWindow* child, ImGuiID id) {
+        const auto clip = child->InnerClipRect;
+        for (f32 y = clip.Min.y + 3; y < clip.Max.y; y += 3) {
+            io.AddMousePosEvent(clip.Min.x + 70, y);
+            ui.Frame(draw);
+            if (ImGui::GetHoveredID() != id) continue;
+            io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+            ui.Frame(draw);
+            io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+            ui.Frame(draw);
+            return true;
+        }
+        CHECK(false);
+        return false;
+    };
+    const auto menu_open = [] {
+        return ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+    };
+    const auto open_menu = [&](const char* emitter_name) {
+        if (!emitters || !stack) { CHECK(false); return false; }
+        if (!click(emitters, ImHashStr(emitter_name, 0, emitters->GetID(0)))) return false;
+        if (!click(stack, ImHashStr("##add", 0, stack->GetID(0)))) return false; // Spawn stage.
+        const bool open = menu_open();
+        CHECK(open);
+        return open;
+    };
+
+    if (!open_menu("First emitter")) return;
+    CHECK(!ws.OpenAsset("VFX/Broken.avfx"));
+    ui.Frame(draw);
+    CHECK(menu_open());
+    if (!ws.OpenAsset("VFX/Second.avfx")) { CHECK(false); return; }
+    ui.Frame(draw);
+    const bool dismissed = !menu_open();
+    CHECK(dismissed);
+    if (!dismissed) return;
+    // The new asset can still select its emitter and open its own module menu.
+    if (!open_menu("Second emitter")) return;
+
+    // If another tool replaces the particle menu, the editor must not close it.
+    if (!ws.OpenAsset("VFX/First.avfx")) { CHECK(false); return; }
+    ui.Frame([&] {
+        ImGui::OpenPopup("Unrelated popup");
+        draw();
+        CHECK(ImGui::IsPopupOpen("Unrelated popup"));
+        if (ImGui::BeginPopup("Unrelated popup")) {
+            ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+        }
+    });
+}
+
 AETHER_TEST(Openers_ContentBrowserCreatesAndSelectsAtlasWithoutReplacingOne) {
     ProjectPaths paths;
     FreshProject("create_sprite_atlas", paths);

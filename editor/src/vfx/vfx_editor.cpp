@@ -3,6 +3,7 @@
 #include "core/json_edit.h"
 
 #include <imgui.h>
+#include <imgui_internal.h> // Track and dismiss only popups opened by this tool
 #include <misc/cpp/imgui_stdlib.h>
 
 #include <algorithm>
@@ -199,6 +200,13 @@ void ParticleEditor::Sync() {
     if (seen_load_revision_ != doc_.LastLoadRevision()) {
         // A new asset owns these indices and starts its own preview timeline.
         seen_load_revision_ = doc_.LastLoadRevision();
+        ImGuiContext& ui = *ImGui::GetCurrentContext();
+        for (int i = 0; asset_popup_id_ != 0 && i < ui.OpenPopupStack.Size; ++i) {
+            if (ui.OpenPopupStack[i].PopupId != asset_popup_id_) continue;
+            ImGui::ClosePopupToLevel(i, true);
+            break;
+        }
+        asset_popup_id_ = 0;
         emitter_ = -1;
         module_.reset();
         name_edit_.clear();
@@ -219,6 +227,12 @@ void ParticleEditor::Sync() {
 
 void ParticleEditor::Draw() {
     Sync();
+    ImGuiContext& ui = *ImGui::GetCurrentContext();
+    const int popup_level = ui.BeginPopupStack.Size;
+    const auto popup_at_level = [&]() -> ImGuiID {
+        return ui.OpenPopupStack.Size > popup_level ? ui.OpenPopupStack[popup_level].PopupId : 0;
+    };
+    const ImGuiID popup_before = popup_at_level();
     if (playing_) {
         preview_.Advance(ImGui::GetIO().DeltaTime * std::max(speed, 0.0f));
         if (loop && loop_length > 0.0f && preview_.Time() >= loop_length) preview_.Reset(doc_.Get());
@@ -260,6 +274,10 @@ void ParticleEditor::Draw() {
     }
     ImGui::EndChild();
     HandleKeys();
+    // A popup opened in this draw belongs to these asset controls. An unrelated
+    // workspace popup already present before Draw must not be dismissed.
+    const ImGuiID popup_after = popup_at_level();
+    if (popup_after != popup_before) asset_popup_id_ = popup_after;
 }
 
 void ParticleEditor::RestoreHistory(bool redo) {
