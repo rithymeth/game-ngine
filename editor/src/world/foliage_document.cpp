@@ -1,4 +1,5 @@
 #include "world/foliage_document.h"
+#include "ui/staged_asset_write.h"
 
 #include "aether/terrain/asset_io.h"
 
@@ -57,13 +58,7 @@ bool FoliagePaintDocument::SaveAs(const std::filesystem::path& file, std::string
     if (in_stroke_) EndStroke();
     std::error_code ec;
     if (!file.parent_path().empty()) std::filesystem::create_directories(file.parent_path(), ec);
-    std::ofstream out(file, std::ios::binary | std::ios::trunc);
-    if (!out) {
-        if (error != nullptr) *error = "can't write " + file.string();
-        return false;
-    }
-    out << FoliageToJson(layer_, density_).dump(2) << "\n";
-    if (!out) {
+    if (!WriteStagedAsset(file, FoliageToJson(layer_, density_).dump(2) + "\n")) {
         if (error != nullptr) *error = "can't write " + file.string();
         return false;
     }

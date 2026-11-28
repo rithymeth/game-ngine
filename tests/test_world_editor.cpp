@@ -418,29 +418,10 @@ AETHER_TEST(WorldEditor_PartitionMapHandlesWidelySeparatedCells) {
 // screen is on disk.
 
 #if defined(__linux__)
-AETHER_TEST(WorldEditor_TerrainFailedSavePreservesHeightmapAssets) {
-    namespace fs = std::filesystem;
-    const auto dir = fs::temp_directory_path() / "aether_terrain_write_failure";
-    fs::create_directories(dir);
-    const auto original = dir / "Hills.aterrain";
-    const auto other = dir / "Backup.aterrain";
-    const auto read = [](const fs::path& path) {
-        std::ifstream in(path, std::ios::binary);
-        return std::string(std::istreambuf_iterator<char>(in), {});
-    };
+namespace {
 
-    TerrainEditDocument doc = FlatTerrain();
-    CHECK(doc.SaveAs(other) && doc.SaveAs(original));
-    const auto original_before = read(original);
-    const auto other_before = read(other);
-    CHECK(!original_before.empty() && !other_before.empty());
-    doc.brush.radius = 3.0f;
-    doc.brush.strength = 1.0f;
-    doc.BeginStroke();
-    doc.Dab(10.0f, 10.0f);
-    const auto pending = doc.Data().heightmap.heights;
-    CHECK(doc.InStroke() && H(doc, 10, 10) > 0.0f);
-
+template<typename Document>
+void ExpectFailedSavesAtFileLimit(Document& doc, const std::filesystem::path& other) {
     struct rlimit previous_limit{};
     struct sigaction previous_signal{}, ignore{};
     ignore.sa_handler = SIG_IGN;
@@ -461,11 +442,39 @@ AETHER_TEST(WorldEditor_TerrainFailedSavePreservesHeightmapAssets) {
     CHECK(limited && restored && signal_restored);
 
     CHECK(!saved && !save_error.empty() && !copied && !copy_error.empty());
-    CHECK(read(original) == original_before && read(other) == other_before);
+}
+
+std::string ReadAssetBytes(const std::filesystem::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(in), {});
+}
+
+} // namespace
+
+AETHER_TEST(WorldEditor_TerrainFailedSavePreservesHeightmapAssets) {
+    namespace fs = std::filesystem;
+    const auto dir = fs::temp_directory_path() / "aether_terrain_write_failure";
+    fs::create_directories(dir);
+    const auto original = dir / "Hills.aterrain";
+    const auto other = dir / "Backup.aterrain";
+    TerrainEditDocument doc = FlatTerrain();
+    CHECK(doc.SaveAs(other) && doc.SaveAs(original));
+    const auto original_before = ReadAssetBytes(original);
+    const auto other_before = ReadAssetBytes(other);
+    CHECK(!original_before.empty() && !other_before.empty());
+    doc.brush.radius = 3.0f;
+    doc.brush.strength = 1.0f;
+    doc.BeginStroke();
+    doc.Dab(10.0f, 10.0f);
+    const auto pending = doc.Data().heightmap.heights;
+    CHECK(doc.InStroke() && H(doc, 10, 10) > 0.0f);
+
+    ExpectFailedSavesAtFileLimit(doc, other);
+    CHECK(ReadAssetBytes(original) == original_before && ReadAssetBytes(other) == other_before);
     CHECK(doc.Path() == original && doc.Dirty() && doc.CanUndo() && doc.Data().heightmap.heights == pending && !doc.InStroke());
     CHECK(doc.Save() && !doc.Dirty());
     TerrainEditDocument reloaded = FlatTerrain();
-    CHECK(reloaded.Load(original) && reloaded.Data().heightmap.heights == pending && read(other) == other_before);
+    CHECK(reloaded.Load(original) && reloaded.Data().heightmap.heights == pending && ReadAssetBytes(other) == other_before);
     CHECK(std::distance(fs::directory_iterator(dir), fs::directory_iterator{}) == 2);
     fs::remove_all(dir);
 }
@@ -558,6 +567,38 @@ AETHER_TEST(WorldEditor_TerrainRefusesAForeignFile) {
         CHECK(doc.Dirty()); // nor was anything marked saved
     }
 }
+
+#if defined(__linux__)
+AETHER_TEST(WorldEditor_FoliageFailedSavePreservesPaintedAssets) {
+    namespace fs = std::filesystem;
+    const auto dir = fs::temp_directory_path() / "aether_foliage_write_failure";
+    const auto original = dir / "Forest.afoliage";
+    const auto other = dir / "Backup.afoliage";
+    FoliageLayer layer;
+    layer.types.resize(1);
+    layer.density = 1.0f;
+    FoliagePaintDocument doc(layer, {}, {}, 5);
+    CHECK(doc.SaveAs(other) && doc.SaveAs(original));
+    const auto original_before = ReadAssetBytes(original);
+    const auto other_before = ReadAssetBytes(other);
+    CHECK(!original_before.empty() && !other_before.empty());
+
+    doc.radius = 3.0f;
+    doc.BeginStroke();
+    doc.Dab({20.0f, 0.0f, 20.0f});
+    const usize painted = doc.Layer().instances.size();
+    CHECK(painted > 0);
+
+    ExpectFailedSavesAtFileLimit(doc, other);
+    CHECK(ReadAssetBytes(original) == original_before && ReadAssetBytes(other) == other_before);
+    CHECK(doc.Path() == original && doc.Dirty() && doc.CanUndo() && doc.Layer().instances.size() == painted);
+    CHECK(doc.Save() && !doc.Dirty());
+    FoliagePaintDocument reloaded(FoliageLayer{}, DensityMap{}, {}, 5);
+    CHECK(reloaded.Load(original) && reloaded.Layer().instances.size() == painted && ReadAssetBytes(other) == other_before);
+    CHECK(std::distance(fs::directory_iterator(dir), fs::directory_iterator{}) == 2);
+    fs::remove_all(dir);
+}
+#endif
 
 AETHER_TEST(WorldEditor_FoliageSavesAndLoads) {
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "aether_world_editor_foliage_io";
