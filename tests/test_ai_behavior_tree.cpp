@@ -647,6 +647,44 @@ AETHER_TEST(AI_BtMoveToWithAgents) {
     CHECK(logs.back() == "halted");
 }
 
+AETHER_TEST(AI_BtMoveToFollowsBlackboardTargetChanges) {
+    World world;
+    const Entity walker = world.CreateEntity(Transform{}, NavAgent{});
+    const Entity first = world.CreateEntity(Transform{});
+    const Entity second = world.CreateEntity(Transform{});
+    BlackboardAsset keys;
+    keys.Add("Target", BlackboardType::Entity);
+    BtNode move = N(BtNodeType::MoveTo);
+    move.key = "Target";
+    const BehaviorTreeAsset tree = Tree(std::move(move), keys);
+    BehaviorTreeInstance instance(tree);
+    Blackboard bb;
+    bb.Adopt(keys);
+    BtContext ctx{&world, walker, &bb, nullptr};
+    NavAgent* agent = world.GetComponent<NavAgent>(walker);
+    CHECK(agent != nullptr);
+    if (!agent) return;
+    CHECK(bb.Set("Target", first));
+    CHECK(instance.Tick(ctx, 0.1f) == BtStatus::Running);
+    CHECK(agent->commands.size() == 1 && agent->commands.back().kind == NavAgentCommand::Kind::MoveToEntity &&
+          agent->commands.back().target == first);
+    agent->commands.clear(); // The next navigation update would consume the queued command.
+    agent->status = NavMoveStatus::Moving;
+
+    CHECK(bb.Set("Target", second));
+    CHECK(instance.Tick(ctx, 0.1f) == BtStatus::Running);
+    CHECK(agent->commands.size() == 1 && agent->commands.back().kind == NavAgentCommand::Kind::MoveToEntity &&
+          agent->commands.back().target == second);
+    agent->commands.clear();
+    CHECK(instance.Tick(ctx, 0.1f) == BtStatus::Running && agent->commands.empty()); // do not reissue an unchanged target
+
+    CHECK(bb.Clear("Target"));
+    CHECK(instance.Tick(ctx, 0.1f) == BtStatus::Failure);
+    CHECK(agent->commands.size() == 1 && agent->commands.back().kind == NavAgentCommand::Kind::Stop);
+    agent->commands.clear();
+    CHECK(instance.Tick(ctx, 0.1f) == BtStatus::Failure && agent->commands.empty());
+}
+
 AETHER_TEST(AI_BtBlueprintNodes) {
     RegisterBehaviorTreeComponents();
     // A Blueprint task: Event Patrol prints, then tells the tree it's done.

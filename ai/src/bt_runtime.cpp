@@ -242,15 +242,18 @@ BtStatus BehaviorTreeInstance::Execute(usize i, BtContext& ctx, f32 dt, bool ent
         if (agent == nullptr) return BtStatus::Failure;
         const u64 rev = ctx.blackboard->Revision(n.key);
         const BlackboardValue* target = ctx.blackboard->Get(n.key);
-        const bool goal_moved = !entering && rev != st.key_revision && target != nullptr && std::holds_alternative<Vec3>(*target);
-        if (entering || goal_moved) {
-            // Start, or the goal (a point) moved: (re)issue the move.
+        if (entering || rev != st.key_revision) {
+            const Vec3* point = std::get_if<Vec3>(target);
+            const Entity* entity = std::get_if<Entity>(target);
+            if (point == nullptr && (entity == nullptr || entity->IsNull())) {
+                if (!entering) agent->Stop(); // The running task no longer has a destination.
+                return BtStatus::Failure;
+            }
+            // Follow the current blackboard value, including changes of entity.
             st.key_revision = rev;
-            if (target == nullptr) return BtStatus::Failure;
             agent->stopping_distance = n.acceptance;
-            if (const Vec3* p = std::get_if<Vec3>(target)) agent->MoveTo(*p);
-            else if (const Entity* e = std::get_if<Entity>(target); e != nullptr && !e->IsNull()) agent->MoveToEntity(*e);
-            else return BtStatus::Failure;
+            if (point != nullptr) agent->MoveTo(*point);
+            else agent->MoveToEntity(*entity);
             return BtStatus::Running;
         }
         if (!agent->commands.empty() || agent->status == NavMoveStatus::Moving) return BtStatus::Running;
