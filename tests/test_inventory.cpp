@@ -96,6 +96,12 @@ AETHER_TEST(Inventory_ItemJsonRoundTripAndErrors) {
     CHECK(fails("nonsense", "item.bad_json"));
     CHECK(fails("{}", "item.name_empty"));
     CHECK(fails(R"({"name":"x","max_stack":0})", "item.bad_stack"));
+    CHECK(fails(R"({"name":"x","max_stack":2147483648})", "item.bad_stack"));
+    CHECK(fails(R"({"name":"x","max_stack":4294967297})", "item.bad_stack")); // Must not wrap to 1.
+    CHECK(fails(R"({"name":"x","max_stack":-4294967295})", "item.bad_stack")); // Nor may a negative count wrap to 1.
+    CHECK(fails(R"({"name":"x","max_stack":18446744073709551615})", "item.bad_stack"));
+    const ItemDef largest_stack = Item("Tokens", std::numeric_limits<i32>::max());
+    CHECK(ItemFromJson(ItemToJson(largest_stack).dump(), back, &err) && back == largest_stack);
     CHECK(fails(R"({"name":"x","weight":-1})", "item.bad_weight"));
     CHECK(fails(R"({"name":"x","tags":["bad tag!"]})", "item.bad_tag"));
     CHECK(fails(R"({"name":"x","equip_effects":["A"]})", "item.equip_effects_without_slot"));
