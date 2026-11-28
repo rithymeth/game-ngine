@@ -122,7 +122,11 @@ bool ValueEditor(const char* id, const bp::PinType& type, bp::Value& value) {
 
 } // namespace
 
-BlueprintEditor::BlueprintEditor(BlueprintDocument& document) : doc_(document) {
+BlueprintEditor::BlueprintEditor(BlueprintDocument& document) : doc_(document), seen_load_generation_(document.LoadGeneration()) {
+    OpenDefaultGraph();
+}
+
+void BlueprintEditor::OpenDefaultGraph() {
     for (const Graph& g : doc_.Get().graphs) {
         if (g.kind == GraphKind::EventGraph) {
             OpenGraph(g.name);
@@ -302,7 +306,8 @@ void BlueprintEditor::DrawPalette() {
     if (palette_.needs_popup) {
         const GraphViewState& view = views_[palette_.graph];
         ImGui::SetNextWindowPos(ImVec2(view.CanvasToScreenX(palette_.x), view.CanvasToScreenY(palette_.y)), ImGuiCond_Always);
-        ImGui::OpenPopup("##palette");
+        palette_popup_id_ = ImGui::GetID("##palette");
+        ImGui::OpenPopup(palette_popup_id_);
         palette_.needs_popup = false;
     }
     ImGui::SetNextWindowSize(ImVec2(320, 380), ImGuiCond_Appearing);
@@ -349,6 +354,25 @@ void BlueprintEditor::DrawPalette() {
 
 void BlueprintEditor::Draw() {
     ImGui::PushID(this);
+    if (seen_load_generation_ != doc_.LoadGeneration()) {
+        seen_load_generation_ = doc_.LoadGeneration();
+        Select({});
+        tabs_.clear();
+        active_.clear();
+        select_tab_.clear();
+        views_.clear();
+        palette_ = {};
+        status_.clear();
+        debug = {};
+        ImGuiContext& ui = *ImGui::GetCurrentContext();
+        for (int i = 0; palette_popup_id_ != 0 && i < ui.OpenPopupStack.Size; ++i) {
+            if (ui.OpenPopupStack[i].PopupId != palette_popup_id_) continue;
+            ImGui::ClosePopupToLevel(i, false);
+            break;
+        }
+        palette_popup_id_ = 0;
+        OpenDefaultGraph();
+    }
     HandleKeys();
     DrawToolbar();
     const ImVec2 avail = ImGui::GetContentRegionAvail();

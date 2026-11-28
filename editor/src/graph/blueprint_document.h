@@ -31,6 +31,7 @@ public:
     const std::filesystem::path& Path() const { return path_; }
     std::string Name() const; // the file's stem, or "Untitled"
     bool Dirty() const { return dirty_; }
+    u64 LoadGeneration() const { return load_generation_; }
 
     // Every change goes through Edit: a snapshot for undo, then `change`.
     // Consecutive edits with the same non-empty `merge_key` (a text field
@@ -108,6 +109,7 @@ private:
     bool dirty_ = false;
     std::vector<Snapshot> undo_, redo_;
     u64 revision_ = 0, compiled_revision_ = 0;
+    u64 load_generation_ = 0;
     bool compiled_once_ = false;
     bp::CompileResult compiled_;
 };

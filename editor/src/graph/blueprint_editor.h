@@ -84,6 +84,7 @@ private:
         std::string query;
     };
 
+    void OpenDefaultGraph();
     void DrawToolbar();
     void DrawMyBlueprint();
     void DrawGraphTabs();
@@ -103,6 +104,8 @@ private:
     void ForgetMissing(); // after undo/redo or removal: drop tabs and selection that no longer exist
 
     BlueprintDocument& doc_;
+    u64 seen_load_generation_;
+    u32 palette_popup_id_ = 0;
     Item selected_;
     std::string name_edit_; // the Details panel's name field, reset when the selection changes
     std::vector<std::string> tabs_;

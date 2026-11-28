@@ -383,6 +383,57 @@ AETHER_TEST(BlueprintEditor_WidgetMovesAndResizesComments) {
     AETHER_CHECK(std::any_of(all.begin(), all.end(), [](const GraphViewResult& r) { return r.deleted_comment == 0; }));
 }
 
+AETHER_TEST(BlueprintEditor_OpenResetsTabsAndGraphInteractions) {
+    namespace fs = std::filesystem;
+    const auto dir = fs::temp_directory_path() / "aether_blueprint_switch";
+    fs::create_directories(dir);
+    bp::NodeId begin, branch, get, print;
+    auto first = Door(begin, branch, get, print);
+    bp::Graph shared;
+    shared.name = "Shared";
+    shared.kind = bp::GraphKind::Function;
+    const auto node = bp::GraphBuilder(shared).Add("Debug.Print");
+    first.graphs.push_back(shared);
+    auto second = first;
+    second.variables[0].tooltip = "Second asset";
+    AETHER_CHECK(bp::SaveBlueprint(first, dir / "First.abp") && bp::SaveBlueprint(second, dir / "Second.abp"));
+
+    HeadlessImGui ui;
+    BlueprintDocument doc(first);
+    BlueprintEditor editor(doc);
+    const auto frame = [&] { ui.Frame([&] { editor.Draw(); }); };
+    editor.FocusNode("Shared", node);
+    frame();
+    frame();
+    editor.OpenPalette(140, 80);
+    frame();
+    const auto popup_open = [] {
+        return ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+    };
+    AETHER_CHECK(editor.ActiveGraph() == "Shared" && editor.Selected().node == node && editor.PaletteOpen() && popup_open());
+
+    AETHER_CHECK(!doc.Load(dir / "Missing.abp"));
+    frame();
+    AETHER_CHECK(editor.ActiveGraph() == "Shared" && editor.Selected().node == node && editor.PaletteOpen() && popup_open());
+    editor.ViewState("EventGraph").dragging_link = true;
+    editor.debug.highlighted = begin;
+
+    AETHER_CHECK(doc.Load(dir / "Second.abp") && doc.Get().FindGraph("Shared") != nullptr);
+    frame();
+    AETHER_CHECK(editor.ActiveGraph() == "EventGraph" && editor.OpenGraphs() == std::vector<std::string>{"EventGraph"});
+    AETHER_CHECK(editor.Selected().kind == BlueprintEditor::ItemKind::None && editor.ViewState("Shared").selection.empty());
+    AETHER_CHECK(!editor.ViewState("EventGraph").dragging_link && editor.debug.highlighted == 0);
+    AETHER_CHECK(!editor.PaletteOpen() && !popup_open() && editor.PlaceFromPalette("Debug.Print") == 0 && !doc.Dirty());
+
+    // A second successful load must also invalidate UI state.
+    editor.FocusNode("Shared", node);
+    frame();
+    AETHER_CHECK(doc.Load(dir / "First.abp"));
+    frame();
+    AETHER_CHECK(editor.ActiveGraph() == "EventGraph" && editor.Selected().kind == BlueprintEditor::ItemKind::None);
+    fs::remove_all(dir);
+}
+
 AETHER_TEST(BlueprintEditor_PanelsPaletteResultsAndShortcuts) {
     HeadlessImGui ui;
     bp::NodeId begin, branch, get, print;

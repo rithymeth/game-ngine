@@ -77,7 +77,9 @@ BlueprintDocument::BlueprintDocument(bp::Blueprint blueprint, std::filesystem::p
 bool BlueprintDocument::Load(const std::filesystem::path& path, std::string* error) {
     bp::Blueprint loaded;
     if (!bp::LoadBlueprint(path, loaded, error)) return false;
+    const u64 next_load = load_generation_ + 1;
     *this = BlueprintDocument(std::move(loaded), path);
+    load_generation_ = next_load;
     return true;
 }
 
