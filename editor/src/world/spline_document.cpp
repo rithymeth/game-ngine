@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numeric>
 
 namespace aether::editor {
 
@@ -44,10 +45,17 @@ u32 SplineEditDocument::AddPoint(const Vec3& p) {
 }
 
 std::optional<u32> SplineEditDocument::InsertAfter(u32 index) {
-    if (index + 1 >= spline_.PointCount()) return std::nullopt;
-    const Vec3 a = spline_.Points()[index].position, b = spline_.Points()[index + 1].position;
+    if (index >= spline_.SegmentCount()) return std::nullopt;
+    const SplinePoint& a = spline_.Points()[index];
+    const SplinePoint& b = spline_.Points()[index + 1];
+    const Vec3 position(std::midpoint(a.position.x, b.position.x), std::midpoint(a.position.y, b.position.y),
+                        std::midpoint(a.position.z, b.position.z));
+    const f32 width = std::midpoint(a.width, b.width);
+    const f32 roll = std::midpoint(a.roll, b.roll);
     Record();
-    spline_.InsertPoint(index, (a + b) * 0.5f);
+    spline_.InsertPoint(index, position);
+    spline_.SetWidth(index + 1, width);
+    spline_.SetRoll(index + 1, roll);
     selected = index + 1;
     return selected;
 }

@@ -256,6 +256,25 @@ AETHER_TEST(WorldEditor_Splines) {
     CHECK(doc.Undo() && doc.Get().Points()[0].position.x == 0.0f); // the drag, in one step
 }
 
+AETHER_TEST(WorldEditor_SplineInsertionPreservesRoadWidthAndBank) {
+    SplineEditDocument doc;
+    doc.AddPoint(Vec3(0, 0, 0));
+    doc.AddPoint(Vec3(10, 0, 0));
+    CHECK(doc.SetWidth(0, 4.0f) && doc.SetWidth(1, 8.0f));
+    CHECK(doc.SetRoll(0, -10.0f) && doc.SetRoll(1, 30.0f));
+    const float midpoint_width = doc.Get().Width(0.5f);
+    const float midpoint_roll = doc.Get().Roll(0.5f);
+    const auto matches_midpoint = [&] {
+        if (doc.Get().PointCount() != 3) return false;
+        const auto& point = doc.Get().Points()[1];
+        return point.position.x == 5.0f && point.width == midpoint_width && point.roll == midpoint_roll;
+    };
+    CHECK(doc.InsertAfter(0) == 1u && matches_midpoint());
+    CHECK(doc.Undo() && doc.Get().PointCount() == 2 && doc.Get().Width(0.5f) == midpoint_width &&
+          doc.Get().Roll(0.5f) == midpoint_roll);
+    CHECK(doc.Redo() && matches_midpoint());
+}
+
 AETHER_TEST(WorldEditor_SplineRemovalKeepsTheSelectedPointAcrossHistory) {
     SplineEditDocument doc;
     for (float x : {0.0f, 10.0f, 20.0f, 30.0f}) doc.AddPoint(Vec3(x, 0, 0));
