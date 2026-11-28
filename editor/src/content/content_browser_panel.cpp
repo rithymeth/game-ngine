@@ -15,6 +15,7 @@
 #include <cmath>
 #include <cstdio>
 #include <map>
+#include <string_view>
 #include <unordered_set>
 #include <utility>
 
@@ -1200,6 +1201,18 @@ bool ContentBrowserPanel::DuplicateSelection(std::string* error) {
 
 bool ContentBrowserPanel::DeleteSelection(std::string* error) {
     if (!database_ || selection_.empty()) return false;
+    {
+        // A filter can hide selected assets without discarding the selection.
+        // Refuse the whole batch instead of deleting anything out of sight.
+        std::unordered_set<std::string_view> visible;
+        visible.reserve(rows_.size());
+        for (const assets::ContentEntry& row : rows_) visible.insert(row.path);
+        if (std::any_of(selection_.begin(), selection_.end(), [&](const std::string& path) { return !visible.contains(path); })) {
+            operation_warning_ = "Some selected items are not visible. Clear filters or select the items again before deleting.";
+            if (error != nullptr) *error = operation_warning_;
+            return false;
+        }
+    }
     const std::vector<std::string> paths = selection_;
     std::string message;
     usize deleted = 0;

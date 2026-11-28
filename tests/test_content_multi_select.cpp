@@ -244,6 +244,31 @@ AETHER_TEST(ContentSelection_DeleteRefusesTheWholeBatchOrTakesAllOfIt) {
     stdfs::remove_all(project, ignore);
 }
 
+AETHER_TEST(ContentSelection_DeleteDoesNotRemoveItemsHiddenByAFilter) {
+    ProjectPaths paths;
+    FreshProject("delete_hidden_selection", paths);
+    ContentBrowserPanel panel(paths.file);
+    panel.OpenFolder("textures");
+
+    const std::string red = "textures/test_solid_red.png";
+    const std::string checker = "textures/checker_b.png";
+    panel.Select(red);
+    panel.Select(checker, true);
+    panel.search = "solid_red";
+    if (!panel.Refresh()) { CHECK(false); return; }
+    CHECK(panel.Rows().size() == 1 && panel.Rows().front().path == red);
+
+    std::string error;
+    CHECK(!panel.DeleteSelection(&error) && error.find("visible") != std::string::npos);
+    CHECK(stdfs::exists(paths.content / red) && stdfs::exists(paths.content / checker));
+    CHECK(stdfs::exists(paths.content / (red + ".ameta")) && stdfs::exists(paths.content / (checker + ".ameta")));
+
+    // Choosing only the visible item makes the operation deliberate.
+    panel.Select(red);
+    CHECK(panel.DeleteSelection());
+    CHECK(!stdfs::exists(paths.content / red) && stdfs::exists(paths.content / checker));
+}
+
 AETHER_TEST(ContentSelection_MoveTakesTheSelectionAndFollowsTheOpenFolder) {
     ProjectPaths paths;
     const stdfs::path project = FreshProject("move_panel", paths);
