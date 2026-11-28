@@ -256,6 +256,21 @@ AETHER_TEST(WorldEditor_Splines) {
     CHECK(doc.Undo() && doc.Get().Points()[0].position.x == 0.0f); // the drag, in one step
 }
 
+AETHER_TEST(WorldEditor_SplineRemovalKeepsTheSelectedPointAcrossHistory) {
+    SplineEditDocument doc;
+    for (float x : {0.0f, 10.0f, 20.0f, 30.0f}) doc.AddPoint(Vec3(x, 0, 0));
+    doc.selected = 1;
+    const auto same_point = [&] {
+        return doc.selected && *doc.selected < doc.Get().PointCount() && doc.Get().Points()[*doc.selected].position.x == 10.0f;
+    };
+    CHECK(doc.RemovePoint(0) && doc.selected == 0u && same_point());
+    CHECK(doc.Undo() && doc.selected == 1u && same_point());
+    CHECK(doc.Redo() && doc.selected == 0u && same_point());
+    CHECK(doc.RemovePoint(0) && doc.selected == 0u); // the selected point was removed; choose its successor
+    CHECK(doc.Get().Points()[0].position.x == 20.0f);
+    CHECK(doc.Undo() && same_point());
+}
+
 AETHER_TEST(WorldEditor_SplineUndoKeepsSeparateViewportDrags) {
     SplineEditDocument doc;
     doc.AddPoint(Vec3(0, 0, 0));

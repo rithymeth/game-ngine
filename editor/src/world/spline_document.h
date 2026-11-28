@@ -41,8 +41,13 @@ public:
 private:
     void Record(bool merge = false);
 
+    struct Snapshot {
+        std::vector<terrain::SplinePoint> points;
+        std::optional<u32> selection;
+    };
+
     terrain::Spline spline_;
-    std::vector<std::vector<terrain::SplinePoint>> undo_, redo_;
+    std::vector<Snapshot> undo_, redo_;
     bool merging_ = false;
     u64 revision_ = 1;
 };

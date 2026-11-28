@@ -28,7 +28,7 @@ SplineEditDocument::SplineEditDocument(Spline spline) : spline_(std::move(spline
 
 void SplineEditDocument::Record(bool merge) {
     if (!(merge && merging_)) {
-        undo_.push_back(PointsOf(spline_));
+        undo_.push_back({PointsOf(spline_), selected});
         if (undo_.size() > kMaxUndo) undo_.erase(undo_.begin());
     }
     merging_ = merge;
@@ -56,7 +56,11 @@ bool SplineEditDocument::RemovePoint(u32 index) {
     if (index >= spline_.PointCount()) return false;
     Record();
     spline_.RemovePoint(index);
-    if (selected && *selected >= spline_.PointCount()) selected = spline_.PointCount() == 0 ? std::nullopt : std::optional<u32>(spline_.PointCount() - 1);
+    if (selected) {
+        if (spline_.PointCount() == 0) selected.reset();
+        else if (*selected > index) selected = std::min(*selected - 1, spline_.PointCount() - 1);
+        else if (*selected == index) selected = std::min(index, spline_.PointCount() - 1);
+    }
     return true;
 }
 
@@ -94,8 +98,9 @@ std::optional<u32> SplineEditDocument::PickPoint(const Vec3& p, f32 radius) cons
 
 bool SplineEditDocument::Undo() {
     if (undo_.empty()) return false;
-    redo_.push_back(PointsOf(spline_));
-    spline_ = FromPoints(undo_.back());
+    redo_.push_back({PointsOf(spline_), selected});
+    spline_ = FromPoints(undo_.back().points);
+    selected = undo_.back().selection;
     undo_.pop_back();
     merging_ = false;
     if (selected && *selected >= spline_.PointCount()) selected.reset();
@@ -105,10 +110,12 @@ bool SplineEditDocument::Undo() {
 
 bool SplineEditDocument::Redo() {
     if (redo_.empty()) return false;
-    undo_.push_back(PointsOf(spline_));
-    spline_ = FromPoints(redo_.back());
+    undo_.push_back({PointsOf(spline_), selected});
+    spline_ = FromPoints(redo_.back().points);
+    selected = redo_.back().selection;
     redo_.pop_back();
     merging_ = false;
+    if (selected && *selected >= spline_.PointCount()) selected.reset();
     ++revision_;
     return true;
 }
