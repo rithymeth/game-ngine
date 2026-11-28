@@ -1529,7 +1529,7 @@ AETHER_TEST(Openers_TilemapDropRefusesAnUnreadableTileset) {
     map.tileset = record->guid;
     map.Resize(2, 2);
     map.AddLayer("Ground");
-    map.Set(0, 0, 0, 0);
+    map.Set(0, 0, 0, 4); // textureless collision maps may use IDs outside a render grid
     if (!sprite2d::SaveTilemap(paths.content / "Ground.atilemap", map)) { CHECK(false); return; }
     std::ofstream(set_file) << R"({"$type":"Tileset","texture_size":[16,16],"tile_size":[0,8]})";
 
@@ -1618,6 +1618,21 @@ AETHER_TEST(Openers_AuthoredTilemapWorksInAnIndependentStrictShippingPackage) {
     // A non-solid out-of-sheet tile would silently disappear even when the
     // tileset has no invalid flags. A strict package must reject that too.
     if (!sprite2d::SaveTilemap(map_path, bad_map, &error)) { CHECK(false); return; }
+    {
+        SceneDocument dropped;
+        dropped.Commands().Clear();
+        const auto original_count = dropped.Entities().size();
+        bool placed_bad = true;
+        const auto problem = PlaceContentAsset(dropped, paths.content, "Ground.atilemap", at, &placed_bad);
+        CHECK(!placed_bad && problem.find("layer 0 cell (2, 2) uses tile index 4 outside the 4-tile grid in Ground.atileset") != std::string::npos);
+        CHECK(dropped.Entities().size() == original_count && !dropped.CanUndo());
+
+        // Repainting to a valid index makes the exact same asset placeable.
+        CHECK(sprite2d::SaveTilemap(map_path, painted.Map(), &error));
+        PlaceContentAsset(dropped, paths.content, "Ground.atilemap", at, &placed_bad);
+        CHECK(placed_bad && dropped.Entities().size() == original_count + 1 && dropped.CanUndo());
+        if (!sprite2d::SaveTilemap(map_path, bad_map, &error)) { CHECK(false); return; }
+    }
     options.output_dir = paths.root.parent_path() / "Rejected Visible Tile";
     const auto painted_tile = cook::Package(options);
     CHECK(!painted_tile.ok && painted_tile.error.find(

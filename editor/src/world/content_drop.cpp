@@ -67,6 +67,22 @@ std::string PlaceTilemap(SceneDocument& document, const std::filesystem::path& c
     sprite2d::Tileset tileset_data;
     if (!sprite2d::LoadTileset(database.SourcePath(tileset->guid), tileset_data, &error))
         return "Could not place " + path + ": " + tileset->path + ": " + error;
+    // Only texture-backed tiles have to fit a UV grid. Textureless
+    // collision tiles can deliberately use arbitrary non-negative IDs.
+    if (!tileset_data.texture.IsNull() && map.width != 0) {
+        const u32 count = tileset_data.TileCount();
+        for (usize layer = 0; layer < map.layers.size(); ++layer) {
+            const auto& cells = map.layers[layer].cells;
+            const auto bad = std::find_if(cells.begin(), cells.end(), [&](i32 tile) {
+                return tile >= 0 && static_cast<u32>(tile) >= count;
+            });
+            if (bad == cells.end()) continue;
+            const usize index = static_cast<usize>(bad - cells.begin());
+            return "Could not place " + path + ": layer " + std::to_string(layer) + " cell (" +
+                std::to_string(index % map.width) + ", " + std::to_string(index / map.width) + ") uses tile index " +
+                std::to_string(*bad) + " outside the " + std::to_string(count) + "-tile grid in " + tileset->path;
+        }
+    }
     sprite2d::TilemapRenderer renderer;
     renderer.tilemap.guid = record->guid;
     return Create2DEntity(document, path, at, renderer, placed, parent);
