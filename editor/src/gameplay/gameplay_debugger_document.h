@@ -84,7 +84,9 @@ public:
 
     // Re-reads the world (never changes it). Rows past `kMaxEntities` are dropped.
     static constexpr usize kMaxEntities = 500;
-    void Rebuild();
+    void Rebuild() { Rebuild(!selected_.IsNull()); }
+    // An explicit selected-only view stays empty when no live entity is selected.
+    void Rebuild(bool selected_only);
     const std::vector<DebugEntityRows>& Entities() const { return entities_; }
     usize TotalEntities() const { return total_; } // before the cap and the filter
 

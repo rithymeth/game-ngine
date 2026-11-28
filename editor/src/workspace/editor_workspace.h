@@ -1,6 +1,7 @@
 #pragma once
 
 #include "aether/core/base.h"
+#include "aether/ecs/entity.h"
 
 #include <filesystem>
 #include <functional>
@@ -108,6 +109,7 @@ public:
         gas::AbilitySystem* abilities = nullptr;
         const gas::EffectLibrary* effect_library = nullptr;
         const gas::AbilityLibrary* ability_library = nullptr;
+        Entity selected = kNullEntity; // a handle in world, never the authoring scene's handle
     };
     // Queried immediately before each debug draw. A missing world shows the sample instead.
     void SetGameplaySourceProvider(std::function<GameplaySource()> provider);

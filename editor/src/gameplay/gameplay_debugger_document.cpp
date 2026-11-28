@@ -24,10 +24,10 @@ bool EntityLess(Entity a, Entity b) { return a.index != b.index ? a.index < b.in
 
 } // namespace
 
-void GameplayDebuggerDocument::Rebuild() {
+void GameplayDebuggerDocument::Rebuild(bool selected_only) {
     entities_.clear();
     total_ = 0;
-    if (world_ == nullptr) return;
+    if (world_ == nullptr || (selected_only && !Alive(selected_))) return;
     std::vector<Entity> found;
     const auto collect = [&](ComponentId id) {
         world_->ForEachArchetype([&](const Archetype& a) {
@@ -44,7 +44,7 @@ void GameplayDebuggerDocument::Rebuild() {
     collect(GetComponentId<TagContainer>());
     std::sort(found.begin(), found.end(), EntityLess);
     found.erase(std::unique(found.begin(), found.end()), found.end());
-    if (!selected_.IsNull()) {
+    if (selected_only) {
         found.erase(std::remove_if(found.begin(), found.end(), [&](Entity e) { return e != selected_; }), found.end());
     }
     total_ = found.size();

@@ -589,6 +589,7 @@ struct EditorWorkspace::Impl {
              [this] {
                  const auto source = gameplay_source_provider ? gameplay_source_provider() : gameplay_source;
                  gameplay_doc->SetWorld(source.world ? source.world : &gameplay_sample);
+                 gameplay_doc->Select(source.world ? source.selected : kNullEntity);
                  gameplay_doc->SetSystems(source.world ? source.attributes : nullptr, source.world ? source.effects : nullptr,
                                           source.world ? source.abilities : nullptr);
                  gameplay_doc->SetLibraries(source.world ? source.effect_library : &gameplay_effects,
@@ -597,6 +598,7 @@ struct EditorWorkspace::Impl {
                  gameplay_panel->Draw();
                  // The provider may replace its world on the next game tick. Do not retain borrowed pointers.
                  gameplay_doc->SetWorld(nullptr);
+                 gameplay_doc->Select(kNullEntity);
                  gameplay_doc->SetSystems(nullptr, nullptr, nullptr);
                  gameplay_doc->SetLibraries(nullptr, nullptr);
              }},

@@ -122,6 +122,10 @@ game to keep advancing. Debugger edits use the preview's gameplay systems, so sc
 Blueprints hear the changes. Before Game View starts or after you press Stop, the debugger
 shows a labeled sample instead.
 
+To inspect one entity, select it in the scene hierarchy and turn on **Selected only**.
+The debugger matches the selection to its counterpart in the preview. If there's no match
+or more than one entity is selected, the checked filter shows no rows.
+
 ## Good to know
 
 - A broken `.aeffect` or `.aability` file is a warning in the player (it names the file and the error), not a crash. An ability that names a missing effect is one of those warnings.

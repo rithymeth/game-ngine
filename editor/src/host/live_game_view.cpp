@@ -51,10 +51,17 @@ const ImageTexture& LiveGameView::Picture() const {
 
 EditorWorkspace::GameplaySource LiveGameView::GameplaySource(const SceneDocument& document) const {
     if (play_session_id_ == 0 || document.PlaySessionId() != play_session_id_) return {};
-    const auto* game = viewport_.GameForDebugging();
+    auto* game = viewport_.GameForDebugging();
     if (!game) return {};
     const auto runtime = game->GameplayForDebugging();
-    return {runtime.world, runtime.attributes, runtime.effects, runtime.abilities, runtime.effect_library, runtime.ability_library};
+    Entity selected = kNullEntity;
+    if (runtime.world && document.Selection().size() == 1) {
+        // A preview can pack entities differently or replace its scene. Use the authored GUID, not the ECS handle.
+        if (const auto* id = document.GetWorld().GetComponent<IdComponent>(document.Selection().front())) {
+            selected = game->Guids().Find(*runtime.world, id->guid);
+        }
+    }
+    return {runtime.world, runtime.attributes, runtime.effects, runtime.abilities, runtime.effect_library, runtime.ability_library, selected};
 }
 
 void LiveGameView::Stop() {
