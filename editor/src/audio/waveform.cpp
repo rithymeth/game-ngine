@@ -59,6 +59,12 @@ void WaveformView::SetSound(const audio::SoundWave* sound) {
     ShowAll();
 }
 
+void WaveformView::SetMixer(audio::Mixer* mixer) {
+    if (mixer_ == mixer) return;
+    Stop();
+    mixer_ = mixer;
+}
+
 void WaveformView::ShowAll() {
     view_start_ = 0;
     view_frames_ = sound_ != nullptr ? sound_->Frames() : 0;
@@ -114,13 +120,12 @@ bool WaveformView::Playing() const { return mixer_ != nullptr && voice_ != 0 && 
 
 void WaveformView::Tick() {
     if (voice_ == 0 || mixer_ == nullptr) return;
-    if (!mixer_->IsPlaying(voice_)) {
-        voice_ = 0;
-        return;
-    }
-    playhead_ = std::max(0.0f, mixer_->PlaybackTime(voice_));
-    if (HasSelection() && playhead_ >= sel_to_) {
-        // Round again from the selection's start.
+    const f32 position = mixer_->PlaybackTime(voice_);
+    if (position < 0.0f) voice_ = 0;
+    else playhead_ = position;
+    if (HasSelection() && (voice_ == 0 || playhead_ >= sel_to_)) {
+        // The mixer may already have retired the voice at the clip's end.
+        // Loop from the selection start even when that happened between ticks.
         playhead_ = sel_from_;
         Play();
     }

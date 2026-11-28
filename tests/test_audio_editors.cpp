@@ -144,6 +144,55 @@ AETHER_TEST(AudioEditor_WaveformPeaksStatsAndPreview) {
     imgui.Frame([&] { view.Draw(); });
 }
 
+AETHER_TEST(AudioEditor_WaveformLoopsWhenTheVoiceFinishesBetweenTicks) {
+    const SoundWave tone = GenerateTone(100.0f, 1.0f, kRate, 0.5f);
+    const SoundWave replacement = Dc(0.25f, kRate / 2);
+    Mixer mixer(kRate), other(kRate);
+    WaveformView view;
+    view.SetMixer(&mixer);
+    view.SetSound(&tone);
+    view.SetSelection(0.99f, 1.0f);
+    AETHER_CHECK(view.Play() && view.Playing());
+    Render(mixer, 1024); // No Tick until the mixer has crossed the physical end.
+    AETHER_CHECK(mixer.VoiceCount() == 0);
+    view.Tick();
+    const bool resumed = view.Playing() && mixer.VoiceCount() == 1;
+    AETHER_CHECK(resumed);
+    if (resumed) {
+        AETHER_CHECK(std::fabs(view.Playhead() - 0.99f) < 1e-4f);
+        AETHER_CHECK(std::fabs(mixer.PlaybackTime(mixer.Voices()[0].id) - 0.99f) < 1e-4f);
+    }
+    Render(mixer, 1024);
+    view.Tick();
+    AETHER_CHECK(view.Playing()); // A second end starts the same selection again.
+
+    view.Stop();
+    Render(mixer, 1024);
+    view.Tick();
+    AETHER_CHECK(view.HasSelection() && !view.Playing() && mixer.VoiceCount() == 0);
+
+    view.SetSelection(0.0f, 0.0f);
+    view.SetPlayhead(0.99f);
+    AETHER_CHECK(view.Play());
+    Render(mixer, 1024);
+    view.Tick();
+    AETHER_CHECK(!view.Playing() && mixer.VoiceCount() == 0);
+
+    view.SetSelection(0.99f, 1.0f);
+    AETHER_CHECK(view.Play());
+    Render(mixer, 1024);
+    view.SetSound(&replacement);
+    view.Tick();
+    AETHER_CHECK(!view.HasSelection() && !view.Playing() && mixer.VoiceCount() == 0);
+
+    view.SetSelection(0.1f, 0.2f);
+    AETHER_CHECK(view.Play());
+    view.SetMixer(&other);
+    Render(mixer, 1024);
+    view.Tick();
+    AETHER_CHECK(!view.Playing() && mixer.VoiceCount() == 0 && other.VoiceCount() == 0);
+}
+
 AETHER_TEST(AudioEditor_WaveformDragKeepsItsAnchorDuringPlayback) {
     HeadlessImGui imgui;
     const SoundWave sound = Dc(0.25f, kRate);
