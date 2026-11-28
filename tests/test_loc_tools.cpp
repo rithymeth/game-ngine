@@ -194,6 +194,19 @@ AETHER_TEST(LocPo_ExportsAndRoundTrips) {
     CHECK(back.KeyCount() == 1 && *back.Find("fr", "greeting") == "Dites \"salut\"\npuis\\partez\tmaintenant"); // play had no translation
 }
 
+AETHER_TEST(LocPo_AcceptsTabsAfterFieldNames) {
+    const std::string po = "msgid\t\"\"\nmsgstr\t\"\"\n\"Language: fr\\n\"\n\n"
+                           "msgctxt\t\"menu.play\"\nmsgid\t\"Play\"\nmsgstr\t\"Jouer\"\n";
+    CHECK(PoLanguage(po) == "fr");
+    StringTable table;
+    std::vector<std::string> errors;
+    CHECK(ImportPo(table, "fr", po, &errors) && errors.empty());
+    const std::string* translation = table.Find("fr", "menu.play");
+    CHECK(table.KeyCount() == 1 && translation && *translation == "Jouer");
+
+    CHECK(!ImportPo(table, "fr", "msgid_plural\t\"Plays\"\n", &errors));
+}
+
 AETHER_TEST(LocPo_ImportRulesAndErrors) {
     StringTable t;
     std::vector<std::string> errors;

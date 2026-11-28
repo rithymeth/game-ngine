@@ -126,7 +126,9 @@ bool ReadEntries(std::string_view po, std::vector<std::string>* errors, Visit vi
             continue;
         }
         const auto field_of = [&](std::string_view word, Field f) -> bool {
-            if (!StartsWith(line, word) || line.size() <= word.size() || (line[word.size()] != ' ' && line[word.size()] != '"')) return false;
+            if (!StartsWith(line, word) || line.size() <= word.size()) return false;
+            const char separator = line[word.size()];
+            if (separator != ' ' && separator != '\t' && separator != '"') return false;
             // A new source/context can start the next entry without a blank
             // line. Finalize the previous entry before overwriting its fields.
             if ((f == Field::Ctxt && (e.has_ctxt || e.has_id || e.has_str)) ||
