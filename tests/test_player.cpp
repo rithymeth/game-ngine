@@ -758,6 +758,39 @@ AETHER_TEST(Player_RejectsMalformedSceneWithoutEndingPlay) {
     }
 }
 
+AETHER_TEST(Player_AnExplicitSceneLoadSupersedesAQueuedTransition) {
+    const stdfs::path pak = TestDir("ReplaceQueuedSceneLoad") / "Game.apak";
+    const std::string scene = R"({"$type":"Scene","$version":1,"entities":[]})";
+    pak::PakWriter writer;
+    CHECK(writer.Add("Manifest.json", Manifest("Scenes/start.ascene", "unused").dump()));
+    CHECK(writer.Add("Content/Scenes/start.ascene", scene));
+    CHECK(writer.Add("Content/Scenes/queued.ascene", scene));
+    CHECK(writer.Add("Content/Scenes/explicit.ascene", scene));
+    CHECK(writer.Add("Content/Scenes/broken.ascene", std::string("{ incomplete")));
+    CHECK(writer.Write(pak.string()));
+
+    GamePackage package;
+    std::string error;
+    if (!package.Mount(pak.string(), 0, &error)) { CHECK(false); return; }
+    Game game(package);
+    if (!game.LoadStartupScene(&error)) { CHECK(false); return; }
+    game.BeginPlay();
+
+    CHECK(game.RequestScene("Scenes/queued.ascene"));
+    CHECK(game.LoadScene("Scenes/explicit.ascene", &error));
+    game.BeginPlay();
+    game.Tick(1.0f / 60.0f);
+    CHECK(game.SceneName() == "Scenes/explicit.ascene");
+    CHECK(game.IsPlaying());
+
+    // A rejected replacement does not supersede the pending transition.
+    CHECK(game.RequestScene("Scenes/queued.ascene"));
+    CHECK(!game.LoadScene("Scenes/broken.ascene", &error));
+    game.Tick(1.0f / 60.0f);
+    CHECK(game.SceneName() == "Scenes/queued.ascene");
+    CHECK(game.IsPlaying());
+}
+
 // A script can move the game to another scene (a door, a fast-travel point): Scene.Load asks, the game swaps at the start of the next frame, the new
 // scene's scripts run, and a scene that is missing or does not parse leaves the current one running.
 AETHER_TEST(Player_ScriptsCanLoadAnotherScene) {

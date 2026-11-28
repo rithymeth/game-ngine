@@ -543,6 +543,9 @@ bool Game::LoadScene(const std::string& path, std::string* error) {
     const bool loaded = is_json ? LoadSceneJsonFromMemory(*world, bytes, path) : LoadSceneFromMemory(*world, bytes, path);
     if (!loaded) return Fail(error, "Can't load the scene " + path);
 
+    // A successful replacement supersedes any earlier request from the outgoing scene.
+    pending_scene_.clear();
+    pending_spawn_.clear();
     shake_.Reset(); // the world it shook is about to go
     LoadInputAssets();
     LoadLocalization();
