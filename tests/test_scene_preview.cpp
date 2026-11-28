@@ -731,7 +731,10 @@ AETHER_TEST(GameView_LiveGameplaySourceTracksTheCurrentSession) {
     ScenePanel scene(content);
     if (!scene.OpenScene("Scenes/Main.ascene", true)) { AETHER_CHECK(false); return; }
     SceneDocument& document = scene.Document();
+    const Entity gap = document.CreateEntity("Authoring slot to remove");
     const Entity actor = document.CreateEntity("Gameplay probe");
+    AETHER_CHECK(document.DestroyEntity(gap));
+    document.SetSelection({actor});
     gas::AttributeSet attrs;
     AETHER_CHECK(attrs.Define("LiveProbeCharge", 42));
     document.GetWorld().AddComponent(actor, attrs);
@@ -759,6 +762,10 @@ AETHER_TEST(GameView_LiveGameplaySourceTracksTheCurrentSession) {
     AETHER_CHECK(debugger.Entities().size() == 1);
     if (debugger.Entities().size() != 1) return;
     const Entity running_actor = debugger.Entities().front().entity;
+    AETHER_CHECK(running_actor != actor); // authoring has a gap; the serialized preview does not
+    AETHER_CHECK(current.selected == running_actor);
+    document.SetSelection({actor, document.Entities().front()});
+    AETHER_CHECK(live.GameplaySource(document).selected.IsNull()); // pick one entity at a time
     AETHER_CHECK(current.attributes->GetBase(running_actor, "LiveProbeCharge") == 42);
     debugger.SetBase(running_actor, "LiveProbeCharge", 17);
     AETHER_CHECK(current.attributes->GetBase(running_actor, "LiveProbeCharge") == 17);

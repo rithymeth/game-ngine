@@ -235,6 +235,39 @@ AETHER_TEST(GameplayDebugger_ActionsEditComponentsWithoutSystems) {
     CHECK(r.doc.CancelAbility(r.hero, r.doc.Entities()[0].abilities[0].handle).find("Cancelled") == 0 && r.world.GetComponent<AbilityContainer>(r.hero)->active.empty());
 }
 
+AETHER_TEST(GameplayDebugger_SelectedOnlyControlsTheDisplayedRows) {
+    HeadlessImGui imgui;
+    Rig r;
+    GameplayDebuggerPanel panel(r.doc);
+    r.doc.Select(r.other);
+    ImVec2 checkbox{};
+    const auto draw = [&] {
+        ImGui::SetNextItemWidth(200.0f); // the filter sits just before the checkbox
+        const ImVec2 start = ImGui::GetCursorScreenPos();
+        const float half_frame = ImGui::GetFrameHeight() * 0.5f;
+        checkbox = ImVec2(start.x + 200.0f + ImGui::GetStyle().ItemSpacing.x + half_frame, start.y + half_frame);
+        panel.Draw();
+    };
+    imgui.Frame(draw);
+    CHECK(r.doc.Entities().size() == 2); // unchecked: do not filter to the selected entity
+    const auto toggle = [&] {
+        ImGuiIO& io = ImGui::GetIO();
+        io.AddMousePosEvent(checkbox.x, checkbox.y);
+        imgui.Frame(draw);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+        imgui.Frame(draw);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+        imgui.Frame(draw);
+    };
+    toggle();
+    CHECK(r.doc.Entities().size() == 1 && r.doc.Entities().front().entity == r.other);
+    r.doc.Select(kNullEntity);
+    imgui.Frame(draw);
+    CHECK(r.doc.Entities().empty()); // do not silently widen a checked filter
+    toggle();
+    CHECK(r.doc.Entities().size() == 2);
+}
+
 AETHER_TEST(GameplayDebugger_PanelDrawsInEveryState) {
     HeadlessImGui imgui;
     GameplayDebuggerDocument none;
@@ -250,7 +283,7 @@ AETHER_TEST(GameplayDebugger_PanelDrawsInEveryState) {
     imgui.Frame([&] { panel.Draw(); }); // an entity went away between frames
     r.doc.Select(r.other);
     imgui.Frame([&] { panel.Draw(); });
-    CHECK(r.doc.Entities().empty());
+    CHECK(r.doc.Entities().size() == 1 && r.doc.Entities().front().entity == r.hero);
 }
 
 AETHER_TEST(GameplayDebugger_QueriesTheCurrentSourceAtDrawTime) {

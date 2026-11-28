@@ -15,7 +15,10 @@ void GameplayDebuggerPanel::Draw(u64 world_generation) {
     ImGui::BeginDisabled(doc_.Selected().IsNull() && !selected_only_);
     ImGui::Checkbox("Selected only", &selected_only_);
     ImGui::EndDisabled();
-    doc_.Rebuild();
+    if (doc_.Selected().IsNull() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        ImGui::SetTooltip("Select one scene entity present in the Game View preview.");
+    }
+    doc_.Rebuild(selected_only_);
     ImGui::TextDisabled("%zu of %zu entities with gameplay data", doc_.Entities().size(), doc_.TotalEntities());
     if (!message_.empty()) ImGui::TextUnformatted(message_.c_str());
     const std::vector<DebugEntityRows> entities = doc_.Entities(); // actions below rebuild next frame
