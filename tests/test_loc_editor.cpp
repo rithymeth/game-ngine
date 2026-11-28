@@ -289,6 +289,48 @@ AETHER_TEST(LocEditor_PoRoundTripAndGather) {
     CHECK(Slurp(file).find("quit,Beenden,Quit,Quitter") != std::string::npos);
 }
 
+AETHER_TEST(LocEditor_PanelClearsASelectionMissingFromTheOpenTable) {
+    HeadlessImGui ui;
+    const stdfs::path root = Dir("panel_language_switch");
+    const stdfs::path first = MakeTable(root);
+    const stdfs::path second = root / "alternate.astrings";
+    const stdfs::path po_dir = root / "po";
+    Write(second, "key,en,fr\nother,Other,Autre\n");
+
+    LocalizationDocument doc;
+    LocalizationPanel panel(doc);
+    panel.SetPoDirectory(po_dir);
+    const auto draw = [&] { ui.Frame([&] { panel.Draw(); }); };
+    CHECK(doc.Open(first));
+    panel.SelectLanguage("de");
+    draw();
+    CHECK(panel.SelectedLanguage() == "de");
+
+    CHECK(!doc.Open(root / "missing.astrings"));
+    draw();
+    CHECK(panel.SelectedLanguage() == "de");
+    CHECK(doc.Reload());
+    draw();
+    CHECK(panel.SelectedLanguage() == "de");
+
+    CHECK(doc.Open(second));
+    CHECK(!panel.ExportSelectedPo() && !stdfs::exists(po_dir / "de.po"));
+    draw();
+    CHECK(panel.SelectedLanguage().empty() && !doc.Dirty());
+
+    panel.SelectLanguage("fr");
+    CHECK(doc.Open(first));
+    draw();
+    CHECK(panel.SelectedLanguage() == "fr"); // a language shared by both tables stays selected
+    CHECK(doc.Open(second));
+    panel.SelectLanguage("de");
+    draw();
+    CHECK(panel.SelectedLanguage().empty()); // validate even when opening was not the last operation
+    doc.Close();
+    draw();
+    CHECK(panel.SelectedLanguage().empty());
+}
+
 AETHER_TEST(LocEditor_PanelDrawsAndPreviewsPseudoText) {
     HeadlessImGui ui;
     const stdfs::path file = MakeTable(Dir("panel"));

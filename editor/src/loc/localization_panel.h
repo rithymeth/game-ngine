@@ -43,6 +43,7 @@ public:
 
 private:
     void RefreshPreview();
+    void ValidateSelectedLanguage();
 
     LocalizationDocument& doc_;
     std::filesystem::path content_dir_, po_dir_;

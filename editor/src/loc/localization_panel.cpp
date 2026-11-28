@@ -7,6 +7,8 @@
 #include <imgui.h>
 #include <misc/cpp/imgui_stdlib.h>
 
+#include <algorithm>
+
 namespace aether::editor {
 
 namespace stdfs = std::filesystem;
@@ -37,7 +39,14 @@ void LocalizationPanel::RefreshPreview() {
     preview_revision_ = doc_.Revision();
 }
 
+void LocalizationPanel::ValidateSelectedLanguage() {
+    if (selected_.empty()) return;
+    const auto languages = doc_.Table().Languages();
+    if (std::find(languages.begin(), languages.end(), selected_) == languages.end()) selected_.clear();
+}
+
 bool LocalizationPanel::ExportSelectedPo() {
+    ValidateSelectedLanguage();
     if (selected_.empty() || po_dir_.empty()) return false;
     const bool ok = doc_.ExportPo(selected_, po_dir_ / (selected_ + ".po"));
     message_ = ok ? "Wrote " + (po_dir_ / (selected_ + ".po")).string() : "Couldn't write the .po file";
@@ -45,6 +54,7 @@ bool LocalizationPanel::ExportSelectedPo() {
 }
 
 bool LocalizationPanel::ImportPoFile(const stdfs::path& file) {
+    ValidateSelectedLanguage();
     std::string text;
     if (!fs::ReadFileText(file.string(), text)) {
         message_ = "Couldn't read " + file.string();
@@ -56,6 +66,7 @@ bool LocalizationPanel::ImportPoFile(const stdfs::path& file) {
 }
 
 void LocalizationPanel::Draw() {
+    ValidateSelectedLanguage();
     if (previewing_ && preview_revision_ != doc_.Revision()) RefreshPreview();
     if (!doc_.IsOpen()) {
         ImGui::TextDisabled("No string table open (a .astrings file).");
@@ -66,7 +77,7 @@ void LocalizationPanel::Draw() {
     ImGui::SameLine();
     if (ImGui::Button("Save")) message_ = doc_.Save() ? "Saved." : "Couldn't save.";
     ImGui::SameLine();
-    if (ImGui::Button("Reload")) doc_.Reload();
+    if (ImGui::Button("Reload") && doc_.Reload()) ValidateSelectedLanguage();
     ImGui::SameLine();
     bool preview = previewing_;
     if (ImGui::Checkbox("Pseudo-localization preview", &preview)) SetPreview(preview);
