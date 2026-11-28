@@ -97,7 +97,8 @@ bool TilemapPanel::LoadJumpProofOverlay(const std::filesystem::path& path, std::
     }
     std::optional<GhostCell> cell;
     if (data.contains("asset") || data.contains("cell")) {
-        if (marker.is_null() || !data.contains("asset") || !data["asset"].is_string() ||
+        const bool verdict_changed = verdicts && verdicts->before_passed != verdicts->after_passed;
+        if ((marker.is_null() && !verdict_changed) || !data.contains("asset") || !data["asset"].is_string() ||
             !data.contains("cell") || !data["cell"].is_object())
             return fail("Invalid changed-cell evidence.");
         const auto name = data["asset"].get<std::string>();

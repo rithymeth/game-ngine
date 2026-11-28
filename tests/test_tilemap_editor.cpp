@@ -1664,17 +1664,29 @@ AETHER_TEST(TilemapEditor_JumpProofMarksOnlyTheMatchingChangedCell) {
         out << R"({"frames":2,"first_difference_frame":2,"before_path":[[1,1,0],[2,2,0]],"after_path":[[1,1,0],[2,1.5,0]],"asset":"Content/Tiles/Level.atilemap","cell":{"layer":0,"x":1,"y":1,"before":-1,"after":3}})";
     }
     if (!panel.LoadJumpProofOverlay(file)) { CHECK(false); return; }
+    const auto vertices_with_color = [](ImU32 color) {
+        usize count = 0;
+        for (const auto* list : ImGui::GetDrawData()->CmdLists)
+            for (const auto& vertex : list->VtxBuffer)
+                if (vertex.col == color) ++count;
+        return count;
+    };
     const auto marked = [&] {
         ui.Frame([&] { panel.Draw(); });
-        const auto* draw = ImGui::GetDrawData();
-        for (const auto* list : draw->CmdLists)
-            for (const auto& vertex : list->VtxBuffer)
-                if (vertex.col == IM_COL32(138, 255, 133, 255)) return true;
-        return false;
+        return vertices_with_color(IM_COL32(138, 255, 133, 255)) > 0;
     };
     const u64 revision = doc.Revision();
     CHECK(marked());
     CHECK(doc.Revision() == revision && !doc.dirty());
+    constexpr ImU32 before_color = IM_COL32(75, 204, 255, 255);
+    const auto with_marker = vertices_with_color(before_color);
+    std::ofstream(file) << R"({"frames":2,"first_difference_frame":null,"before_status":"pass","after_status":"missed","verdict_changed":true,"before_path":[[1,1,0],[2,2,0]],"after_path":[[1,1,0],[2.002,2,0]],"asset":"Content/Tiles/Level.atilemap","cell":{"layer":0,"x":1,"y":1,"before":-1,"after":3}})";
+    CHECK(panel.LoadJumpProofOverlay(file) && marked());
+    const auto without_marker = vertices_with_color(before_color);
+    CHECK(without_marker > 0 && without_marker < with_marker);
+    std::ofstream(file) << R"({"frames":2,"first_difference_frame":null,"before_status":"pass","after_status":"pass","verdict_changed":false,"before_path":[[1,1,0],[2,2,0]],"after_path":[[1,1,0],[2,2,0]],"asset":"Content/Tiles/Level.atilemap","cell":{"layer":0,"x":1,"y":1,"before":-1,"after":3}})";
+    CHECK(!panel.LoadJumpProofOverlay(file) && marked());
+    CHECK(vertices_with_color(before_color) == without_marker);
     doc.brush = 4;
     doc.Apply(1, 1);
     CHECK(!marked()); // changed again since the package under comparison

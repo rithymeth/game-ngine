@@ -135,6 +135,20 @@ class JumpProofIsolateTests(unittest.TestCase):
         self.assertEqual(receipt["after_status"], "missed")
         self.assertTrue(receipt["verdict_changed"])
 
+    def test_target_edge_keeps_single_tile_evidence_without_a_position_marker(self):
+        # X=1 is on the inclusive target boundary. A smaller-than-tolerance
+        # step outside changes the verdict without making a path marker.
+        receipt = self.isolate(after_x=1.002)
+        self.assertEqual(receipt["asset"], "Content/Level.atilemap")
+        self.assertEqual(receipt["cell"], {"layer": 0, "x": 0, "y": 0, "before": 1, "after": 2})
+        self.assertEqual((receipt["before_status"], receipt["after_status"]), ("pass", "missed"))
+        self.assertTrue(receipt["verdict_changed"])
+        self.assertIsNone(receipt["first_difference_frame"])
+        self.assertNotIn("before_position", receipt)
+        self.assertNotIn("after_position", receipt)
+        self.assertEqual(receipt["before_path"], [[1, 1, 0]])
+        self.assertEqual(receipt["after_path"], [[1.002, 1, 0]])
+
     def test_different_route_rejected_in_changed_build_and_repeat(self):
         different = copy.deepcopy(ROUTE)
         different["fixed_hz"] = 120

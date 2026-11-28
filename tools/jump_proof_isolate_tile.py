@@ -131,18 +131,21 @@ def isolate(args):
         (before, before_status), (after, after_status), (repeat, _) = traces
         if before != repeat:
             raise ValueError("baseline was not repeatable")
+        # A target edge can change the verified verdict even when both paths
+        # stay within tolerance. Keep the cell evidence without a path marker.
+        result = {"asset": asset, "cell": cell, "frames": len(before),
+                  "first_difference_frame": None,
+                  "before_status": before_status, "after_status": after_status,
+                  "verdict_changed": before_status != after_status}
         for frame, (a, b) in enumerate(zip(before, after), 1):
             if any(abs(a[i] - b[i]) > TOLERANCE for i in (0, 1)):
-                result = {"asset": asset, "cell": cell, "frames": len(before),
-                          "first_difference_frame": frame, "before_position": a, "after_position": b,
-                          "before_status": before_status, "after_status": after_status,
-                          "verdict_changed": before_status != after_status}
-                if args.overlay_data:
-                    if len(before) > 20_000:
-                        raise ValueError("editor overlay supports up to 20000 frames")
-                    result.update(before_path=before, after_path=after)
-                return result
-        raise ValueError("no position difference exceeds the trace tolerance")
+                result.update(first_difference_frame=frame, before_position=a, after_position=b)
+                break
+        if args.overlay_data:
+            if len(before) > 20_000:
+                raise ValueError("editor overlay supports up to 20000 frames")
+            result.update(before_path=before, after_path=after)
+        return result
 
 
 def main():
