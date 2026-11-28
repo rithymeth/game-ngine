@@ -334,6 +334,33 @@ AETHER_TEST(VfxEditor_PreviewIgnoresNonFiniteFrameTime) {
     CHECK(Near(preview.Time(), 2.0f * ParticlePreview::kStep, 1e-6f));
 }
 
+AETHER_TEST(VfxEditor_PreviewBoundsInteractiveCatchUp) {
+    ParticleSystemDocument doc;
+    ParticlePreview preview;
+    preview.Reset(doc.Get());
+    const f32 step = ParticlePreview::kStep;
+    preview.Advance(step * 0.5f);
+    preview.Advance(0.5f); // Drop the excess, retaining only the incoming substep carry.
+    CHECK(Near(preview.Time(), 8.0f * step, 1e-6f));
+    preview.Advance(step * 0.5f);
+    CHECK(Near(preview.Time(), 9.0f * step, 1e-6f));
+    preview.Advance(step);
+    CHECK(Near(preview.Time(), 10.0f * step, 1e-6f)); // Nothing over-budget leaked into a later draw.
+}
+
+AETHER_TEST(VfxEditor_PreviewRecoversFromHugeFiniteFrameTimes) {
+    ParticleSystemDocument doc;
+    const f32 step = ParticlePreview::kStep;
+    for (const f32 delta : {0x1p20f, std::numeric_limits<f32>::max()}) {
+        ParticlePreview preview;
+        preview.Reset(doc.Get());
+        preview.Advance(delta);
+        CHECK(Near(preview.Time(), 8.0f * step, 1e-6f));
+        preview.Advance(step);
+        CHECK(Near(preview.Time(), 9.0f * step, 1e-6f));
+    }
+}
+
 AETHER_TEST(VfxEditor_PreviewAndPanel) {
     // A fountain: rate, upward cone, gravity.
     ParticleSystemDocument doc;
@@ -346,7 +373,7 @@ AETHER_TEST(VfxEditor_PreviewAndPanel) {
     a.Reset(doc.Get());
     a.Advance(0.01f);
     CHECK(a.Time() == 0.0f && a.Count() == 0); // less than a step: carried
-    a.Advance(1.0f - 0.01f);
+    for (int i = 1; i < 100; ++i) a.Advance(0.01f);
     CHECK(Near(a.Time(), 1.0f, 1e-4f) && a.Count() == 30);
     b.Seek(doc.Get(), 1.0f);
     bool same = a.Count() == b.Count();
