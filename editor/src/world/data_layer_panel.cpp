@@ -6,16 +6,35 @@
 
 #include <imgui.h>
 
+#include <algorithm>
+#include <string_view>
+#include <unordered_map>
+
 namespace aether::editor {
 
 DataLayerPanel::DataLayerPanel(World& world, GuidIndex& guids, CommandStack& stack)
     : world_(world), guids_(guids), stack_(stack) {}
 
 std::vector<DataLayerPanel::Row> DataLayerPanel::Rows() const {
+    struct Summary {
+        usize entities = 0;
+        bool all_active = true;
+    };
+    // Borrow the names only while reading the unchanged world. Count every
+    // layer member, then find inactive overrides without scanning per layer.
+    std::unordered_map<std::string_view, Summary> summaries;
+    world_.ForEach<DataLayer>([&](const DataLayer& layer) {
+        if (!layer.layer.empty()) ++summaries[layer.layer].entities;
+    });
+    world_.ForEach<DataLayer, Active>([&](const DataLayer& layer, const Active& active) {
+        if (!layer.layer.empty() && !active.active) summaries[layer.layer].all_active = false;
+    });
+
     std::vector<Row> rows;
-    for (const std::string& name : DataLayerNames(world_)) {
-        rows.push_back(Row{name, DataLayerSize(world_, name), IsDataLayerActive(world_, name)});
-    }
+    rows.reserve(summaries.size());
+    for (const auto& [name, summary] : summaries)
+        rows.push_back({std::string(name), summary.entities, summary.all_active});
+    std::sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) { return a.layer < b.layer; });
     return rows;
 }
 

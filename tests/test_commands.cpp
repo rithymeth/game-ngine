@@ -464,6 +464,29 @@ AETHER_TEST(Commands_DataLayerPanelSwitchesThroughTheStack) {
     AETHER_CHECK(world.GetComponent<Active>(b) == nullptr || world.GetComponent<Active>(b)->active);
     AETHER_CHECK(world.GetComponent<Active>(c) == nullptr || world.GetComponent<Active>(c)->active);
 }
+AETHER_TEST(Commands_DataLayerRowsMatchSceneCountsAndRemainSorted) {
+    World world;
+    GuidIndex guids;
+    CommandStack stack;
+    world.CreateEntity(DataLayer{"Z Props"});
+    const Entity z_inactive = world.CreateEntity(DataLayer{"Z Props"}, Active{false});
+    const Entity a_active = world.CreateEntity(DataLayer{"A Terrain"}, Active{true});
+    world.CreateEntity(DataLayer{""}, Active{false});
+    world.CreateEntity(Active{false});
+    DataLayerPanel panel{world, guids, stack};
+
+    const auto rows = panel.Rows();
+    AETHER_CHECK(rows.size() == 2);
+    if (rows.size() != 2) return;
+    AETHER_CHECK(rows[0].layer == "A Terrain" && rows[0].entities == 1 && rows[0].active);
+    AETHER_CHECK(rows[1].layer == "Z Props" && rows[1].entities == 2 && !rows[1].active);
+
+    world.GetComponent<Active>(z_inactive)->active = true;
+    world.GetComponent<DataLayer>(a_active)->layer = "Z Props";
+    const auto updated = panel.Rows();
+    AETHER_CHECK(updated.size() == 1 && updated[0].layer == "Z Props" && updated[0].entities == 3 && updated[0].active);
+}
+
 // Phase 42.6: expanding a level instance places a whole scene as one edit, and undo removes exactly what
 // it created -- which is why the instantiation report has to name the entities.
 AETHER_TEST(Commands_ExpandLevelInstanceUndoesWhatItCreated) {
