@@ -12,6 +12,7 @@ LiveGameView::LiveGameView(rhi::IDevice& device, ScenePanel& scene, std::functio
 LiveGameView::~LiveGameView() = default;
 
 bool LiveGameView::Start(const SceneDocument& document, u32 width, u32 height) {
+    Stop(); // a new session must not draw from an old viewport or show its picture
     const std::filesystem::path project = project_file_ ? project_file_() : std::filesystem::path();
     if (project.empty()) {
         note_ = "No project is open.";
@@ -33,12 +34,20 @@ bool LiveGameView::Start(const SceneDocument& document, u32 width, u32 height) {
 
 bool LiveGameView::Frame(f32 play_dt) {
     if (!viewport_.Loaded()) return false;
-    if (!(play_dt > 0.0f) && texture_.Valid()) return false; // paused: nothing moved, the last picture stands
+    if (!(play_dt > 0.0f) && has_picture_) return false; // paused: keep this session's last picture
     if (!viewport_.FrameGameCamera(play_dt)) return false;
-    return texture_.Set(viewport_.Width(), viewport_.Height(), viewport_.Pixels());
+    if (!texture_.Set(viewport_.Width(), viewport_.Height(), viewport_.Pixels())) return false;
+    has_picture_ = true;
+    return true;
+}
+
+const ImageTexture& LiveGameView::Picture() const {
+    static const ImageTexture empty;
+    return has_picture_ ? texture_ : empty;
 }
 
 void LiveGameView::Stop() {
+    has_picture_ = false;
     viewport_.Unload();
     note_.clear();
 }
