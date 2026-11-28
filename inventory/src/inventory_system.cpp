@@ -155,17 +155,19 @@ i32 InventorySystem::Add(Entity owner, const std::string& item, i32 count) {
 bool InventorySystem::Remove(Entity owner, const std::string& item, i32 count) {
     Inventory* inv = InventoryOf(owner);
     if (inv == nullptr || count <= 0 || Count(owner, item) < count) return false;
+    // The caller may have borrowed item from a slot that we are about to clear.
+    const std::string item_name = item;
     i32 left = count;
     for (ItemStack& s : inv->slots) {
         if (left <= 0) break;
-        if (s.count > 0 && s.item == item) {
+        if (s.count > 0 && s.item == item_name) {
             const i32 take = std::min(left, s.count);
             s.count -= take;
             left -= take;
             if (s.count == 0) s = ItemStack{};
         }
     }
-    Queue(owner, item, count, ItemEvent::Kind::Removed);
+    Queue(owner, item_name, count, ItemEvent::Kind::Removed);
     return true;
 }
 

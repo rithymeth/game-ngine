@@ -133,6 +133,25 @@ AETHER_TEST(Inventory_AddStacksAndRespectsCapacityAndWeight) {
     CHECK(r.sys.Add(Entity{}, "Coin", 1) == 0);
 }
 
+AETHER_TEST(Inventory_RemoveKeepsItemNameBorrowedFromSlot) {
+    Rig r;
+    CHECK(r.sys.Configure(r.e, 2) && r.sys.Add(r.e, "Coin", 125) == 125);
+    const ItemStack* first = r.sys.Slot(r.e, 0);
+    CHECK(first && first->item == "Coin" && first->count == 100);
+    if (!first) return;
+    r.sys.ClearEvents();
+
+    // The first stack is cleared before the remaining coins come out of slot 1.
+    CHECK(r.sys.Remove(r.e, first->item, 110));
+    CHECK(r.sys.Count(r.e, "Coin") == 15);
+    const auto& events = r.sys.Events();
+    CHECK(events.size() == 1);
+    if (events.size() == 1) {
+        CHECK(events[0].entity == r.e && events[0].kind == ItemEvent::Kind::Removed);
+        CHECK(events[0].item == "Coin" && events[0].count == 110);
+    }
+}
+
 AETHER_TEST(Inventory_LargeItemCountsDoNotWrap) {
     Rig r;
     constexpr i32 max_count = std::numeric_limits<i32>::max();
