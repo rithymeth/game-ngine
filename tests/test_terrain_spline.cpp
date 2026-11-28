@@ -91,6 +91,20 @@ AETHER_TEST(Spline_UniformSample) {
     AETHER_CHECK(samples[0].x < samples.back().x + 0.1f); // roughly increasing x
 }
 
+AETHER_TEST(Spline_UniformSamplesUseWorldDistanceAcrossUnevenSegments) {
+    Spline spline;
+    for (float x : {0.0f, 8.0f, 32.0f, 40.0f}) spline.AddPoint({x, 0, 0});
+    const auto samples = spline.SampleUniform(3.0f);
+    AETHER_CHECK(samples.size() == 15);
+    if (samples.size() != 15) return;
+    for (usize i = 0; i + 1 < samples.size(); ++i)
+        AETHER_CHECK(NearEqual(samples[i], Vec3(3.0f * static_cast<f32>(i), 0, 0), 0.02f));
+    AETHER_CHECK(NearEqual(samples.back(), Vec3(40, 0, 0), 1e-4f));
+
+    const auto exact_end = spline.SampleUniform(10.0f);
+    AETHER_CHECK(exact_end.size() == 5 && NearEqual(exact_end.back(), Vec3(40, 0, 0), 1e-4f));
+}
+
 AETHER_TEST(Spline_WidthInterpolation) {
     Spline sp;
     sp.AddPoint({0, 0, 0});    sp.SetWidth(0, 2.0f);

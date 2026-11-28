@@ -233,25 +233,45 @@ void Spline::Frame(f32 t, Vec3* out_tangent, Vec3* out_up, Vec3* out_right) cons
 // --- Sampling ---
 
 std::vector<Vec3> Spline::SampleUniform(f32 step) const {
+    if (points_.empty()) return {};
+    const Vec3 first = Evaluate(0.0f);
+    if (!std::isfinite(step) || step <= 0.0f || SegmentCount() == 0) return {first};
+
+    // Equal increments of t cover very different distances on a spline.
+    // Build a bounded chord-length table, then invert it at each distance.
+    constexpr usize kChordsPerSegment = 32;
+    constexpr usize kMaxChords = 65'536;
+    const usize chords = std::min(SegmentCount(), kMaxChords / kChordsPerSegment) * kChordsPerSegment;
+    std::vector<f64> distance(chords + 1, 0.0);
+    Vec3 previous = first;
+    for (usize i = 1; i <= chords; ++i) {
+        const Vec3 next = Evaluate(static_cast<f32>(i) / static_cast<f32>(chords));
+        distance[i] = distance[i - 1] + std::hypot(static_cast<f64>(next.x) - previous.x,
+                                                  static_cast<f64>(next.y) - previous.y,
+                                                  static_cast<f64>(next.z) - previous.z);
+        previous = next;
+    }
+    const f64 length = distance.back();
+    if (!std::isfinite(length) || length <= 0.0) return {first};
+
+    constexpr usize kMaxSamples = 1'000'000;
+    const f64 wanted = std::ceil(length / step);
+    const usize intervals = static_cast<usize>(std::clamp(wanted, 1.0, static_cast<f64>(kMaxSamples - 1)));
+    // Increase the interval only for capped requests, so we still span the curve.
+    const f64 spacing = wanted > kMaxSamples - 1 ? length / intervals : step;
     std::vector<Vec3> samples;
-    if (points_.empty()) return samples;
-    const f32 len = Length();
-    // A step that isn't a positive interval, or a spline that spans no
-    // distance, gives a single point. (Before, a zero-length spline divided
-    // by count - 1 == 0 and returned NaNs, and a tiny step could ask for an
-    // arbitrarily large allocation.)
-    if (!std::isfinite(step) || step <= 0.0f || len <= 0.0f) {
-        samples.push_back(Evaluate(0.0f));
-        return samples;
+    samples.reserve(intervals + 1);
+    samples.push_back(first);
+    usize upper = 1;
+    for (usize i = 1; i < intervals; ++i) {
+        const f64 target = i * spacing;
+        if (target >= length) break;
+        while (distance[upper] < target) ++upper;
+        const f64 fraction = (target - distance[upper - 1]) / (distance[upper] - distance[upper - 1]);
+        const f64 t = (upper - 1 + fraction) / chords;
+        samples.push_back(Evaluate(static_cast<f32>(t)));
     }
-    constexpr f32 kMaxSamples = 1'000'000.0f;
-    const f32 wanted = std::ceil(len / step) + 1.0f;
-    const u32 count = static_cast<u32>(std::clamp(wanted, 2.0f, kMaxSamples));
-    samples.reserve(count);
-    for (u32 i = 0; i < count; ++i) {
-        const f32 t = static_cast<f32>(i) / static_cast<f32>(count - 1);
-        samples.push_back(Evaluate(t));
-    }
+    samples.push_back(previous); // retain the endpoint even if the last interval is short
     return samples;
 }
 
