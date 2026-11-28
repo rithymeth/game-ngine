@@ -3,6 +3,7 @@
 #include "core/json_edit.h"
 
 #include <imgui.h>
+#include <imgui_internal.h> // Close the palette by ID if the editor changes host window
 #include <misc/cpp/imgui_stdlib.h>
 
 #include <algorithm>
@@ -202,6 +203,20 @@ std::vector<std::string> ApplyBehaviorTreeEdits(BehaviorTreeDocument& doc, const
 }
 
 BehaviorTreeEditor::BehaviorTreeEditor(BehaviorTreeDocument& document) : doc_(document) { view_.request_fit = true; }
+
+void BehaviorTreeEditor::ResetForLoadedTree() {
+    // Index paths and graph IDs are local to the old tree.
+    selected_.reset();
+    view_ = {};
+    view_.request_fit = true;
+    layout_.clear();
+    layout_revision_ = 0;
+    palette_open_ = palette_needs_popup_ = false;
+    palette_parent_.clear();
+    name_edit_.clear();
+    status_.clear();
+    SetLiveInstance(nullptr);
+}
 
 const std::vector<BtLayoutNode>& BehaviorTreeEditor::Layout() {
     if (layout_revision_ != doc_.Revision()) {
@@ -414,8 +429,20 @@ void BehaviorTreeEditor::DrawTree() {
 }
 
 void BehaviorTreeEditor::DrawPalette() {
-    if (!palette_open_) return;
+    if (!palette_open_) {
+        // The popup may outlive the tree. Its opening ID includes the previous host window.
+        constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar |
+                                           ImGuiWindowFlags_NoSavedSettings;
+        if (palette_popup_id_ != 0 && ImGui::IsPopupOpen(palette_popup_id_, ImGuiPopupFlags_None) &&
+            ImGui::BeginPopupEx(palette_popup_id_, flags)) {
+            ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+        }
+        palette_popup_id_ = 0;
+        return;
+    }
     if (palette_needs_popup_) {
+        palette_popup_id_ = ImGui::GetID("##bt_palette");
         ImGui::OpenPopup("##bt_palette");
         palette_needs_popup_ = false;
     }
