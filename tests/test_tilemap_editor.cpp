@@ -2077,6 +2077,55 @@ AETHER_TEST(TilemapEditor_RenamesLayersWithoutErasingCellsOrAcceptingBlankNames)
     CHECK(saved.layers.front().name == "Forest Floor ## A" && saved.Get(0, 2, 2) == 5);
 }
 
+AETHER_TEST(TilemapEditor_MultilineLayerLabelKeepsEveryLineClickable) {
+    HeadlessImGui ui;
+    TilemapData map;
+    map.Resize(4, 4);
+    map.AddLayer("Ground");
+    map.AddLayer("Building ## upper\nRoof\nAwning");
+    TilemapEditDocument doc(std::move(map), {});
+    TilemapPanel panel(doc);
+    ImGuiWindow* layers = nullptr;
+    f32 line_height = 0.0f;
+    const auto draw = [&] {
+        ui.Frame([&] {
+            line_height = ImGui::GetTextLineHeight();
+            const ImGuiID palette_id = ImGui::GetID("##left");
+            const ImGuiWindow* parent = ImGui::GetCurrentWindowRead();
+            panel.Draw();
+            for (ImGuiWindow* child : parent->DC.ChildWindows)
+                if (child->ChildId == palette_id) layers = child;
+        });
+    };
+    draw();
+    if (!layers) { CHECK(false); return; }
+    const ImGuiID upper = ImHashStr("##layer", 0, layers->GetID(1));
+    const ImGuiID ground = ImHashStr("##layer", 0, layers->GetID(0));
+    const f32 x = layers->InnerClipRect.Min.x + 75.0f;
+    auto& io = ImGui::GetIO();
+    f32 first_upper = -1.0f, first_ground = -1.0f;
+    for (f32 y = layers->InnerClipRect.Min.y; y < layers->InnerClipRect.Min.y + 120.0f; ++y) {
+        io.AddMousePosEvent(x, y);
+        draw();
+        if (ImGui::GetHoveredID() == upper && first_upper < 0.0f) first_upper = y;
+        if (ImGui::GetHoveredID() == ground) { first_ground = y; break; }
+    }
+    CHECK(first_upper >= 0.0f && first_ground - first_upper >= 3.0f * line_height);
+    if (first_upper < 0.0f) return;
+    const auto click = [&](f32 y) {
+        io.AddMousePosEvent(x, y);
+        draw();
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+        draw();
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+        draw();
+    };
+    click(first_upper + 2.5f * line_height);
+    CHECK(doc.active_layer == 1);
+    if (first_ground >= 0.0f) click(first_ground + 4.0f);
+    CHECK(doc.active_layer == 0 && !doc.dirty() && !doc.CanUndo());
+}
+
 AETHER_TEST(TilemapEditor_LayerPropertyHistoryKeepsTilesAndSelectionInPlace) {
     TilemapData map;
     map.Resize(4, 4);

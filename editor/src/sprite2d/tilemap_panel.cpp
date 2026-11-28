@@ -549,11 +549,16 @@ void TilemapPanel::DrawLayers() {
         if (ImGui::Checkbox("##collides", &collides)) doc_.SetLayerCollides(i, collides);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("The layer's solid tiles block");
         ImGui::SameLine();
+        const auto& name = map.layers[i].name;
         const ImVec2 name_position = ImGui::GetCursorScreenPos();
-        if (ImGui::Selectable("##layer", doc_.active_layer == i, 0, ImVec2(0, ImGui::GetTextLineHeight())))
+        const f32 line_height = ImGui::GetTextLineHeight();
+        const f32 row_height = name.find('\n') == std::string::npos
+                                   ? line_height
+                                   : std::max(line_height, ImGui::CalcTextSize(name.c_str()).y);
+        if (ImGui::Selectable("##layer", doc_.active_layer == i, 0, ImVec2(0, row_height)))
             doc_.active_layer = i;
         // Draw the label literally; a name such as "Ground ## 2" is not an ImGui ID.
-        ImGui::GetWindowDrawList()->AddText(name_position, ImGui::GetColorU32(ImGuiCol_Text), map.layers[i].name.c_str());
+        ImGui::GetWindowDrawList()->AddText(name_position, ImGui::GetColorU32(ImGuiCol_Text), name.c_str());
         ImGui::PopID();
     }
     if (ImGui::SmallButton("Add layer")) doc_.AddLayer("Layer " + std::to_string(map.layers.size() + 1));
