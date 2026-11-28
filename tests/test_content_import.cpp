@@ -195,6 +195,35 @@ AETHER_TEST(ImportFiles_CopiesIntoTheOpenFolderAndSelects) {
     stdfs::remove_all(drop, ignore);
 }
 
+AETHER_TEST(ImportSettings_DrawerNeverAppliesAnOldDraftToAReplacementAsset) {
+    for (bool refreshed : {false, true}) {
+        ProjectPaths paths;
+        FreshProject(refreshed ? "draft_replacement_rescanned" : "draft_replacement_unscanned", paths);
+        ContentBrowserPanel panel(paths.file);
+        const std::string path = "textures/checker_a.png";
+        const auto sidecar = paths.content / (path + ".ameta");
+        AssetMeta replacement;
+        if (!panel.OpenImportSettings(path) || !LoadAssetMeta(sidecar, replacement)) { CHECK(false); continue; }
+        panel.import_draft = {{"srgb", false}, {"generate_mips", false}};
+        replacement.guid = NewAssetGuid(); // a new asset occupies the same project path
+        replacement.settings = {{"srgb", true}, {"generate_mips", true}};
+        if (!SaveAssetMeta(sidecar, replacement)) { CHECK(false); continue; }
+        if (refreshed && !panel.Refresh()) { CHECK(false); continue; }
+
+        CHECK(!panel.ApplyImportSettings());
+        CHECK(panel.import_error.find("changed") != std::string::npos);
+        AssetMeta actual;
+        CHECK(LoadAssetMeta(sidecar, actual) && actual.guid == replacement.guid && actual.settings == replacement.settings);
+
+        // Reopening the drawer on the new asset permits a deliberate edit.
+        CHECK(panel.Refresh() && panel.OpenImportSettings(path));
+        CHECK(panel.import_draft["srgb"] == true);
+        panel.import_draft["srgb"] = false;
+        CHECK(panel.ApplyImportSettings());
+        CHECK(LoadAssetMeta(sidecar, actual) && actual.guid == replacement.guid && actual.settings["srgb"] == false);
+    }
+}
+
 AETHER_TEST(ImportSettings_DrawerEditsAppliesAndDraws) {
     ProjectPaths paths;
     const stdfs::path project = FreshProject("drawer", paths);

@@ -175,6 +175,7 @@ bool ContentBrowserPanel::OpenImportSettings(const std::string& path, std::strin
         return false;
     }
     import_path = path;
+    import_guid_ = record->guid;
     import_draft = std::move(settings);
     import_open = true;
     return true;
@@ -188,8 +189,12 @@ bool ContentBrowserPanel::ApplyImportSettings() {
         import_error = import_path.empty() ? "No asset is open in the drawer." : import_path + " is no longer an importable asset.";
         return false;
     }
+    if (record->guid != import_guid_) {
+        import_error = "The asset at " + import_path + " has changed. Reopen Import Settings before applying.";
+        return false;
+    }
     std::string error;
-    if (!assets::SetImportSettings(*database_, importers_, record->guid, import_draft, &error)) {
+    if (!assets::SetImportSettings(*database_, importers_, import_guid_, import_draft, &error)) {
         import_error = error;
         return false;
     }
@@ -1517,6 +1522,8 @@ void ContentBrowserPanel::DrawImportSettings() {
         const assets::AssetRecord* record = ImportEditable(import_path);
         if (record == nullptr) {
             ImGui::TextDisabled("%s", import_error.empty() ? "No asset is open in the drawer." : import_error.c_str());
+        } else if (record->guid != import_guid_) {
+            ImGui::TextWrapped("The asset at %s has changed. Reopen Import Settings before applying.", import_path.c_str());
         } else {
             const assets::IAssetImporter* importer = importers_.Find(record->importer);
             ImGui::TextDisabled("%s", record->path.c_str());

@@ -225,6 +225,7 @@ private:
 
     std::filesystem::path project_file_;
     std::shared_ptr<assets::AssetDatabase> database_;
+    assets::AssetGuid import_guid_; // identity for the current import settings draft
     assets::ImporterRegistry importers_; // the built-ins: reimport and the settings drawer use them
     std::unique_ptr<assets::DerivedDataCache> cache_; // Intermediate/DDC, made on the first reimport
     ThumbnailStore thumbnails_;

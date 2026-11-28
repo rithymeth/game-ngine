@@ -289,6 +289,10 @@ nlohmann::json ImportSettingsFor(const AssetDatabase& database, const ImporterRe
     if (importer == nullptr) return nlohmann::json::object();
     AssetMeta meta;
     if (!LoadAssetMeta(database.MetaPath(guid), meta, error)) return nlohmann::json::object();
+    if (meta.guid != guid) {
+        if (error != nullptr) *error = "The asset metadata identity has changed. Refresh the asset database.";
+        return nlohmann::json::object();
+    }
     nlohmann::json settings = importer->DefaultSettings();
     settings.merge_patch(meta.settings);
     return settings;
@@ -318,6 +322,10 @@ bool SetImportSettings(AssetDatabase& database, const ImporterRegistry& importer
     }
     AssetMeta meta;
     if (!LoadAssetMeta(database.MetaPath(guid), meta, error)) return false;
+    if (meta.guid != guid) {
+        if (error != nullptr) *error = "The asset metadata identity has changed. Refresh the asset database before applying settings.";
+        return false;
+    }
     meta.settings = settings;
     // The source has not been imported with these settings: clearing the recorded hash is what Scan turns into
     // needs_import, and MarkImported puts it back.
