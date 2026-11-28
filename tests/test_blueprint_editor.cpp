@@ -7,7 +7,14 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <functional>
+#include <iterator>
+
+#if defined(__linux__)
+#include <signal.h>
+#include <sys/resource.h>
+#endif
 
 using namespace aether;
 using namespace aether::editor;
@@ -115,6 +122,57 @@ AETHER_TEST(BlueprintDocument_UndoRedoMergesAndSaves) {
     doc.Edit("Break", [&](bp::Blueprint& b) { bp::GraphBuilder(b.graphs[0]).Add("Flow.Teleport"); });
     AETHER_CHECK(!doc.Compile().Ok() && doc.CompileStatus() == BlueprintDocument::Status::Errors);
 }
+
+#if defined(__linux__)
+AETHER_TEST(BlueprintDocument_FailedSavePreservesExistingGraphs) {
+    namespace fs = std::filesystem;
+    const auto dir = fs::temp_directory_path() / "aether_blueprint_write_failure";
+    fs::create_directories(dir);
+    const auto original = dir / "Door.abp";
+    const auto other = dir / "Backup.abp";
+    const auto read = [](const fs::path& path) {
+        std::ifstream in(path, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(in), {});
+    };
+
+    bp::NodeId begin, branch, get, print;
+    BlueprintDocument doc(Door(begin, branch, get, print));
+    AETHER_CHECK(doc.SaveAs(other) && doc.SaveAs(original));
+    const auto original_before = read(original);
+    const auto other_before = read(other);
+    AETHER_CHECK(!original_before.empty() && !other_before.empty());
+    AETHER_CHECK(doc.AddVariable() == "NewVar");
+    const auto pending = bp::BlueprintToJson(doc.Get());
+
+    struct rlimit previous_limit{};
+    struct sigaction previous_signal{}, ignore{};
+    ignore.sa_handler = SIG_IGN;
+    sigemptyset(&ignore.sa_mask);
+    const bool read_limit = getrlimit(RLIMIT_FSIZE, &previous_limit) == 0;
+    AETHER_CHECK(read_limit);
+    if (!read_limit) return;
+    const bool changed_signal = sigaction(SIGXFSZ, &ignore, &previous_signal) == 0;
+    AETHER_CHECK(changed_signal);
+    if (!changed_signal) return;
+    const struct rlimit blocked{0, previous_limit.rlim_max};
+    const bool limited = setrlimit(RLIMIT_FSIZE, &blocked) == 0;
+    std::string save_error, copy_error;
+    const bool saved = limited && doc.Save(&save_error);
+    const bool copied = limited && doc.SaveAs(other, &copy_error);
+    const bool restored = !limited || setrlimit(RLIMIT_FSIZE, &previous_limit) == 0;
+    const bool signal_restored = sigaction(SIGXFSZ, &previous_signal, nullptr) == 0;
+    AETHER_CHECK(limited && restored && signal_restored);
+
+    AETHER_CHECK(!saved && !save_error.empty() && !copied && !copy_error.empty());
+    AETHER_CHECK(read(original) == original_before && read(other) == other_before);
+    AETHER_CHECK(doc.Path() == original && doc.Dirty() && doc.CanUndo() && bp::BlueprintToJson(doc.Get()) == pending);
+    AETHER_CHECK(doc.Save() && !doc.Dirty());
+    BlueprintDocument reloaded;
+    AETHER_CHECK(reloaded.Load(original) && bp::BlueprintToJson(reloaded.Get()) == pending && read(other) == other_before);
+    AETHER_CHECK(std::distance(fs::directory_iterator(dir), fs::directory_iterator{}) == 2);
+    fs::remove_all(dir);
+}
+#endif
 
 AETHER_TEST(BlueprintDocument_RenamesAndRemovesFollowReferences) {
     bp::NodeId begin, branch, get, print;

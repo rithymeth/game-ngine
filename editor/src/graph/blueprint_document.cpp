@@ -2,6 +2,7 @@
 
 #include "aether/blueprint/nodes.h"
 #include "graph/blueprint_graph.h"
+#include "ui/staged_asset_write.h"
 
 #include <algorithm>
 #include <cctype>
@@ -82,13 +83,11 @@ bool BlueprintDocument::Load(const std::filesystem::path& path, std::string* err
 
 bool BlueprintDocument::Save(std::string* error) {
     if (path_.empty()) return Fail(error, "the Blueprint has no file yet (use Save As)");
-    if (!bp::SaveBlueprint(blueprint_, path_, error)) return false;
-    dirty_ = false;
-    return true;
+    return SaveAs(path_, error);
 }
 
 bool BlueprintDocument::SaveAs(const std::filesystem::path& path, std::string* error) {
-    if (!bp::SaveBlueprint(blueprint_, path, error)) return false;
+    if (!WriteStagedAsset(path, bp::BlueprintToJson(blueprint_).dump(2) + "\n")) return Fail(error, "can't write " + path.string());
     path_ = path;
     dirty_ = false;
     return true;
