@@ -202,25 +202,25 @@ u32 NextPow2(u32 v) {
     return p;
 }
 
-// Whether `order` (indices, tallest first) shelf-packs into width x height.
-bool TryPack(const std::vector<PackInput>& in, const std::vector<usize>& order, u32 padding, u32 width, u32 height,
-             std::vector<PackedRect>& rects) {
-    rects.assign(in.size(), {});
+// Measure the tallest-first shelf layout for this width. Return zero if
+// it exceeds the height limit. Only copy names and positions for the winner.
+u32 ShelfHeight(const std::vector<PackInput>& in, const std::vector<usize>& order, u32 padding, u32 width, u32 height_limit,
+                std::vector<PackedRect>* rects = nullptr) {
+    if (rects) rects->resize(in.size());
     u64 x = 0, y = 0, shelf = 0;
     for (usize index : order) {
         const PackInput& r = in[index];
-        if (r.w > width || r.h > height) return false;
         if (x + r.w > width) { // next shelf
             y += shelf + padding;
             x = 0;
             shelf = 0;
         }
-        if (y + r.h > height) return false;
-        rects[index] = {r.name, static_cast<i32>(x), static_cast<i32>(y), r.w, r.h};
-        x += r.w + padding;
+        if (y + r.h > height_limit) return 0;
+        if (rects) (*rects)[index] = {r.name, static_cast<i32>(x), static_cast<i32>(y), r.w, r.h};
+        x += static_cast<u64>(r.w) + padding;
         shelf = std::max(shelf, static_cast<u64>(r.h));
     }
-    return true;
+    return static_cast<u32>(y + shelf);
 }
 
 } // namespace
@@ -246,37 +246,35 @@ bool PackRects(const std::vector<PackInput>& inputs, u32 padding, u32 max_size, 
             if (error) *error = "'" + r.name + "' has no size";
             return false;
         }
-        if (r.w > static_cast<u32>(std::numeric_limits<i32>::max()) ||
-            r.h > static_cast<u32>(std::numeric_limits<i32>::max()) ||
-            static_cast<u64>(r.w) + padding > max_size || static_cast<u64>(r.h) + padding > max_size) {
+        const u64 sprite_area = static_cast<u64>(r.w) * r.h;
+        if (r.w > max_size || r.h > max_size || sprite_area > max_area - area) {
             if (error) *error = "the sprites don't fit in " + std::to_string(max_size) + "x" + std::to_string(max_size);
             return false;
         }
-        const u64 padded_area = (static_cast<u64>(r.w) + padding) * (static_cast<u64>(r.h) + padding);
-        if (padded_area > max_area - area) {
-            if (error) *error = "the sprites don't fit in " + std::to_string(max_size) + "x" + std::to_string(max_size);
-            return false;
-        }
-        area += padded_area;
+        area += sprite_area;
         widest = std::max(widest, r.w);
         tallest = std::max(tallest, r.h);
     }
-    // Grow the texture, trying a wide shape before a taller one, until it fits.
-    u32 side = NextPow2(static_cast<u32>(std::ceil(std::sqrt(static_cast<f64>(area)))));
-    side = std::max({side, NextPow2(widest), 1u});
-    for (; side != 0 && side <= max_size;) {
-        for (u32 height : {side / 2, side}) {
-            if (height == 0 || height < tallest) continue;
-            std::vector<PackedRect> rects;
-            if (TryPack(inputs, order, padding, side, height, rects)) {
-                out.width = side;
-                out.height = height;
-                out.rects = std::move(rects);
-                return true;
-            }
+
+    u32 best_width = 0, best_height = 0;
+    u64 best_area = std::numeric_limits<u64>::max();
+    for (u32 width = NextPow2(widest); width <= max_size; width *= 2) {
+        if (static_cast<u64>(width) * tallest > best_area) break;
+        const u32 used = ShelfHeight(inputs, order, padding, width, max_size);
+        if (used == 0) continue;
+        const u32 height = NextPow2(used);
+        const u64 candidate_area = static_cast<u64>(width) * height;
+        if (height <= max_size && candidate_area <= best_area) {
+            best_width = width;
+            best_height = height;
+            best_area = candidate_area; // wider wins an equal-area tie
         }
-        if (side > max_size / 2) break;
-        side <<= 1;
+    }
+    if (best_width != 0) {
+        std::vector<PackedRect> rects;
+        ShelfHeight(inputs, order, padding, best_width, best_height, &rects);
+        out = {best_width, best_height, std::move(rects)};
+        return true;
     }
     if (error) *error = "the sprites don't fit in " + std::to_string(max_size) + "x" + std::to_string(max_size);
     return false;

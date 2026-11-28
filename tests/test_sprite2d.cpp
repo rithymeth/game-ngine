@@ -289,6 +289,25 @@ AETHER_TEST(Sprite2D_ClipFramesLoopAndHold) {
     CHECK(ClipFrameAt(SpriteClip{}, 1.0f) == 0);
 }
 
+AETHER_TEST(Sprite2D_AtlasPackingUsesCompactPowerOfTwoTextures) {
+    PackResult packed;
+    std::string error;
+    CHECK(PackRects({{"wide", 512, 32}}, 0, 512, packed, &error));
+    CHECK(packed.width == 512 && packed.height == 32);
+    CHECK(PackRects({{"tall", 32, 512}}, 0, 512, packed, &error));
+    CHECK(packed.width == 32 && packed.height == 512);
+
+    // Padding belongs between sprites, not between a sprite and the sheet edge.
+    CHECK(PackRects({{"a", 16, 7}, {"b", 16, 8}}, 1, 16, packed, &error));
+    CHECK(packed.width == 16 && packed.height == 16);
+    CHECK(packed.rects.size() == 2 && packed.rects[0].name == "a" && packed.rects[0].y == 9 &&
+          packed.rects[1].name == "b" && packed.rects[1].y == 0);
+
+    // When both orientations use the same area, prefer the wider one.
+    CHECK(PackRects({{"a", 8, 8}, {"b", 8, 8}}, 0, 16, packed, &error));
+    CHECK(packed.width == 16 && packed.height == 8);
+}
+
 AETHER_TEST(Sprite2D_PackRectsAndComposeImage) {
     std::vector<PackInput> in = {{"a", 10, 20}, {"b", 30, 10}, {"c", 16, 16}, {"d", 8, 8}, {"e", 30, 30}};
     PackResult packed;
