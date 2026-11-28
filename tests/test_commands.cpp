@@ -6,6 +6,7 @@
 #include "aether/scene/hierarchy.h"
 #include "aether/reflection/serialize.h"
 #include "core/commands.h"
+#include "core/scene_document.h"
 #include "aether/scene/data_layers.h"
 #include "aether/scene/level_instance.h"
 #include "aether/scene/prefab.h"
@@ -430,6 +431,54 @@ AETHER_TEST(Commands_SetDataLayerActiveUndoesEachMember) {
     AETHER_CHECK(stack.Redo(ctx));
     AETHER_CHECK(!IsActiveInHierarchy(world, guids, on));
 }
+AETHER_TEST(Commands_DataLayerUndoRestoresARecreatedMember) {
+    for (const bool delete_manually_hidden : {false, true}) {
+        SceneDocument scene;
+        auto& world = scene.GetWorld();
+        const Entity visible = scene.CreateEntity("Visible prop");
+        const Entity hidden = scene.CreateEntity("Manually hidden prop");
+        world.AddComponent<DataLayer>(visible, DataLayer{"Props"});
+        world.AddComponent<DataLayer>(hidden, DataLayer{"Props"});
+        world.AddComponent<Active>(hidden, Active{false});
+        scene.Commands().Clear();
+        DataLayerPanel panel{world, scene.Guids(), scene.Commands()};
+        const Entity original = delete_manually_hidden ? hidden : visible;
+        const EntityGuid guid = world.GetComponent<IdComponent>(original)->guid;
+        AETHER_CHECK(panel.SetLayerActive("Props", false));
+        AETHER_CHECK(scene.DestroyEntity(original) && !world.IsAlive(original));
+
+        // Repeat undo and redo with fresh handles to exercise both commands together.
+        for (int cycle = 0; cycle < 2; ++cycle) {
+            AETHER_CHECK(scene.Undo());
+            const Entity restored = scene.Guids().Find(world, guid);
+            AETHER_CHECK(world.IsAlive(restored) && restored != original);
+            if (!world.IsAlive(restored)) return;
+            const Entity current_visible = delete_manually_hidden ? visible : restored;
+            const Entity current_hidden = delete_manually_hidden ? restored : hidden;
+            const auto captured = [&](Entity e) {
+                const auto* layer = world.GetComponent<DataLayer>(e);
+                return layer != nullptr && layer->captured;
+            };
+            AETHER_CHECK(!scene.IsActive(current_visible) && !scene.IsActive(current_hidden));
+            AETHER_CHECK(captured(current_visible) && captured(current_hidden));
+
+            AETHER_CHECK(scene.Undo());
+            AETHER_CHECK(scene.IsActive(current_visible) && world.GetComponent<Active>(current_visible) == nullptr);
+            AETHER_CHECK(!scene.IsActive(current_hidden) && world.GetComponent<Active>(current_hidden) != nullptr);
+            AETHER_CHECK(!captured(current_visible) && !captured(current_hidden));
+            const auto* visible_layer = world.GetComponent<DataLayer>(current_visible);
+            const auto* hidden_layer = world.GetComponent<DataLayer>(current_hidden);
+            AETHER_CHECK(visible_layer && hidden_layer &&
+                         visible_layer->active_when_layer_on && hidden_layer->active_when_layer_on);
+
+            AETHER_CHECK(scene.Redo());
+            AETHER_CHECK(!scene.IsActive(current_visible) && !scene.IsActive(current_hidden));
+            AETHER_CHECK(captured(current_visible) && captured(current_hidden));
+            AETHER_CHECK(scene.Redo() && !world.IsAlive(restored));
+        }
+    }
+}
+
 // Phase 42.6: the panel's operation, checked without clicking anything. The checkbox is glue over
 // SetLayerActive; what it does is this, and this is recorded as one undoable edit.
 AETHER_TEST(Commands_DataLayerPanelSwitchesThroughTheStack) {

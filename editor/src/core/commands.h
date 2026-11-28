@@ -246,7 +246,8 @@ public:
 
 private:
     struct Member {
-        Entity entity;
+        EntityGuid guid;
+        Entity fallback_entity; // only for low-level entities without a persistent ID
         bool has_active = false;
         bool active = false;
         bool captured = false;

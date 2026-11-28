@@ -502,8 +502,10 @@ std::unique_ptr<ICommand> SetDataLayerActiveCommand::Make(const CommandContext& 
             for (u32 i = 0; i < count; ++i) {
                 if (layers[i].layer != command->layer_) continue;
                 SetDataLayerActiveCommand::Member member;
-                member.entity = entities[i];
-                const Active* current = ctx.world.GetComponent<Active>(entities[i]);
+                const Entity entity = entities[i];
+                if (const auto* id = ctx.world.GetComponent<IdComponent>(entity)) member.guid = id->guid;
+                if (member.guid.IsNull()) member.fallback_entity = entity;
+                const Active* current = ctx.world.GetComponent<Active>(entity);
                 member.has_active = current != nullptr;
                 member.active = current == nullptr || current->active;
                 member.captured = layers[i].captured;
@@ -523,20 +525,22 @@ void SetDataLayerActiveCommand::Do(CommandContext& ctx) { SetDataLayerActive(ctx
 
 void SetDataLayerActiveCommand::Undo(CommandContext& ctx) {
     for (const Member& member : members_) {
-        if (!ctx.world.IsAlive(member.entity)) continue;
-        DataLayer* layer = ctx.world.GetComponent<DataLayer>(member.entity);
+        // Undoing a deletion can restore this member with a new ECS handle.
+        const Entity entity = member.guid.IsNull() ? member.fallback_entity : ctx.guids.Find(ctx.world, member.guid);
+        if (!ctx.world.IsAlive(entity)) continue;
+        DataLayer* layer = ctx.world.GetComponent<DataLayer>(entity);
         if (layer != nullptr) {
             layer->captured = member.captured;
             layer->active_when_layer_on = member.active_when_layer_on;
         }
-        Active* current = ctx.world.GetComponent<Active>(member.entity);
+        Active* current = ctx.world.GetComponent<Active>(entity);
         if (!member.has_active) {
             // It had no Active component before, so it should have none after.
-            if (current != nullptr) ctx.world.RemoveComponent<Active>(member.entity);
+            if (current != nullptr) ctx.world.RemoveComponent<Active>(entity);
             continue;
         }
         if (current == nullptr) {
-            ctx.world.AddComponent<Active>(member.entity, Active{member.active});
+            ctx.world.AddComponent<Active>(entity, Active{member.active});
         } else {
             current->active = member.active;
         }
