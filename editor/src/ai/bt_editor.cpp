@@ -387,7 +387,8 @@ void BehaviorTreeEditor::DrawBlackboard() {
 void BehaviorTreeEditor::DrawTree() {
     const GraphViewModel model = BuildBehaviorTreeView(doc_.Get(), Layout(), doc_.Diagnostics(), live_);
     const GraphViewResult r = DrawGraphView("##bt_graph", model, view_);
-    if (r.selection_changed) {
+    // Delete clears the canvas selection but is reported separately by the graph widget.
+    if (r.selection_changed || !r.deleted.empty()) {
         if (view_.selection.size() == 1) {
             if (const BtLayoutNode* n = ById(layout_, *view_.selection.begin())) selected_ = n->path;
         } else {

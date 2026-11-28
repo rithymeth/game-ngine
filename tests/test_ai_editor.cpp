@@ -531,6 +531,32 @@ AETHER_TEST(AIEditor_BehaviorTreeHistoryClearsStaleSelection) {
     CHECK(editor.Selected() && editor.View().selection.size() == 1);
 }
 
+AETHER_TEST(AIEditor_BehaviorTreeDeleteClearsStaleInspectorSelection) {
+    HeadlessImGui ui;
+    BehaviorTreeDocument doc;
+    BehaviorTreeEditor editor(doc);
+    CHECK(doc.AddNode({}, BtNodeType::Log, 0));
+    const auto draw = [&] { ui.Frame([&] { editor.Draw(); }); };
+    draw();
+    draw();
+    editor.Select({0});
+    CHECK(editor.Selected() && editor.View().selection.size() == 1);
+
+    ImGuiIO& io = ImGui::GetIO();
+    const GraphViewState& view = editor.View();
+    io.AddMousePosEvent(view.origin_x + view.width * 0.5f, view.origin_y + view.height * 0.5f);
+    draw();
+    io.AddKeyEvent(ImGuiKey_Delete, true);
+    draw();
+    io.AddKeyEvent(ImGuiKey_Delete, false);
+    draw();
+
+    // The same path is still valid, but now belongs to the old second child.
+    CHECK(doc.Get().root.children.size() == 1);
+    CHECK(doc.Node({0}) != nullptr && doc.Node({0})->type == BtNodeType::Wait);
+    CHECK(!editor.Selected() && editor.View().selection.empty());
+}
+
 AETHER_TEST(AIEditor_NavigationPanel) {
     nav::NavMeshSettings s;
     s.agent_radius = 0.4f;
