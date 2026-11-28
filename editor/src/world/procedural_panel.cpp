@@ -203,10 +203,13 @@ void ProceduralWorldPanel::Draw() {
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Output")) {
+            const bool stale = doc_.Stale();
+            if (doc_.Generated() && stale)
+                ImGui::TextWrapped("Settings changed. Press Generate again to apply scatter or bake.");
             ImGui::BeginDisabled(!doc_.Generated() || terrain_ == nullptr);
             if (ImGui::Button("Apply terrain to the Terrain editor")) status_ = doc_.ApplyToTerrain(*terrain_) ? "Terrain sent to the Terrain editor." : "Nothing to apply.";
             ImGui::EndDisabled();
-            ImGui::BeginDisabled(!doc_.Generated() || foliage_ == nullptr);
+            ImGui::BeginDisabled(stale || foliage_ == nullptr);
             if (ImGui::Button("Apply scatter to the Foliage editor")) status_ = doc_.ApplyToFoliage(*foliage_) ? "Scatter sent to the Foliage editor." : "Nothing to apply.";
             ImGui::EndDisabled();
             ImGui::Separator();
@@ -226,7 +229,7 @@ void ProceduralWorldPanel::Draw() {
                 ImGui::SliderFloat("Wind direction", &bake_options.wind_direction_degrees, -180.0f, 180.0f, "%.0f deg");
                 ImGui::SliderFloat("Wind strength", &bake_options.wind_strength, 0.0f, 4.0f, "%.2f");
             }
-            ImGui::BeginDisabled(!doc_.Generated());
+            ImGui::BeginDisabled(stale);
             if (ImGui::Button("Bake to files")) {
                 bake_ = doc_.Bake(content_root, bake_options);
                 char line[512];

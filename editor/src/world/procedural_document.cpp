@@ -536,7 +536,7 @@ bool ProceduralWorldDocument::ApplyToTerrain(TerrainEditDocument& target, u32 sp
 }
 
 bool ProceduralWorldDocument::ApplyToFoliage(FoliagePaintDocument& target) const {
-    if (!generated_) return false;
+    if (Stale()) return false;
     FoliageLayer layer;
     layer.name = "Scattered";
     for (const ScatterRule& r : settings_.rules) {
@@ -556,6 +556,7 @@ bool ProceduralWorldDocument::ApplyToFoliage(FoliagePaintDocument& target) const
 BakeReport ProceduralWorldDocument::Bake(const std::string& content_root, const BakeOptions& options) const {
     BakeReport report;
     if (!generated_) { report.error = "Nothing is generated yet: press Generate first."; return report; }
+    if (Stale()) { report.error = "Settings changed since generation: press Generate again before baking."; return report; }
     const std::string name = FileSafe(options.name);
     const std::string relative = "Generated/" + name;
     const fs::path dir = fs::path(content_root) / "Generated" / name;

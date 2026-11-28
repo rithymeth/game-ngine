@@ -322,6 +322,47 @@ AETHER_TEST(ProceduralEditor_ApplyReplacesTheTerrainAndFoliageEditorsContent) {
     CHECK(foliage.Undo() && foliage.Layer().instances.empty()); // one step back
 }
 
+AETHER_TEST(ProceduralEditor_StaleScatterCannotReachOutput) {
+    auto settings = Small();
+    settings.rules = {
+        ScatterRule{.name = "Pine", .slope_max = 100.0f, .density = 30.0f, .max_instances = 12},
+        ScatterRule{.name = "Oak", .slope_max = 100.0f, .density = 30.0f, .max_instances = 12},
+    };
+    settings.slots.resize(settings.rules.size());
+    ProceduralWorldDocument doc(std::move(settings));
+    doc.Generate();
+    const auto counts = doc.CountsByRule();
+    CHECK(counts.size() == 2 && counts[0] > 0 && counts[1] > 0);
+    const auto stale_count = doc.Instances().size();
+    CHECK(doc.RemoveRule(0) && doc.Stale() && doc.Instances().size() == stale_count);
+
+    FoliageLayer existing;
+    existing.name = "Hand painted";
+    FoliagePaintDocument foliage(existing);
+    CHECK(!doc.ApplyToFoliage(foliage));
+    CHECK(foliage.Layer().name == existing.name && !foliage.Dirty() && !foliage.CanUndo());
+    TerrainEditDocument terrain = FlatTerrainDocument();
+    CHECK(doc.ApplyToTerrain(terrain, 8)); // the terrain uses a coherent cached snapshot
+
+    const fs::path root = ScratchDir("aether_procedural_stale_output");
+    BakeOptions options;
+    options.name = "Fresh";
+    options.terrain_texture = options.water_texture = 0;
+    options.terrain_tiles = 1;
+    options.terrain_collision = options.add_player = false;
+    const auto stale = doc.Bake(root.string(), options);
+    CHECK(!stale.ok && stale.files.empty() && stale.error.find("Generate") != std::string::npos);
+    CHECK(fs::is_empty(root));
+
+    doc.Generate();
+    CHECK(doc.ApplyToFoliage(foliage));
+    CHECK(!foliage.Layer().instances.empty() && foliage.Layer().types.size() == 1);
+    for (const auto& item : foliage.Layer().instances) CHECK(item.type_index == 0);
+    const auto fresh = doc.Bake(root.string(), options);
+    CHECK(fresh.ok && fresh.instances_in_scene > 0 && fs::exists(root / fresh.scene));
+    fs::remove_all(root);
+}
+
 AETHER_TEST(ProceduralEditor_BakeWritesTheTerrainMeshesAndASceneThePlayerLoads) {
     ProceduralWorldDocument doc(Small());
     doc.AddRule(ScatterRule{.name = "Fern"}); // a rule of the user's own starts with no mesh family
