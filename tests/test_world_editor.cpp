@@ -11,8 +11,14 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iterator>
 #include <limits>
 #include <vector>
+
+#if defined(__linux__)
+#include <signal.h>
+#include <sys/resource.h>
+#endif
 
 // Phase 21 step 7: the world-building editors - terrain sculpting and
 // painting (strokes, region undo, dirty chunks, the brush cursor), foliage
@@ -410,6 +416,60 @@ AETHER_TEST(WorldEditor_PartitionMapHandlesWidelySeparatedCells) {
 
 // Stage 6: terrain and foliage are assets. Save writes one, Load reads it back, and Dirty says whether what is on
 // screen is on disk.
+
+#if defined(__linux__)
+AETHER_TEST(WorldEditor_TerrainFailedSavePreservesHeightmapAssets) {
+    namespace fs = std::filesystem;
+    const auto dir = fs::temp_directory_path() / "aether_terrain_write_failure";
+    fs::create_directories(dir);
+    const auto original = dir / "Hills.aterrain";
+    const auto other = dir / "Backup.aterrain";
+    const auto read = [](const fs::path& path) {
+        std::ifstream in(path, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(in), {});
+    };
+
+    TerrainEditDocument doc = FlatTerrain();
+    CHECK(doc.SaveAs(other) && doc.SaveAs(original));
+    const auto original_before = read(original);
+    const auto other_before = read(other);
+    CHECK(!original_before.empty() && !other_before.empty());
+    doc.brush.radius = 3.0f;
+    doc.brush.strength = 1.0f;
+    doc.BeginStroke();
+    doc.Dab(10.0f, 10.0f);
+    const auto pending = doc.Data().heightmap.heights;
+    CHECK(doc.InStroke() && H(doc, 10, 10) > 0.0f);
+
+    struct rlimit previous_limit{};
+    struct sigaction previous_signal{}, ignore{};
+    ignore.sa_handler = SIG_IGN;
+    sigemptyset(&ignore.sa_mask);
+    const bool read_limit = getrlimit(RLIMIT_FSIZE, &previous_limit) == 0;
+    CHECK(read_limit);
+    if (!read_limit) return;
+    const bool changed_signal = sigaction(SIGXFSZ, &ignore, &previous_signal) == 0;
+    CHECK(changed_signal);
+    if (!changed_signal) return;
+    const struct rlimit blocked{0, previous_limit.rlim_max};
+    const bool limited = setrlimit(RLIMIT_FSIZE, &blocked) == 0;
+    std::string save_error, copy_error;
+    const bool saved = limited && doc.Save(&save_error);
+    const bool copied = limited && doc.SaveAs(other, &copy_error);
+    const bool restored = !limited || setrlimit(RLIMIT_FSIZE, &previous_limit) == 0;
+    const bool signal_restored = sigaction(SIGXFSZ, &previous_signal, nullptr) == 0;
+    CHECK(limited && restored && signal_restored);
+
+    CHECK(!saved && !save_error.empty() && !copied && !copy_error.empty());
+    CHECK(read(original) == original_before && read(other) == other_before);
+    CHECK(doc.Path() == original && doc.Dirty() && doc.CanUndo() && doc.Data().heightmap.heights == pending && !doc.InStroke());
+    CHECK(doc.Save() && !doc.Dirty());
+    TerrainEditDocument reloaded = FlatTerrain();
+    CHECK(reloaded.Load(original) && reloaded.Data().heightmap.heights == pending && read(other) == other_before);
+    CHECK(std::distance(fs::directory_iterator(dir), fs::directory_iterator{}) == 2);
+    fs::remove_all(dir);
+}
+#endif
 
 AETHER_TEST(WorldEditor_TerrainSavesAndLoads) {
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "aether_world_editor_terrain_io";
