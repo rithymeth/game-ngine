@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace aether::inv {
 
@@ -73,9 +74,13 @@ f32 InventorySystem::TotalWeight(Entity owner) const {
 i32 InventorySystem::Count(Entity owner, const std::string& item) const {
     const Inventory* inv = InventoryOf(owner);
     if (inv == nullptr) return 0;
+    constexpr i32 max_count = std::numeric_limits<i32>::max();
     i32 n = 0;
     for (const ItemStack& s : inv->slots) {
-        if (s.count > 0 && s.item == item) n += s.count;
+        if (s.count <= 0 || s.item != item) continue;
+        // Multiple valid stacks can exceed the public count's range.
+        if (s.count > max_count - n) return max_count;
+        n += s.count;
     }
     return n;
 }

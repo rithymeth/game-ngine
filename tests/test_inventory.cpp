@@ -19,6 +19,7 @@
 #include <filesystem>
 
 #include <cmath>
+#include <limits>
 #include <tuple>
 
 // Phase 30 step 7a (§30.8): item definitions, inventories, equipment and use.
@@ -123,6 +124,20 @@ AETHER_TEST(Inventory_AddStacksAndRespectsCapacityAndWeight) {
     const Entity other = r.world.CreateEntity(Transform{Vec3(), Quaternion::Identity()});
     CHECK(r.sys.Add(other, "Coin", 5) == 5 && r.world.GetComponent<Inventory>(other)->capacity == 20);
     CHECK(r.sys.Add(Entity{}, "Coin", 1) == 0);
+}
+
+AETHER_TEST(Inventory_LargeItemCountsDoNotWrap) {
+    Rig r;
+    constexpr i32 max_count = std::numeric_limits<i32>::max();
+    CHECK(r.items.Register(Item("Tokens", max_count)));
+    CHECK(r.sys.Configure(r.e, 2, 0.0f));
+    CHECK(r.sys.Add(r.e, "Tokens", max_count) == max_count);
+    CHECK(r.sys.Add(r.e, "Tokens", 25) == 25);
+    CHECK(r.sys.Count(r.e, "Tokens") == max_count);
+    CHECK(r.sys.Remove(r.e, "Tokens", max_count));
+    CHECK(r.sys.Count(r.e, "Tokens") == 25);
+    CHECK(!r.sys.Remove(r.e, "Tokens", 26));
+    CHECK(r.sys.Remove(r.e, "Tokens", 25) && r.sys.Count(r.e, "Tokens") == 0);
 }
 
 AETHER_TEST(Inventory_LightItemsAreLimitedBySlotsInsteadOfOverflowingWeightMath) {
