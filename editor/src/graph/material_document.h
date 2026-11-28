@@ -38,8 +38,9 @@ public:
     // Consecutive edits with the same non-empty `merge_key` (a value being
     // dragged) share one undo step.
     void Edit(const std::string& label, const std::function<void(mat::Material&)>& change, const std::string& merge_key = {});
+    // Commit only accepted edits; a refusal leaves the graph and history untouched.
+    bool TryEdit(const std::string& label, const std::function<bool(mat::Material&)>& change);
     bool Undo();
-    void CancelEdit(); // reverts the last Edit without a redo step
     bool Redo();
     bool CanUndo() const { return !undo_.empty(); }
     bool CanRedo() const { return !redo_.empty(); }

@@ -98,11 +98,11 @@ bool MaterialDocument::Undo() {
     return true;
 }
 
-void MaterialDocument::CancelEdit() {
-    if (undo_.empty()) return;
-    Snapshot snap = std::move(undo_.back());
-    undo_.pop_back();
-    Restore(snap.state);
+bool MaterialDocument::TryEdit(const std::string& label, const std::function<bool(Material&)>& change) {
+    Material candidate = material_;
+    if (!change(candidate)) return false;
+    Edit(label, [&](Material& m) { m = std::move(candidate); });
+    return true;
 }
 
 bool MaterialDocument::Redo() {
@@ -250,7 +250,7 @@ std::vector<NodeId> MaterialDocument::PasteNodes(const std::string& text, float 
     const json j = json::parse(text, nullptr, false);
     if (j.is_discarded() || !j.is_object() || j.value("aether.material_nodes", 0) != 1) return {};
     std::vector<NodeId> added;
-    Edit("Paste", [&](Material& m) {
+    TryEdit("Paste", [&](Material& m) {
         std::map<NodeId, NodeId> ids;
         NodeId next = m.NextId();
         for (const json& n : j.value("nodes", json::array())) {
@@ -279,8 +279,8 @@ std::vector<NodeId> MaterialDocument::PasteNodes(const std::string& text, float 
             auto a = ids.find(from[0].get<NodeId>()), b = ids.find(to[0].get<NodeId>());
             if (a != ids.end() && b != ids.end()) m.links.push_back({{a->second, from[1].get<std::string>()}, {b->second, to[1].get<std::string>()}});
         }
+        return !added.empty();
     });
-    if (added.empty()) CancelEdit();
     return added;
 }
 

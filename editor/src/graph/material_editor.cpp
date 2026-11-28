@@ -215,12 +215,17 @@ void MaterialEditor::HandleGraphResult(const GraphViewResult& r) {
     if (HasEdits(r)) {
         std::vector<std::string> errors;
         const bool only_moves = !r.moved.empty() && !r.connect && !r.disconnect && r.deleted.empty();
-        doc_.Edit(only_moves ? "Move" : r.connect ? "Connect" : r.disconnect ? "Break link" : "Delete",
-                  [&](Material& m) { errors = ApplyMaterialEdits(m, r); });
-        if (!errors.empty()) {
-            status_ = errors.front();
-            if (r.connect && !r.disconnect && r.moved.empty() && r.deleted.empty()) doc_.CancelEdit();
+        const bool only_connect = r.connect && !r.disconnect && r.moved.empty() && r.deleted.empty();
+        const auto apply = [&](Material& m) { errors = ApplyMaterialEdits(m, r); };
+        if (only_connect) {
+            doc_.TryEdit("Connect", [&](Material& m) {
+                apply(m);
+                return errors.empty();
+            });
+        } else {
+            doc_.Edit(only_moves ? "Move" : r.connect ? "Connect" : r.disconnect ? "Break link" : "Delete", apply);
         }
+        if (!errors.empty()) status_ = errors.front();
         ForgetMissing();
     }
     if (r.open_palette) OpenPalette(r.palette_x, r.palette_y, r.palette_from_pin ? &r.palette_from : nullptr);

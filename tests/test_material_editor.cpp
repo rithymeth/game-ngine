@@ -157,7 +157,7 @@ AETHER_TEST(MaterialEditor_FailedSavePreservesExistingAssets) {
     const auto original_before = read(original);
     const auto other_before = read(other);
     AETHER_CHECK(!original_before.empty() && !other_before.empty());
-    doc.Edit("Description", [](mat::Material& material) { material.description = "Polished granite"; });
+    doc.Edit("Two-sided", [](mat::Material& material) { material.two_sided = true; });
     const auto pending = mat::MaterialToJson(doc.Get());
 
     struct rlimit previous_limit{};
@@ -206,6 +206,52 @@ AETHER_TEST(MaterialEditor_ClipboardKeepsInternalLinks) {
     const std::vector<NodeId> copies = doc.DuplicateNodes({4});
     AETHER_CHECK(copies.size() == 1 && doc.Get().Find(copies[0])->x == 380.0f && doc.Get().Find(copies[0])->type == "Math.Multiply");
     AETHER_CHECK(doc.CopyNodes({1}).empty() && doc.DuplicateNodes({1}).empty());
+}
+
+AETHER_TEST(MaterialEditor_RefusedEditsPreserveHistory) {
+    constexpr auto empty_nodes = R"({"aether.material_nodes":1,"nodes":[],"links":[]})";
+    MaterialDocument doc(Lit());
+    const auto clean_revision = doc.Revision();
+    AETHER_CHECK(doc.PasteNodes(empty_nodes, 0, 0).empty());
+    AETHER_CHECK(!doc.Dirty() && !doc.CanUndo() && doc.Revision() == clean_revision);
+
+    HeadlessImGui ui;
+    MaterialEditor editor(doc);
+    float x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+    bool pins = false;
+    const auto frame = [&] {
+        ui.Frame([&] {
+            editor.Draw();
+            const auto model = BuildMaterialView(doc.Get(), doc.Analysis());
+            pins = PinScreenPosition(model, editor.View(), {4, "result", true}, x0, y0) &&
+                   PinScreenPosition(model, editor.View(), {3, "uv", false}, x1, y1);
+        });
+    };
+    frame();
+    frame();
+    const auto drag_cycle = [&] {
+        if (!pins) { AETHER_CHECK(pins); return; }
+        auto& io = ImGui::GetIO();
+        io.AddMousePosEvent(x0, y0);
+        frame();
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+        frame();
+        io.AddMousePosEvent(x1, y1);
+        frame();
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+        frame();
+        AETHER_CHECK(editor.Status().find("loop") != std::string::npos);
+    };
+    drag_cycle();
+    AETHER_CHECK(!doc.Dirty() && !doc.CanUndo() && doc.Revision() == clean_revision);
+
+    doc.Edit("Two-sided", [](mat::Material& m) { m.two_sided = true; });
+    AETHER_CHECK(doc.Undo() && doc.CanRedo());
+    const auto before_refusal = doc.Revision();
+    AETHER_CHECK(doc.PasteNodes(empty_nodes, 0, 0).empty() && doc.CanRedo());
+    drag_cycle();
+    AETHER_CHECK(doc.Revision() == before_refusal && !doc.CanUndo() && doc.CanRedo());
+    AETHER_CHECK(doc.Redo() && doc.Get().two_sided);
 }
 
 AETHER_TEST(MaterialEditor_GraphLinksAreTypeChecked) {
