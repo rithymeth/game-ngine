@@ -3,6 +3,7 @@
 #include "gameplay/gameplay_debugger_document.h"
 #include "gameplay/gameplay_debugger_panel.h"
 #include "workspace/editor_workspace.h"
+#include "world/scene_panel.h"
 
 #include "aether/scene/components.h"
 
@@ -211,11 +212,49 @@ AETHER_TEST(GameplayDebugger_WorkspaceHasTheTool) {
     EditorWorkspace ws;
     const i64 tool = ws.FindTool("Gameplay Debugger");
     CHECK(tool >= 0 && std::string(ws.ToolCategory(static_cast<usize>(tool))) == "Debug");
+    if (tool < 0) return;
     HeadlessImGui imgui;
-    imgui.Frame([&] { ws.DrawTool(static_cast<usize>(tool)); }); // the built-in sample world
+    std::string rendered;
+    auto& platform = ImGui::GetPlatformIO();
+    platform.Platform_ClipboardUserData = &rendered;
+    platform.Platform_SetClipboardTextFn = [](ImGuiContext*, const char* text) {
+        *static_cast<std::string*>(ImGui::GetPlatformIO().Platform_ClipboardUserData) = text;
+    };
+    const auto draw = [&] {
+        rendered.clear();
+        imgui.Frame([&] {
+            ImGui::LogToClipboard();
+            ws.DrawTool(static_cast<usize>(tool));
+            ImGui::LogFinish();
+        });
+    };
+    constexpr const char* sample = "Sample data only. No project gameplay world is attached.";
+    constexpr const char* attached = "Attached gameplay world.";
+    draw();
+    CHECK(rendered.find(sample) != std::string::npos);
+    CHECK(rendered.find("Health") != std::string::npos);
+
+    // Pressing Play does not by itself supply the debugger with a running world.
+    ws.Scene().Document().Play();
+    draw();
+    CHECK(rendered.find(sample) != std::string::npos);
+    CHECK(rendered.find(attached) == std::string::npos);
+
     World other;
-    ws.SetGameplayWorld(&other);
-    imgui.Frame([&] { ws.DrawTool(static_cast<usize>(tool)); });
+    AttributeSystem attributes(other);
+    const Entity entity = other.CreateEntity(Transform{Vec3(), Quaternion::Identity()});
+    attributes.Define(entity, "DebugProbeCharge", 42);
+    ws.SetGameplayWorld(&other, &attributes);
+    draw();
+    CHECK(rendered.find(attached) != std::string::npos);
+    CHECK(rendered.find(sample) == std::string::npos);
+    CHECK(rendered.find("DebugProbeCharge") != std::string::npos);
+    CHECK(rendered.find("Health") == std::string::npos);
+
     ws.SetGameplayWorld(nullptr);
-    imgui.Frame([&] { ws.DrawTool(static_cast<usize>(tool)); });
+    ws.Scene().Document().Stop();
+    draw();
+    CHECK(rendered.find(sample) != std::string::npos);
+    CHECK(rendered.find("Health") != std::string::npos);
+    CHECK(rendered.find("DebugProbeCharge") == std::string::npos);
 }

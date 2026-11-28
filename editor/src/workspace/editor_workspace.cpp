@@ -583,8 +583,15 @@ struct EditorWorkspace::Impl {
              [this] { save_panel->Draw(); }},
             {"Localization", "Data", "Manage translatable text and the strings for each language.",
              [this] { loc_panel->Draw(); }},
-            {"Gameplay Debugger", "Debug", "Watch the running game's AI, physics and gameplay state.",
-             [this] { gameplay_panel->Draw(); }},
+            {"Gameplay Debugger", "Debug", "Inspect gameplay attributes, effects, abilities and tags.",
+             [this] {
+                 if (gameplay_doc->GetWorld() == &gameplay_sample) {
+                     ImGui::TextDisabled("Sample data only. No project gameplay world is attached.");
+                 } else {
+                     ImGui::TextDisabled("Attached gameplay world.");
+                 }
+                 gameplay_panel->Draw();
+             }},
             {"Net Play", "Networking", "Host or join a session and watch network traffic.",
              [this] { net_panel->Draw(); }},
             {"Net Profiler", "Networking", "Profile replication bandwidth and RPC timing.",

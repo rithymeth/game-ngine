@@ -113,8 +113,12 @@ attributes (base, current, bounds, and the modifiers an effect is putting on the
 effects with time left and stacks, its abilities (ready or running) and its tags with counts.
 Type in the filter to narrow it to an entity, attribute, effect, ability or tag. Type a number
 into an attribute's base to set it, press Remove on an effect or Cancel on a running ability,
-or add and remove tags. Edits made while the game is running go through the running systems, so
-scripts and Blueprints hear the changes.
+or add and remove tags.
+
+Check the source label before making changes. In the stock editor, the debugger shows an
+editable sample, even after you press Play. Edits to the sample don't affect your project.
+An editor host can attach a running world and its gameplay systems. With those systems attached,
+debugger edits go through them so scripts and Blueprints hear the changes.
 
 ## Good to know
 
