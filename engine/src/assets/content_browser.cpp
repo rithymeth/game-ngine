@@ -614,11 +614,15 @@ bool DeleteContents(AssetDatabase& database, const std::vector<std::string>& pat
         const stdfs::path absolute = database.ContentRoot() / target;
         if (stdfs::is_directory(absolute, ec)) {
             stdfs::remove_all(absolute, ec);
-        } else {
-            stdfs::remove(absolute, ec);
+        } else if (stdfs::remove(absolute, ec)) {
+            // The sidecar owns the asset's GUID and import settings. Don't
+            // remove it or overwrite a source-removal error if the asset stays.
             stdfs::path meta = absolute;
             meta += AssetMeta::kExtension;
             stdfs::remove(meta, ec);
+        } else if (!ec) {
+            // The source disappeared after validation. Leave the metadata alone.
+            ec = std::make_error_code(std::errc::no_such_file_or_directory);
         }
         if (ec) {
             if (error != nullptr) *error = "Couldn't delete " + target + ": " + ec.message();
