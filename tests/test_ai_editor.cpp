@@ -496,6 +496,41 @@ AETHER_TEST(AIEditor_PanelHeadless) {
     CHECK(!editor.SaveNow() && !editor.Status().empty());
 }
 
+AETHER_TEST(AIEditor_BehaviorTreeHistoryClearsStaleSelection) {
+    HeadlessImGui ui;
+    BehaviorTreeDocument doc;
+    BehaviorTreeEditor editor(doc);
+    CHECK(doc.AddNode({}, BtNodeType::Log, 0));
+    ui.Frame([&] { editor.Draw(); });
+
+    const auto shortcut = [&](ImGuiKey key) {
+        ImGuiIO& io = ImGui::GetIO();
+        io.AddKeyEvent(ImGuiMod_Ctrl, true);
+        io.AddKeyEvent(key, true);
+        ui.Frame([&] { editor.Draw(); });
+        io.AddKeyEvent(key, false);
+        io.AddKeyEvent(ImGuiMod_Ctrl, false);
+        ui.Frame([&] { editor.Draw(); });
+    };
+
+    // Path [0] survives both operations, but it points at a different node.
+    editor.Select({0});
+    CHECK(editor.Selected() && editor.View().selection.size() == 1);
+    shortcut(ImGuiKey_Z);
+    CHECK(doc.Node({0}) != nullptr && doc.Node({0})->type == BtNodeType::Wait);
+    CHECK(!editor.Selected() && editor.View().selection.empty());
+
+    editor.Select({0});
+    shortcut(ImGuiKey_Y);
+    CHECK(doc.Node({0}) != nullptr && doc.Node({0})->type == BtNodeType::Log);
+    CHECK(!editor.Selected() && editor.View().selection.empty());
+
+    // A shortcut with no corresponding history entry should not deselect.
+    editor.Select({0});
+    shortcut(ImGuiKey_Y);
+    CHECK(editor.Selected() && editor.View().selection.size() == 1);
+}
+
 AETHER_TEST(AIEditor_NavigationPanel) {
     nav::NavMeshSettings s;
     s.agent_radius = 0.4f;

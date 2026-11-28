@@ -310,11 +310,11 @@ void BehaviorTreeEditor::DrawToolbar() {
     if (ImGui::Button("Save")) SaveNow();
     ImGui::SameLine();
     ImGui::BeginDisabled(!doc_.CanUndo());
-    if (ImGui::Button("Undo")) doc_.Undo();
+    if (ImGui::Button("Undo") && doc_.Undo()) ClearSelection();
     ImGui::EndDisabled();
     ImGui::SameLine();
     ImGui::BeginDisabled(!doc_.CanRedo());
-    if (ImGui::Button("Redo")) doc_.Redo();
+    if (ImGui::Button("Redo") && doc_.Redo()) ClearSelection();
     ImGui::EndDisabled();
     ImGui::SameLine();
     if (ImGui::Button("Fit")) view_.request_fit = true;
@@ -612,8 +612,11 @@ void BehaviorTreeEditor::DrawDebugger() {
 void BehaviorTreeEditor::HandleKeys() {
     ImGuiIO& io = ImGui::GetIO();
     if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) || io.WantTextInput) return;
-    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z, false)) io.KeyShift ? (void)doc_.Redo() : (void)doc_.Undo();
-    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Y, false)) doc_.Redo();
+    // History restores index paths, which can now refer to different nodes.
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z, false)) {
+        if (io.KeyShift ? doc_.Redo() : doc_.Undo()) ClearSelection();
+    }
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Y, false) && doc_.Redo()) ClearSelection();
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false)) SaveNow();
 }
 
