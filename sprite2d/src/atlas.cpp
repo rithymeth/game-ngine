@@ -6,7 +6,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
-#include <fstream>
 #include <limits>
 #include <numeric>
 #include <unordered_set>
@@ -162,14 +161,7 @@ bool SaveAtlas(const std::filesystem::path& file, const SpriteAtlas& atlas, std:
         return false;
     }
 
-    std::error_code ec;
-    if (!file.parent_path().empty()) std::filesystem::create_directories(file.parent_path(), ec);
-    std::ofstream out(file, std::ios::binary);
-    if (out) {
-        out << text;
-        out.close(); // A buffered write can first fail when the stream closes.
-        if (out) return true;
-    }
+    if (fs::WriteFileAtomic(file.string(), text.data(), text.size())) return true;
     if (error) *error = "Couldn't write " + file.string();
     return false;
 }

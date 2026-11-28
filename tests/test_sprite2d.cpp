@@ -21,6 +21,11 @@
 #include <map>
 #include <set>
 
+#if defined(__linux__)
+#include <signal.h>
+#include <sys/resource.h>
+#endif
+
 // The 2D toolkit's data and batching (Phase 26 step 5, §26.6): sprite atlases
 // and clips, packing, tilesets with autotiles, tilemaps, sorted batches and
 // the pixel-perfect camera.
@@ -102,6 +107,44 @@ AETHER_TEST(Sprite2D_AtlasSaveKeepsExistingFileWhenNameCannotBeEncoded) {
     CHECK(SaveAtlas(file, edited, &error) && error.empty());
     CHECK(LoadAtlas(file, loaded) && AtlasToJson(loaded) == AtlasToJson(edited));
 }
+
+#if defined(__linux__)
+AETHER_TEST(Sprite2D_AtlasWriteFailureKeepsTheLastGoodFile) {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / "aether_atlas_interrupted_save";
+    const fs::path file = dir / "Player.aatlas";
+    const auto original = HeroAtlas(Guid());
+    if (!SaveAtlas(file, original)) { CHECK(false); return; }
+
+    auto edited = original;
+    edited.frames.front().pivot_x = 0.25f;
+    struct rlimit previous_limit{};
+    struct sigaction previous_signal{}, ignore{};
+    ignore.sa_handler = SIG_IGN;
+    const bool limit_read = getrlimit(RLIMIT_FSIZE, &previous_limit) == 0;
+    CHECK(limit_read);
+    if (!limit_read) return;
+    sigemptyset(&ignore.sa_mask);
+    const bool signal_set = sigaction(SIGXFSZ, &ignore, &previous_signal) == 0;
+    CHECK(signal_set);
+    if (!signal_set) return;
+    struct rlimit tiny = previous_limit;
+    tiny.rlim_cur = 0;
+    const bool limit_set = setrlimit(RLIMIT_FSIZE, &tiny) == 0;
+    std::string error;
+    const bool saved = limit_set && SaveAtlas(file, edited, &error);
+    const bool limit_restored = setrlimit(RLIMIT_FSIZE, &previous_limit) == 0;
+    const bool signal_restored = sigaction(SIGXFSZ, &previous_signal, nullptr) == 0;
+    CHECK(limit_set && limit_restored && signal_restored);
+    CHECK(!saved && !error.empty());
+
+    SpriteAtlas loaded;
+    CHECK(LoadAtlas(file, loaded) && AtlasToJson(loaded) == AtlasToJson(original));
+    CHECK(SaveAtlas(file, edited, &error) && error.empty());
+    CHECK(LoadAtlas(file, loaded) && AtlasToJson(loaded) == AtlasToJson(edited));
+    fs::remove_all(dir);
+}
+#endif
 
 AETHER_TEST(Sprite2D_AtlasRefusesBadData) {
     SpriteAtlas out;
