@@ -660,6 +660,65 @@ AETHER_TEST(GameView_PlaysTheSessionFromItsOwnCamera) {
     AETHER_CHECK(!live.Frame(0.0f) && live.Viewport().FrameCount() == 2 && live.Picture().Valid());
 }
 
+AETHER_TEST(GameView_LivePlayRunsOnStartInThePreviewWorld) {
+    std::unique_ptr<gfx::rhi::IDevice> device = TryDevice();
+    if (!device) {
+        std::printf("    (no Vulkan device: install a driver, or Mesa's lavapipe, to run this)\n");
+        return;
+    }
+    if (!player::Game::HasScripting()) {
+        std::printf("    (no scripting in this build)\n");
+        return;
+    }
+    const stdfs::path project = MakeProject("GameViewOnStart", "blank");
+    const stdfs::path content = project.parent_path() / "Content";
+    stdfs::create_directories(content / "Scripts");
+    const char* script_path = "Scripts/PreviewStart.luau";
+    std::ofstream(content / script_path) << R"(
+local PreviewStart = {}
+function PreviewStart:OnStart()
+    local transform = self.entity:Get("Transform")
+    transform.position = transform.position + vector.create(7, 0, 0)
+end
+return PreviewStart
+)";
+    assets::AssetDatabase database(content);
+    database.Scan();
+    const assets::AssetRecord* script = database.FindByPath(script_path);
+    AETHER_CHECK(script != nullptr);
+    if (!script) return;
+
+    ScenePanel scene(content);
+    if (!scene.OpenScene("Scenes/Main.ascene", true)) { AETHER_CHECK(false); return; }
+    SceneDocument& document = scene.Document();
+    const Entity actor = document.CreateEntity("Start probe");
+    const EntityGuid guid = document.GetWorld().GetComponent<IdComponent>(actor)->guid;
+    ScriptComponent component;
+    component.script.guid = script->guid;
+    document.GetWorld().AddComponent(actor, component);
+    std::string error;
+    if (!document.Save({}, &error)) { AETHER_CHECK(false); return; }
+
+    LiveGameView live(*device, scene, [&] { return project; });
+    for (int session = 0; session < 2; ++session) {
+        document.Play();
+        const bool started = live.Start(document, 128, 72);
+        AETHER_CHECK(started);
+        if (!started) return;
+        Vec3 position;
+        AETHER_CHECK(live.Viewport().PositionOf(guid, position));
+        AETHER_CHECK(std::abs(position.x - 7.0f) < 1e-3f);
+        AETHER_CHECK(live.Viewport().RuntimeErrors().empty());
+
+        // The start callback ran in the preview copy, not in the author's scene.
+        const Entity authored = document.Guids().Find(document.GetWorld(), guid);
+        const Transform* transform = document.GetWorld().GetComponent<Transform>(authored);
+        AETHER_CHECK(transform != nullptr && std::abs(transform->position.x) < 1e-3f);
+        live.Stop();
+        document.Stop();
+    }
+}
+
 #if defined(AETHER_HAS_EDITOR_VULKAN)
 // The Scene View's shaded look: the bridge cooks and runs the open scene the first time it is asked, draws at the Scene View's camera, and keeps what
 // the document has with patches, as the Live Viewport does.

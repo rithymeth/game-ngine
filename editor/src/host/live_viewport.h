@@ -64,6 +64,8 @@ public:
     u64 ScriptRestarts() const;
     // How many times SetScene has succeeded since Load.
     u64 SceneReloads() const;
+    // Enter the game lifecycle (OnStart, etc.). Independent of the authoring preview's load and draw path.
+    void BeginPlay();
     void Unload();
     bool Loaded() const { return impl_ != nullptr; }
     u32 Width() const;

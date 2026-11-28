@@ -349,6 +349,10 @@ bool LiveViewport::Frame(f32 dt, const Vec3& position, const Quaternion& rotatio
     return RenderFrame(dt, &position, &rotation, fov_degrees, projection, ortho_height, free_camera);
 }
 
+void LiveViewport::BeginPlay() {
+    if (impl_ && impl_->game) impl_->game->BeginPlay();
+}
+
 bool LiveViewport::FrameGameCamera(f32 dt) { return RenderFrame(dt, nullptr, nullptr, 0.0f, Projection::Perspective, 0.0f, false); }
 
 bool LiveViewport::RenderFrame(f32 dt, const Vec3* position, const Quaternion* rotation, f32 fov_degrees, Projection projection,

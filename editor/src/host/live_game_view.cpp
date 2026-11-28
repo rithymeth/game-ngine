@@ -28,6 +28,7 @@ bool LiveGameView::Start(const SceneDocument& document, u32 width, u32 height) {
         note_ = error;
         return false;
     }
+    viewport_.BeginPlay();
     note_.clear();
     return true;
 }
