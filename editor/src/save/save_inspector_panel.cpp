@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <ctime>
+#include <cstring>
 
 namespace aether::editor {
 
@@ -16,6 +17,36 @@ namespace stdfs = std::filesystem;
 using reflect::Json;
 
 namespace {
+
+// Compare actual bytes, not timestamps or lengths: one playtest can save
+// twice in the same clock tick and write two equal-sized envelopes.
+bool PrimaryMatchesView(const SaveInspectorDocument& doc) {
+    std::error_code ec;
+    if (!stdfs::is_regular_file(stdfs::symlink_status(doc.File(), ec)) || ec) return false;
+    const auto& displayed = doc.Info().raw_text;
+    std::vector<u8> current;
+    return fs::ReadFileBytes(doc.File().string(), current, displayed.size()) &&
+           current.size() == displayed.size() &&
+           (current.empty() || std::memcmp(current.data(), displayed.data(), current.size()) == 0);
+}
+
+// A missing backup is a valid snapshot, distinct from an empty backup.
+// Fail closed on unreadable, oversized or non-regular files.
+bool ReadDeleteBackup(stdfs::path path, std::optional<std::vector<u8>>& contents) {
+    path += ".bak";
+    std::error_code ec;
+    const auto status = stdfs::symlink_status(path, ec);
+    if (status.type() == stdfs::file_type::not_found &&
+        (!ec || ec == std::errc::no_such_file_or_directory)) {
+        contents.reset();
+        return true;
+    }
+    if (ec || !stdfs::is_regular_file(status)) return false;
+    std::vector<u8> bytes;
+    if (!fs::ReadFileBytes(path.string(), bytes, save::envelope::kMaxEnvelopeBytes)) return false;
+    contents = std::move(bytes);
+    return true;
+}
 
 std::string FormatTime(u64 unix_seconds) {
     if (unix_seconds == 0) return "unknown";
@@ -141,8 +172,13 @@ void SaveInspectorPanel::Draw() {
     ImGui::SameLine();
     ImGui::BeginDisabled(doc_.IsBackupFile());
     if (ImGui::Button("Delete...")) {
-        delete_revision_ = doc_.Revision();
-        ImGui::OpenPopup("Delete save?");
+        if (!PrimaryMatchesView(doc_) || !ReadDeleteBackup(doc_.File(), delete_backup_)) {
+            message_ = "Cannot verify the save and its backup. Reload before deleting.";
+        } else {
+            message_.clear();
+            delete_revision_ = doc_.Revision();
+            ImGui::OpenPopup("Delete save?");
+        }
     }
     ImGui::EndDisabled();
     ImGui::SameLine();
@@ -159,7 +195,14 @@ void SaveInspectorPanel::Draw() {
         } else {
             ImGui::Text("Delete %s and its backup?", doc_.File().filename().string().c_str());
             if (ImGui::Button("Delete")) {
-                DeleteOpen();
+                std::optional<std::vector<u8>> current_backup;
+                // This catches completed writes, not writers racing the removal itself.
+                if (!PrimaryMatchesView(doc_) || !ReadDeleteBackup(doc_.File(), current_backup) ||
+                    current_backup != delete_backup_) {
+                    message_ = "Save or backup changed or could not be verified. Reload before deleting.";
+                } else {
+                    DeleteOpen();
+                }
                 ImGui::CloseCurrentPopup();
             }
             ImGui::SameLine();
@@ -167,6 +210,7 @@ void SaveInspectorPanel::Draw() {
         }
         ImGui::EndPopup();
     }
+    if (!ImGui::IsPopupOpen("Delete save?")) delete_backup_.reset();
     if (open_copy_) {
         copy_error_.clear();
         ImGui::OpenPopup("Copy save");

@@ -3,6 +3,7 @@
 #include "save/save_inspector_document.h"
 
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -55,6 +56,7 @@ private:
     std::string copy_name_;
     std::string copy_error_;
     std::string message_;
+    std::optional<std::vector<u8>> delete_backup_;
     u64 delete_revision_ = 0;
     bool open_copy_ = false;
 };
