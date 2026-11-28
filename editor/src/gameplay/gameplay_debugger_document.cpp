@@ -122,26 +122,26 @@ std::string GameplayDebuggerDocument::SetBase(Entity entity, const std::string& 
 
 std::string GameplayDebuggerDocument::RemoveEffect(Entity entity, u32 handle) {
     if (!Alive(entity)) return "No such entity.";
-    if (EffectSystem* sys = effect_system_) {
-        return sys->Remove(handle) ? "Removed the effect." : "No such effect.";
-    }
     EffectContainer* c = world_->GetComponent<EffectContainer>(entity);
     if (c == nullptr) return "No such effect.";
     const auto it = std::find_if(c->active.begin(), c->active.end(), [&](const ActiveEffect& a) { return a.handle == handle; });
     if (it == c->active.end()) return "No such effect.";
+    if (EffectSystem* sys = effect_system_) {
+        return sys->Remove(handle) ? "Removed the effect." : "No such effect.";
+    }
     c->active.erase(it); // no system to release its tags and modifiers: the next run rebuilds them
     return "Removed the effect (no running system: its modifiers go on the next play).";
 }
 
 std::string GameplayDebuggerDocument::CancelAbility(Entity entity, u32 handle) {
     if (!Alive(entity)) return "No such entity.";
-    if (AbilitySystem* sys = ability_system_) {
-        return sys->Cancel(handle) ? "Cancelled the ability." : "No such running ability.";
-    }
     AbilityContainer* c = world_->GetComponent<AbilityContainer>(entity);
     if (c == nullptr) return "No such running ability.";
     const auto it = std::find_if(c->active.begin(), c->active.end(), [&](const ActiveAbility& a) { return a.handle == handle; });
     if (it == c->active.end()) return "No such running ability.";
+    if (AbilitySystem* sys = ability_system_) {
+        return sys->Cancel(handle) ? "Cancelled the ability." : "No such running ability.";
+    }
     c->active.erase(it);
     return "Cancelled the ability (no running system: its tags stay until they are removed).";
 }

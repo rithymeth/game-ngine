@@ -158,6 +158,28 @@ AETHER_TEST(GameplayDebugger_ActionsGoThroughTheSystems) {
     CHECK(r.doc.RemoveTag(r.other, "State.Stunned").find("Removed") == 0 && r.doc.RemoveTag(r.other, "State.Stunned").find("doesn't have") != std::string::npos);
 }
 
+AETHER_TEST(GameplayDebugger_ActionsOnlyAffectHandlesOwnedByTheEntity) {
+    Rig r;
+    r.fx.Apply(r.other, "Burning");
+    r.ab.Grant(r.other, "Dash");
+    r.ab.TryActivate(r.other, "Dash");
+    const auto* effects = r.world.GetComponent<EffectContainer>(r.hero);
+    const auto* abilities = r.world.GetComponent<AbilityContainer>(r.hero);
+    if (!effects || effects->active.empty() || !abilities || abilities->active.empty()) { CHECK(false); return; }
+    const u32 haste = effects->active.front().handle;
+    const u32 dash = abilities->active.front().handle;
+
+    CHECK(r.doc.RemoveEffect(r.other, haste) == "No such effect.");
+    CHECK(r.doc.CancelAbility(r.other, dash) == "No such running ability.");
+    CHECK(Near(r.attrs.Get(r.hero, "Speed"), 10) && r.ab.IsActive(r.hero, "Dash"));
+    CHECK(r.world.GetComponent<EffectContainer>(r.other)->active.size() == 1 && r.ab.IsActive(r.other, "Dash"));
+
+    CHECK(r.doc.RemoveEffect(r.hero, haste) == "Removed the effect.");
+    CHECK(r.doc.CancelAbility(r.hero, dash) == "Cancelled the ability.");
+    CHECK(Near(r.attrs.Get(r.hero, "Speed"), 5) && !r.ab.IsActive(r.hero, "Dash"));
+    CHECK(r.world.GetComponent<EffectContainer>(r.other)->active.size() == 1 && r.ab.IsActive(r.other, "Dash"));
+}
+
 AETHER_TEST(GameplayDebugger_ActionsEditComponentsWithoutSystems) {
     Rig r;
     r.doc.SetSystems(nullptr, nullptr, nullptr);
