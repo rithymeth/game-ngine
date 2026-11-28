@@ -252,15 +252,22 @@ void ParticleEditor::Draw() {
     HandleKeys();
 }
 
+void ParticleEditor::RestoreHistory(bool redo) {
+    if (!(redo ? doc_.Redo() : doc_.Undo())) return;
+    // Restored emitter and module indices may now belong to different items.
+    emitter_ = -1;
+    module_.reset();
+}
+
 void ParticleEditor::DrawToolbar() {
     if (ImGui::Button("Save")) SaveNow();
     ImGui::SameLine();
     ImGui::BeginDisabled(!doc_.CanUndo());
-    if (ImGui::Button("Undo")) doc_.Undo();
+    if (ImGui::Button("Undo")) RestoreHistory(false);
     ImGui::EndDisabled();
     ImGui::SameLine();
     ImGui::BeginDisabled(!doc_.CanRedo());
-    if (ImGui::Button("Redo")) doc_.Redo();
+    if (ImGui::Button("Redo")) RestoreHistory(true);
     ImGui::EndDisabled();
     ImGui::SameLine();
     if (ImGui::Button(playing_ ? "Pause" : "Play")) playing_ = !playing_;
@@ -616,8 +623,8 @@ void ParticleEditor::DrawDiagnostics() {
 void ParticleEditor::HandleKeys() {
     ImGuiIO& io = ImGui::GetIO();
     if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) || io.WantTextInput) return;
-    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z, false)) io.KeyShift ? (void)doc_.Redo() : (void)doc_.Undo();
-    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Y, false)) doc_.Redo();
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z, false)) RestoreHistory(io.KeyShift);
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Y, false)) RestoreHistory(true);
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false)) SaveNow();
     if (!io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Space, false)) playing_ = !playing_;
     if (ImGui::IsKeyPressed(ImGuiKey_Delete, false) && module_) {

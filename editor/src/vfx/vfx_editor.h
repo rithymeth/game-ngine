@@ -48,6 +48,7 @@ public:
 
 private:
     void Sync(); // the preview follows the document
+    void RestoreHistory(bool redo);
     void DrawToolbar();
     void DrawEmitters();
     void DrawStack();

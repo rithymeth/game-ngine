@@ -190,6 +190,41 @@ AETHER_TEST(VfxEditor_FailedSavePreservesParticleAssets) {
 }
 #endif
 
+AETHER_TEST(VfxEditor_HistoryClearsStaleEmitterAndModuleSelection) {
+    HeadlessImGui ui;
+    ParticleSystemDocument doc;
+    CHECK(doc.AddEmitter("Smoke") == 1);
+    CHECK(doc.MoveEmitter(1, 0));
+    ParticleEditor editor(doc);
+    const auto frame = [&] { ui.Frame([&] { editor.Draw(); }); };
+    frame();
+    const auto shortcut = [&](ImGuiKey key) {
+        ImGuiIO& io = ImGui::GetIO();
+        io.AddKeyEvent(ImGuiMod_Ctrl, true);
+        io.AddKeyEvent(key, true);
+        frame();
+        io.AddKeyEvent(key, false);
+        io.AddKeyEvent(ImGuiMod_Ctrl, false);
+        frame();
+    };
+
+    const ModuleRef first{0, VfxStage::Spawn, 0};
+    editor.SelectModule(first);
+    CHECK(editor.SelectedModule() == first);
+    shortcut(ImGuiKey_Z);
+    CHECK(doc.EmitterAt(0) != nullptr && doc.EmitterAt(0)->settings.name == "Emitter");
+    CHECK(!editor.SelectedModule() && editor.SelectedEmitter() < 0);
+
+    editor.SelectModule(first);
+    shortcut(ImGuiKey_Y);
+    CHECK(doc.EmitterAt(0) != nullptr && doc.EmitterAt(0)->settings.name == "Smoke");
+    CHECK(!editor.SelectedModule() && editor.SelectedEmitter() < 0);
+
+    editor.SelectModule(first);
+    shortcut(ImGuiKey_Y); // no remaining redo; keep the current selection
+    CHECK(editor.SelectedModule() == first && editor.SelectedEmitter() == 0);
+}
+
 AETHER_TEST(VfxEditor_PreviewAndPanel) {
     // A fountain: rate, upward cone, gravity.
     ParticleSystemDocument doc;
