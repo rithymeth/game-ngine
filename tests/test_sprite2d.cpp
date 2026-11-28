@@ -389,6 +389,28 @@ AETHER_TEST(Sprite2D_TilemapEditingAndAutotiles) {
     CHECK(ResolveTile(m2, ts, 0, 4, 4) == kEmpty);
 }
 
+AETHER_TEST(Sprite2D_AutotilesRespectRowEdgesAndTruncatedStorage) {
+    TilemapData map;
+    map.Resize(3, 3);
+    map.AddLayer("Terrain");
+    Tileset tiles;
+    std::array<i32, 16> variants;
+    for (usize i = 0; i < variants.size(); ++i) variants[i] = 100 + static_cast<i32>(i);
+    const i32 grass = AutotileCell(tiles.AddAutotile("Grass", variants));
+    const i32 water = AutotileCell(tiles.AddAutotile("Water", variants));
+    map.layers[0].cells = {grass, water, grass, grass, grass};
+    // Matching grass on opposite row edges must not connect. The rest of
+    // the second row and all of the third row lack backing cells.
+    CHECK(NeighbourMask(map, 0, 2, 0) == 0);
+    CHECK(ResolveTile(map, tiles, 0, 2, 0) == 100);
+    CHECK(NeighbourMask(map, 0, 0, 1) == (kSouth | kEast));
+    CHECK(ResolveTile(map, tiles, 0, 0, 1) == 100 + (kSouth | kEast));
+    CHECK(NeighbourMask(map, 0, 1, 1) == kWest);
+    CHECK(ResolveTile(map, tiles, 0, 1, 1) == 100 + kWest);
+    CHECK(NeighbourMask(map, 0, 2, 1) == 0 && ResolveTile(map, tiles, 0, 2, 1) == kEmpty);
+    CHECK(NeighbourMask(map, 0, -1, 1) == 0 && ResolveTile(map, tiles, 1, 0, 1) == kEmpty);
+}
+
 AETHER_TEST(Sprite2D_TilemapBulkEditsKeepRowBoundaries) {
     TilemapData map;
     map.Resize(5, 4);

@@ -527,32 +527,39 @@ bool SaveTilemap(const std::filesystem::path& file, const TilemapData& m, std::s
     return true;
 }
 
+namespace {
+u8 NeighbourMaskForCell(const TilemapData& map, usize layer, i32 x, i32 y, i32 self) {
+    // A nonempty center came from Get, so it is in bounds and stored.
+    const auto& cells = map.layers[layer].cells;
+    const u64 index = static_cast<u64>(y) * map.width + static_cast<u32>(x);
+    const u64 north = index + map.width;
+    const u64 east = index + 1;
+    u8 mask = 0;
+    if (y < std::numeric_limits<i32>::max() && static_cast<u32>(y) + 1 < map.height &&
+        north < cells.size() && cells[static_cast<usize>(north)] == self) mask |= kNorth;
+    if (x < std::numeric_limits<i32>::max() && static_cast<u32>(x) + 1 < map.width &&
+        east < cells.size() && cells[static_cast<usize>(east)] == self) mask |= kEast;
+    if (y > 0 && cells[static_cast<usize>(index - map.width)] == self) mask |= kSouth;
+    if (x > 0 && cells[static_cast<usize>(index - 1)] == self) mask |= kWest;
+    return mask;
+}
+
+// Keep neighbour work off the plain-tile path.
+AETHER_NOINLINE i32 ResolveAutotile(const TilemapData& map, const Tileset& tileset, usize layer, i32 x, i32 y, i32 cell) {
+    const usize index = AutotileIndex(cell);
+    if (index >= tileset.autotiles.size()) return kEmpty;
+    return tileset.autotiles[index].tiles[NeighbourMaskForCell(map, layer, x, y, cell)];
+}
+} // namespace
+
 u8 NeighbourMask(const TilemapData& map, usize layer, i32 x, i32 y) {
     const i32 self = map.Get(layer, x, y);
-    if (self == kEmpty) return 0;
-    u8 mask = 0;
-    const auto matches = [&](i64 neighbour_x, i64 neighbour_y) {
-        if (neighbour_x < std::numeric_limits<i32>::min() ||
-            neighbour_x > std::numeric_limits<i32>::max() ||
-            neighbour_y < std::numeric_limits<i32>::min() ||
-            neighbour_y > std::numeric_limits<i32>::max()) {
-            return false;
-        }
-        return map.Get(layer, static_cast<i32>(neighbour_x), static_cast<i32>(neighbour_y)) == self;
-    };
-    if (matches(x, static_cast<i64>(y) + 1)) mask |= kNorth;
-    if (matches(static_cast<i64>(x) + 1, y)) mask |= kEast;
-    if (matches(x, static_cast<i64>(y) - 1)) mask |= kSouth;
-    if (matches(static_cast<i64>(x) - 1, y)) mask |= kWest;
-    return mask;
+    return self == kEmpty ? 0 : NeighbourMaskForCell(map, layer, x, y, self);
 }
 
 i32 ResolveTile(const TilemapData& map, const Tileset& tileset, usize layer, i32 x, i32 y) {
     const i32 cell = map.Get(layer, x, y);
-    if (!IsAutotileCell(cell)) return cell;
-    const usize index = AutotileIndex(cell);
-    if (index >= tileset.autotiles.size()) return kEmpty;
-    return tileset.autotiles[index].tiles[NeighbourMask(map, layer, x, y)];
+    return IsAutotileCell(cell) ? ResolveAutotile(map, tileset, layer, x, y, cell) : cell;
 }
 
 bool IsSolidAt(const TilemapData& map, const Tileset& tileset, i32 x, i32 y) {
