@@ -296,6 +296,18 @@ AETHER_TEST(SceneDocument_CopyAndPasteOutlivesTheScene) {
 }
 // Phase 42.6: data layers switch a named group of entities off and back on, restoring what each
 // entity had rather than turning everything on.
+AETHER_TEST(DataLayers_BlankNamesDoNotFormALayer) {
+    World world;
+    const Entity unassigned = world.CreateEntity(DataLayer{});
+    const Entity named = world.CreateEntity(DataLayer{"Props"});
+    AETHER_CHECK(DataLayerNames(world) == std::vector<std::string>{"Props"});
+    AETHER_CHECK(DataLayerSize(world, "") == 0 && !IsDataLayerActive(world, ""));
+    AETHER_CHECK(SetDataLayerActive(world, "", false) == 0);
+    AETHER_CHECK(!world.GetComponent<DataLayer>(unassigned)->captured);
+    AETHER_CHECK(world.GetComponent<Active>(unassigned) == nullptr);
+    AETHER_CHECK(IsDataLayerActive(world, "Props") && world.GetComponent<Active>(named) == nullptr);
+}
+
 AETHER_TEST(DataLayers_SwitchAndRestore) {
     World world;
     auto make = [&](const char* layer, bool active) {

@@ -464,6 +464,17 @@ AETHER_TEST(Commands_DataLayerPanelSwitchesThroughTheStack) {
     AETHER_CHECK(world.GetComponent<Active>(b) == nullptr || world.GetComponent<Active>(b)->active);
     AETHER_CHECK(world.GetComponent<Active>(c) == nullptr || world.GetComponent<Active>(c)->active);
 }
+AETHER_TEST(Commands_DataLayerPanelDoesNotSwitchUnassignedEntities) {
+    World world;
+    GuidIndex guids;
+    CommandStack stack;
+    const Entity loose = world.CreateEntity(DataLayer{});
+    DataLayerPanel panel{world, guids, stack};
+    AETHER_CHECK(panel.Rows().empty());
+    AETHER_CHECK(!panel.SetLayerActive("", false) && !stack.CanUndo());
+    AETHER_CHECK(!world.GetComponent<DataLayer>(loose)->captured && world.GetComponent<Active>(loose) == nullptr);
+}
+
 AETHER_TEST(Commands_DataLayerToggleTracksActualSwitchStateChanges) {
     World world;
     GuidIndex guids;

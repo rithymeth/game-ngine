@@ -486,6 +486,7 @@ usize RevertPrefabOverrideCommand::MemoryBytes() const {
 // ---------------------------------------------------------------- data layers (Phase 42.6)
 
 std::unique_ptr<ICommand> SetDataLayerActiveCommand::Make(const CommandContext& ctx, std::string layer, bool active) {
+    if (layer.empty()) return nullptr;
     auto command = std::make_unique<SetDataLayerActiveCommand>();
     command->layer_ = std::move(layer);
     command->active_ = active;

@@ -37,6 +37,7 @@ std::vector<std::string> DataLayerNames(const World& world) {
 }
 
 usize DataLayerSize(const World& world, std::string_view layer) {
+    if (layer.empty()) return 0;
     usize count = 0;
     ForEachDataLayer(world, [&](Entity, DataLayer& l) {
         if (l.layer == layer) ++count;
@@ -45,6 +46,7 @@ usize DataLayerSize(const World& world, std::string_view layer) {
 }
 
 usize SetDataLayerActive(World& world, std::string_view layer, bool active) {
+    if (layer.empty()) return 0;
     // Adding an Active component moves the entity to another archetype, which invalidates the walk
     // that found it -- so the members are collected first and the world is changed afterwards.
     std::vector<Entity> members;
@@ -88,6 +90,7 @@ usize SetDataLayerActive(World& world, std::string_view layer, bool active) {
     return changed;
 }
 bool IsDataLayerActive(const World& world, std::string_view layer) {
+    if (layer.empty()) return false;
     bool any = false;
     bool all_active = true;
     ForEachDataLayer(world, [&](Entity entity, DataLayer& l) {
