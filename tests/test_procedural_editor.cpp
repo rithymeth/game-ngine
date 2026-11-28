@@ -14,6 +14,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
+#include <iterator>
+#include <map>
 #include <set>
 
 // The visual generation editor: the document (presets, undo, generation, the hand-off to the terrain and foliage editors, baking to files) and the
@@ -510,6 +512,58 @@ AETHER_TEST(ProceduralEditor_BakeWritesTheTerrainMeshesAndASceneThePlayerLoads) 
     CHECK(!bad.ok && !bad.error.empty());
     std::error_code ec;
     fs::remove_all(root, ec);
+}
+
+AETHER_TEST(ProceduralEditor_FailedRebakePreservesEveryPreviousOutput) {
+    ProceduralWorldDocument doc(Small());
+    doc.Generate();
+    BakeOptions options;
+    options.name = "Forest";
+    options.add_player = false;
+    options.terrain_collision = false;
+    options.terrain_texture = 16;
+    options.water_texture = 0;
+    options.max_scene_instances = 8;
+    const auto root = ScratchDir("aether_rebake_transaction");
+    const auto before = doc.Bake(root.string(), options);
+    CHECK(before.ok && !before.files.empty());
+    if (!before.ok) return;
+    const auto read = [](const fs::path& path) {
+        std::ifstream in(path, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(in), {});
+    };
+    std::map<std::string, std::string> original;
+    for (const std::string& path : before.files) {
+        original[path] = read(root / path);
+        CHECK(!original[path].empty());
+    }
+    const auto folder = root / "Generated/Forest";
+    const auto sidecar = folder / "Forest_terrain.png.ameta";
+    const auto extra = folder / "ArtistNotes.txt";
+    { std::ofstream(sidecar) << "existing asset identity"; std::ofstream(extra) << "authored notes"; }
+    const auto blocker = folder / "Forest_water.png";
+    CHECK(fs::create_directory(blocker));
+    options.terrain_texture = 32;
+    options.water_texture = 16;
+    const auto refused = doc.Bake(root.string(), options);
+    CHECK(!refused.ok && refused.error.find("Forest_water.png") != std::string::npos);
+    for (const auto& [path, bytes] : original) CHECK(read(root / path) == bytes);
+    CHECK(refused.scene.empty() && refused.files.empty());
+    CHECK(fs::is_directory(blocker) && read(sidecar) == "existing asset identity" && read(extra) == "authored notes");
+    World prior;
+    CHECK(LoadSceneJson(prior, (root / before.scene).string()));
+
+    CHECK(fs::remove(blocker));
+    const auto retry = doc.Bake(root.string(), options);
+    CHECK(retry.ok && retry.scene == before.scene && fs::is_regular_file(blocker));
+    assets::ImageData image;
+    CHECK(assets::DecodeImageFile((folder / "Forest_terrain.png").string(), image) && image.width == 32 && image.height == 32);
+    World after;
+    CHECK(LoadSceneJson(after, (root / retry.scene).string()) && after.EntityCount() == prior.EntityCount());
+    CHECK(read(fs::path((root / before.scene).string() + ".bak")) == original.at(before.scene));
+    CHECK(read(sidecar) == "existing asset identity" && read(extra) == "authored notes");
+    for (const auto& path : fs::directory_iterator(root / "Generated")) CHECK(path.path() == folder);
+    fs::remove_all(root);
 }
 
 AETHER_TEST(ProceduralEditor_ABakeKeepsTheTreesAndThinsTheGrass) {
