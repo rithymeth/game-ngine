@@ -80,6 +80,19 @@ AETHER_TEST(Spline_ClosestPoint) {
     AETHER_CHECK(dist2 < 10.0f);
 }
 
+AETHER_TEST(Spline_ClosestPointIsNotLimitedToSampleGridOrShortDistances) {
+    Spline spline;
+    spline.AddPoint({0, 0, 0});
+    spline.AddPoint({100, 0, 0});
+    const auto [t, distance_squared] = spline.ClosestPoint({17.34f, 2, 0});
+    AETHER_CHECK(NearEqual(spline.Evaluate(t), Vec3(17.34f, 0, 0), 0.02f));
+    AETHER_CHECK(NearEqual(distance_squared, 4.0f, 0.001f));
+
+    const auto [far_t, far_distance_squared] = spline.ClosestPoint({50'000, 0, 0});
+    AETHER_CHECK(far_t == 1.0f);
+    AETHER_CHECK(NearEqual(far_distance_squared, 49'900.0f * 49'900.0f, 1024.0f));
+}
+
 AETHER_TEST(Spline_UniformSample) {
     Spline sp;
     sp.AddPoint({0, 0, 0});

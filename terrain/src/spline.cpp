@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace aether {
 namespace terrain {
@@ -303,7 +304,7 @@ std::pair<f32, f32> Spline::ClosestPoint(Vec3 pos) const {
 
     usize best_seg = 0;
     f32 best_local_t = 0.0f;
-    f32 best_dist2 = 1e9f;
+    f32 best_dist2 = std::numeric_limits<f32>::infinity();
 
     for (usize s = 0; s < segs; ++s) {
         const usize i0 = s == 0 ? 0 : s - 1;
@@ -327,20 +328,37 @@ std::pair<f32, f32> ClosestPointOnSegment(Vec3 pos, const SplinePoint& p0,
                                            const SplinePoint& p1,
                                            const SplinePoint& p2,
                                            const SplinePoint& p3) {
-    // Sample the segment and find the closest.
     constexpr u32 kSamples = 32;
+    const auto distance_squared = [&](f32 t) {
+        const Vec3 diff = CatmullRom(t, p0, p1, p2, p3) - pos;
+        return Dot(diff, diff);
+    };
     f32 best_t = 0.0f;
-    f32 best_dist2 = 1e9f;
-
-    for (u32 i = 0; i <= kSamples; ++i) {
-        const f32 t = static_cast<f32>(i) / kSamples;
-        const Vec3 sp = CatmullRom(t, p0, p1, p2, p3);
-        const Vec3 diff = sp - pos;
-        const f32 d2 = Dot(diff, diff);
+    f32 best_dist2 = std::numeric_limits<f32>::infinity();
+    const auto consider = [&](f32 t, f32 d2) {
         if (d2 < best_dist2) {
             best_dist2 = d2;
             best_t = t;
         }
+    };
+    for (u32 i = 0; i <= kSamples; ++i) {
+        const f32 t = static_cast<f32>(i) / kSamples;
+        consider(t, distance_squared(t));
+    }
+
+    // Refine within the neighbouring samples, retaining the best sampled
+    // result as a fallback (especially when the endpoint is closest).
+    constexpr f32 step = 1.0f / kSamples;
+    f32 lo = std::max(0.0f, best_t - step);
+    f32 hi = std::min(1.0f, best_t + step);
+    for (u32 i = 0; i < 14; ++i) {
+        const f32 third = (hi - lo) / 3.0f;
+        const f32 left = lo + third, right = hi - third;
+        const f32 dl = distance_squared(left), dr = distance_squared(right);
+        consider(left, dl);
+        consider(right, dr);
+        if (dl <= dr) hi = right;
+        else lo = left;
     }
     return {best_t, best_dist2};
 }
