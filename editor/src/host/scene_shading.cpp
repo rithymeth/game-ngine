@@ -145,9 +145,9 @@ bool LiveSceneShading::Advance(SceneDocument& document, const SceneViewCamera& c
     if (since_frame_ < 1.0f / std::max(max_fps, 1.0f)) return texture_.Valid();
     since_frame_ = 0.0f;
     const bool ortho = camera.projection == SceneViewProjection::Orthographic;
-    // Preserve zero-time updates in the authored editing preview. A play or
-    // paused picture only draws: any gameplay update was already run above.
-    const auto frame_mode = editing ? LiveViewport::FrameMode::Advance : LiveViewport::FrameMode::DrawOnly;
+    // Authoring only syncs component lifecycle. A play or paused picture
+    // only draws: any gameplay update was already run above.
+    const auto frame_mode = editing ? LiveViewport::FrameMode::SyncAndDraw : LiveViewport::FrameMode::DrawOnly;
     if (!viewport_.Frame(0.0f, camera.Eye(), camera.Rotation(), camera.fov_degrees,
                          ortho ? Projection::Orthographic : Projection::Perspective, ortho ? camera.ortho_height : 0.0f,
                          document.IsSimulating(), frame_mode)) {
