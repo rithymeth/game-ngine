@@ -73,7 +73,7 @@ bool ReadPixels(const nlohmann::json& data, const char* key, Pixel& out) {
     return true;
 }
 
-bool ReadPivotCoordinate(const nlohmann::json& value, f32& out) {
+bool ReadFiniteFloat(const nlohmann::json& value, f32& out) {
     if (!value.is_number()) return false;
     const f64 n = value.get<f64>();
     if (!std::isfinite(n) || std::abs(n) > std::numeric_limits<f32>::max()) return false;
@@ -113,7 +113,7 @@ bool AtlasFromJsonImpl(const nlohmann::json& data, SpriteAtlas& out, std::string
                         "x" + std::to_string(atlas.height) + " atlas bounds");
         if (const auto pivot = f.find("pivot"); pivot != f.end()) {
             if (!pivot->is_array() || pivot->size() != 2 ||
-                !ReadPivotCoordinate((*pivot)[0], frame.pivot_x) || !ReadPivotCoordinate((*pivot)[1], frame.pivot_y))
+                !ReadFiniteFloat((*pivot)[0], frame.pivot_x) || !ReadFiniteFloat((*pivot)[1], frame.pivot_y))
                 return fail("frame '" + frame.name + "' needs two finite pivot coordinates");
         }
         atlas.frames.push_back(std::move(frame));
@@ -126,7 +126,10 @@ bool AtlasFromJsonImpl(const nlohmann::json& data, SpriteAtlas& out, std::string
         clip.name = c.value("name", "");
         if (clip.name.empty()) return fail("a clip has no name");
         if (!clip_names.insert(clip.name).second) return fail("two clips named '" + clip.name + "'");
-        clip.fps = c.value("fps", 12.0f);
+        if (const auto fps = c.find("fps"); fps != c.end()) {
+            if (!ReadFiniteFloat(*fps, clip.fps) || clip.fps <= 0.0f)
+                return fail("clip '" + clip.name + "' fps must be a positive finite number");
+        }
         clip.loop = c.value("loop", true);
         for (const nlohmann::json& n : c.value("frames", nlohmann::json::array())) {
             const std::string name = n.get<std::string>();

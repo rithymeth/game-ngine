@@ -254,6 +254,29 @@ AETHER_TEST(Sprite2D_AtlasLoadsAFullGridAndKeepsFrameAndClipOrder) {
     CHECK(AtlasToJson(loaded) == saved);
 }
 
+AETHER_TEST(Sprite2D_AtlasRejectsClipRatesThatCannotAdvance) {
+    const auto source = HeroAtlas(Guid());
+    const auto saved = AtlasToJson(source);
+    SpriteAtlas loaded = source;
+    std::string error;
+    using Json = nlohmann::json;
+    for (const auto& invalid : {Json(0), Json(-12), Json(1e200), Json(1e-200), Json("12"), Json(nullptr)}) {
+        auto authored = saved;
+        authored["clips"][0]["fps"] = invalid;
+        CHECK(!AtlasFromJson(authored, loaded, &error));
+        CHECK(error.find("run") != std::string::npos && error.find("fps") != std::string::npos);
+        CHECK(AtlasToJson(loaded) == saved);
+    }
+
+    auto authored = saved;
+    authored["clips"][0].erase("fps");
+    authored["clips"][1]["fps"] = 7.5;
+    CHECK(AtlasFromJson(authored, loaded, &error));
+    const auto* run = loaded.FindClip("run");
+    const auto* die = loaded.FindClip("die");
+    CHECK(run && run->fps == 12.0f && die && die->fps == 7.5f);
+}
+
 AETHER_TEST(Sprite2D_ClipFramesLoopAndHold) {
     const SpriteAtlas atlas = HeroAtlas(Guid());
     const SpriteClip& run = *atlas.FindClip("run");
