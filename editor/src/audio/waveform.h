@@ -30,8 +30,8 @@ public:
     // The sound must outlive the view (or be replaced first).
     void SetSound(const audio::SoundWave* sound);
     const audio::SoundWave* Sound() const { return sound_; }
-    // Preview through this mixer (optional).
-    void SetMixer(audio::Mixer* mixer) { mixer_ = mixer; }
+    // Preview through this mixer (optional). Detach it before destroying it.
+    void SetMixer(audio::Mixer* mixer);
 
     void Draw(f32 height = 160.0f);
 
