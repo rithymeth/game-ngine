@@ -22,7 +22,7 @@ public:
 
     // From the start with this asset.
     void Reset(const vfx::ParticleSystemAsset& asset);
-    // Runs on by `dt` (in whole steps; the rest carries over).
+    // Advances whole steps, carrying the fraction but dropping frame time beyond the interactive budget.
     void Advance(f32 dt);
     // Replays from the start to `time` (clamped to kMaxSeek).
     void Seek(const vfx::ParticleSystemAsset& asset, f32 time);

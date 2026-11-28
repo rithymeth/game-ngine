@@ -20,8 +20,11 @@ void ParticlePreview::Reset(const ParticleSystemAsset& asset) {
 
 void ParticlePreview::Advance(f32 dt) {
     if (!instance_ || !std::isfinite(dt) || dt <= 0.0f) return;
-    carry_ += dt;
-    while (carry_ >= kStep - 1e-6f) {
+    // Interactive catch-up must not stall the editor or leave a backlog after
+    // a pause. Keep the accumulated fraction, but drop over-budget frame time.
+    constexpr int kMaxCatchUpSteps = 8;
+    carry_ += std::min(dt, kStep * kMaxCatchUpSteps);
+    for (int steps = 0; steps < kMaxCatchUpSteps && carry_ >= kStep - 1e-6f; ++steps) {
         carry_ -= kStep;
         const auto t0 = std::chrono::steady_clock::now();
         instance_->Update(kStep);
