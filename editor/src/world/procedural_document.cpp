@@ -1,6 +1,7 @@
 #include "world/procedural_document.h"
 
 #include "aether/assets/png_writer.h"
+#include "aether/platform/filesystem.h"
 #include "aether/renderer/components.h"
 #include "aether/scene/components.h"
 #include "aether/assets/asset_database.h"
@@ -16,6 +17,7 @@
 #endif
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -72,12 +74,117 @@ std::string CaseInsensitiveFileKey(std::string name) {
     return name;
 }
 
-bool WriteFile(const fs::path& path, const std::vector<u8>& bytes) {
-    std::ofstream f(path, std::ios::binary | std::ios::trunc);
-    if (!f) return false;
-    f.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-    return static_cast<bool>(f);
-}
+// Keep generated files outside the live folder until the complete bake exists.
+class BakeStage {
+public:
+    explicit BakeStage(const fs::path& parent, std::string& error) {
+        std::error_code ec;
+        fs::create_directories(parent, ec);
+        static std::atomic<u64> serial{0};
+        const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+        for (int attempt = 0; !ec && attempt < 32; ++attempt) {
+            const auto candidate = parent / (".aether-world-bake-" + std::to_string(now) + "-" +
+                                              std::to_string(serial.fetch_add(1, std::memory_order_relaxed)));
+            if (fs::create_directory(candidate, ec)) {
+                root_ = candidate;
+                if (fs::create_directory(root_ / "new", ec) && fs::create_directory(root_ / "old", ec)) return;
+                break;
+            }
+            if (ec == std::errc::file_exists) ec.clear();
+        }
+        error = "Cannot stage the bake in " + parent.string() + (ec ? ": " + ec.message() : "");
+    }
+
+    BakeStage(const BakeStage&) = delete;
+    BakeStage& operator=(const BakeStage&) = delete;
+    ~BakeStage() {
+        if (root_.empty() || keep_for_recovery_) return;
+        std::error_code ec;
+        fs::remove_all(root_, ec);
+    }
+
+    fs::path File(const std::string& name) const { return root_ / "new" / name; }
+
+    bool Publish(const fs::path& folder, const std::vector<std::string>& files, const std::string& scene,
+                 std::string& error) {
+        std::error_code ec;
+        const auto fail = [&](const fs::path& path) {
+            error = "Cannot publish " + path.string() + (ec ? ": " + ec.message() : "");
+            return false;
+        };
+        const auto target = [&](const fs::path& path, fs::file_type expected, bool& exists) {
+            const fs::file_status type = fs::symlink_status(path, ec);
+            if (ec == std::errc::no_such_file_or_directory) ec.clear();
+            if (ec) return fail(path);
+            exists = fs::exists(type);
+            if (exists && type.type() != expected) {
+                error = "Cannot publish " + path.string() + ": expected " +
+                        (expected == fs::file_type::directory ? "a directory" : "a regular file");
+                return false;
+            }
+            return true;
+        };
+
+        bool folder_exists = false;
+        if (!target(folder, fs::file_type::directory, folder_exists)) return false;
+        if (!folder_exists) {
+            fs::rename(root_ / "new", folder, ec);
+            return !ec || fail(folder);
+        }
+
+        struct Entry { std::string name; bool exists = false, backed_up = false, installed = false; };
+        std::vector<Entry> entries;
+        entries.reserve(files.size() + 1);
+        for (const std::string& file : files) {
+            Entry entry{file};
+            if (!target(folder / file, fs::file_type::regular, entry.exists)) return false;
+            if (file == scene && entry.exists) {
+                // Preserve SaveSceneJson's previous-scene backup as part of the same publish.
+                Entry backup{scene + ".bak"};
+                if (!target(folder / backup.name, fs::file_type::regular, backup.exists)) return false;
+                if (!fs::copy_file(folder / scene, File(backup.name), ec)) return fail(folder / backup.name);
+                entries.push_back(std::move(backup));
+            }
+            entries.push_back(std::move(entry));
+        }
+
+        // Replace only the named outputs. Sidecars and unrelated files stay in
+        // place. Publish the scene last and roll the changes back on any error.
+        // Keep originals even if an exception prevents the rollback from running.
+        keep_for_recovery_ = true;
+        for (Entry& entry : entries) {
+            const auto path = folder / entry.name;
+            if (entry.exists) {
+                fs::rename(path, root_ / "old" / entry.name, ec);
+                if (ec) { fail(path); break; }
+                entry.backed_up = true;
+            }
+            fs::rename(File(entry.name), path, ec);
+            if (ec) { fail(path); break; }
+            entry.installed = true;
+        }
+        if (error.empty()) {
+            keep_for_recovery_ = false;
+            return true;
+        }
+
+        bool restored = true;
+        for (auto it = entries.rbegin(); it != entries.rend(); ++it) {
+            std::error_code rollback;
+            const auto path = folder / it->name;
+            if (it->backed_up) fs::rename(root_ / "old" / it->name, path, rollback);
+            else if (it->installed) fs::remove(path, rollback);
+            if (rollback) restored = false;
+        }
+        keep_for_recovery_ = !restored;
+        if (keep_for_recovery_) error += "; could not restore every output; backups remain at " + (root_ / "old").string();
+        return false;
+    }
+
+private:
+    fs::path root_;
+    bool keep_for_recovery_ = false;
+};
 } // namespace
 
 const char* WorldPresetName(WorldPreset preset) {
@@ -568,12 +675,15 @@ BakeReport ProceduralWorldDocument::Bake(const std::string& content_root, const 
     const std::string name = FileSafe(options.name);
     const std::string relative = "Generated/" + name;
     const fs::path dir = fs::path(content_root) / "Generated" / name;
-    std::error_code ec;
-    fs::create_directories(dir, ec);
-    if (ec) { report.error = "Cannot create " + dir.string() + ": " + ec.message(); return report; }
+    BakeStage stage(dir.parent_path(), report.error);
+    if (!report.error.empty()) return report;
+    std::vector<std::string> files;
     auto write = [&](const std::string& file, const std::vector<u8>& bytes) {
-        if (!WriteFile(dir / file, bytes)) { report.error = "Cannot write " + (dir / file).string(); return false; }
-        report.files.push_back(relative + "/" + file);
+        if (!aether::fs::WriteFileBytes(stage.File(file).string(), bytes.data(), bytes.size())) {
+            report.error = "Cannot stage " + (dir / file).string();
+            return false;
+        }
+        files.push_back(file);
         return true;
     };
 
@@ -755,8 +865,10 @@ BakeReport ProceduralWorldDocument::Bake(const std::string& content_root, const 
     report.instances_in_scene = static_cast<u32>(cap);
     report.instances_left_out = static_cast<u32>(instances_.size() - cap);
     const std::string scene_file = name + ".ascene";
-    if (!SaveSceneJson(world, (dir / scene_file).string())) { report.error = "Cannot write " + (dir / scene_file).string(); return report; }
-    report.files.push_back(relative + "/" + scene_file);
+    if (!SaveSceneJson(world, stage.File(scene_file).string())) { report.error = "Cannot stage " + (dir / scene_file).string(); return report; }
+    files.push_back(scene_file);
+    if (!stage.Publish(dir, files, scene_file, report.error)) return report;
+    for (const std::string& file : files) report.files.push_back(relative + "/" + file);
     report.scene = relative + "/" + scene_file;
     report.ok = true;
     return report;
