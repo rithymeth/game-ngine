@@ -98,6 +98,30 @@ AETHER_TEST(TimeOfDay_ClockSaturatesTheDayCounterAndKeepsTheHourValid) {
     CHECK(clock.Day() == last_day && Near(clock.Hour(), 19.0));
 }
 
+AETHER_TEST(TimeOfDay_ClockPreservesItsHourAndDayAcrossLargeJumps) {
+    const i64 last_day = std::numeric_limits<i64>::max();
+    WorldClock clock;
+    CHECK(clock.SetHour(7.0) && clock.SetDayLength(16.0) && clock.SetScale(8.0));
+    clock.Advance(0x1p53); // Exactly 2^52 complete two-second days.
+    CHECK(clock.Day() == (i64{1} << 52) && clock.Hour() == 7.0 && clock.TimeText() == "07:00");
+
+    CHECK(clock.SetDay(0) && clock.SetHour(20.0) && clock.SetScale(3.0));
+    clock.Advance(0x1p53 + 2.0); // 3 * 2^49 days and 9 hours, crossing one more midnight.
+    CHECK(clock.Day() == 3 * (i64{1} << 49) + 1 && clock.Hour() == 5.0);
+
+    CHECK(clock.SetDay(0) && clock.SetHour(12.0) && clock.SetDayLength(3.0) && clock.SetScale(1.0));
+    clock.Advance(0x1p63); // The quotient is not representable as a double; remainder is two seconds.
+    CHECK(clock.Day() == static_cast<i64>((u64{1} << 63) / 3) + 1 && Near(clock.Hour(), 4.0));
+
+    CHECK(clock.SetDay(0) && clock.SetHour(12.0) && clock.SetDayLength(7.0) && clock.SetScale(3.0));
+    clock.Advance(0x1p1023); // 2^1023 is one modulo seven, even though scaled time overflows.
+    CHECK(clock.Day() == last_day && Near(clock.Hour(), 12.0 + 3.0 * 24.0 / 7.0));
+
+    CHECK(clock.SetDay(0) && clock.SetHour(23.875) && clock.SetDayLength(1.0e6) && clock.SetScale(0x1p-1010));
+    clock.Advance(std::numeric_limits<f64>::max()); // The real-time day period itself overflows.
+    CHECK(clock.Day() == 1 && Near(clock.Hour(), 0.268216));
+}
+
 AETHER_TEST(TimeOfDay_ClockTextPreservesExactMinutes) {
     WorldClock clock;
     for (int m = 0; m < 24 * 60; ++m) {

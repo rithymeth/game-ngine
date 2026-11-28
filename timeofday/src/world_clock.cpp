@@ -10,6 +10,66 @@ namespace aether::tod {
 namespace {
 WorldClock* g_active = nullptr;
 constexpr f64 kPi = 3.14159265358979323846;
+
+AETHER_NOINLINE void AdvanceWrapped(WorldClock& clock, f64 dt, f64 seconds) {
+    const f64 day_length = clock.DayLength();
+    const f64 scale = clock.Scale();
+    constexpr i64 kLastDay = std::numeric_limits<i64>::max();
+    const f64 estimated_days = std::floor(seconds / day_length);
+    if (estimated_days >= 0x1p64) {
+        // This jump always saturates the day count. Split scaled seconds into
+        // a product and its rounding error, reducing both before adding.
+        // If the product overflowed, scale the input down by an exact power
+        // of two (larger than kMaxScale) and restore it after reduction.
+        constexpr f64 kOverflowDivisor = 0x1p10;
+        static_assert(WorldClock::kMaxScale <= kOverflowDivisor);
+        const bool overflowed = !std::isfinite(seconds);
+        const f64 restore = overflowed ? kOverflowDivisor : 1.0;
+        const f64 input = dt / restore;
+        const f64 high = overflowed ? input * scale : seconds;
+        const f64 low = std::fma(input, scale, -high);
+        const auto remainder = [&](f64 part) {
+            return std::fmod(std::fmod(part, day_length) * restore, day_length);
+        };
+        const f64 fraction = std::fmod(remainder(high) + remainder(low), day_length) / day_length;
+        clock.SetHour(clock.Hour() + fraction * 24.0);
+        clock.SetDay(kLastDay);
+        return;
+    }
+
+    // Recover any low bits lost in the product and the quotient before
+    // adding the starting hour. At large magnitudes even that entire hour
+    // can disappear if it is added before removing the complete days.
+    const f64 residual = std::fma(-estimated_days, day_length, seconds) + std::fma(dt, scale, -seconds);
+    f64 adjustment = std::floor(residual / day_length);
+    f64 remainder = std::fma(-adjustment, day_length, residual);
+    // Division can round to an integer right beside a day boundary.
+    if (remainder < 0.0) {
+        --adjustment;
+        remainder = std::min(remainder + day_length, std::nextafter(day_length, 0.0));
+    } else if (remainder >= day_length) {
+        ++adjustment;
+        remainder -= day_length;
+    }
+    const f64 hour = clock.Hour() + remainder / day_length * 24.0;
+    const bool crossed_midnight = hour >= 24.0;
+    clock.SetHour(hour);
+
+    const i64 correction = static_cast<i64>(adjustment) + (crossed_midnight ? 1 : 0);
+    u64 days = static_cast<u64>(estimated_days);
+    const u64 capacity = static_cast<u64>(kLastDay - clock.Day());
+    if (correction < 0) {
+        days -= static_cast<u64>(-correction);
+    } else {
+        const u64 extra = static_cast<u64>(correction);
+        if (days > capacity || extra > capacity - days) {
+            clock.SetDay(kLastDay);
+            return;
+        }
+        days += extra;
+    }
+    clock.SetDay(clock.Day() + static_cast<i64>(std::min(days, capacity)));
+}
 } // namespace
 
 const char* PhaseName(Phase phase) {
@@ -31,24 +91,13 @@ void WorldClock::MakeActive() { g_active = this; }
 
 void WorldClock::Advance(f64 dt) {
     if (!(dt > 0.0) || !std::isfinite(dt) || scale_ <= 0.0) return;
-    const f64 next = hour_ + dt * scale_ / day_length_ * 24.0;
+    const f64 seconds = dt * scale_;
+    const f64 next = hour_ + seconds / day_length_ * 24.0;
     if (next < 24.0) {
         hour_ = next;
         return;
     }
-    constexpr i64 kLastDay = std::numeric_limits<i64>::max();
-    const f64 days = std::floor(next / 24.0);
-    if (days >= 0x1p63) {
-        // Do not cast an out-of-range (possibly infinite) day count. Keep the
-        // time of day by reducing dt before converting it to in-game hours.
-        const f64 period = day_length_ / scale_;
-        hour_ = std::fmod(hour_ + std::fmod(dt, period) / period * 24.0, 24.0);
-        day_ = kLastDay;
-        return;
-    }
-    hour_ = next - days * 24.0;
-    if (hour_ < 0.0 || hour_ >= 24.0) hour_ = 0.0; // rounding at the edge
-    day_ += std::min(static_cast<i64>(days), kLastDay - day_);
+    AdvanceWrapped(*this, dt, seconds);
 }
 
 Phase WorldClock::CurrentPhase() const {
