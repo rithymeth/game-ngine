@@ -31,6 +31,7 @@ public:
     HeadlessImGui() {
         context_ = ImGui::CreateContext();
         ImGuiIO& io = ImGui::GetIO();
+        io.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset;
         io.ConfigMacOSXBehaviors = false;
         io.IniFilename = nullptr;
         io.DisplaySize = ImVec2(1400, 900);
