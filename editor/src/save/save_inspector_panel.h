@@ -58,7 +58,7 @@ private:
     std::string message_;
     std::optional<std::vector<u8>> delete_backup_;
     u64 delete_revision_ = 0;
-    bool open_copy_ = false;
+    u64 copy_revision_ = 0;
 };
 
 // Counts the nodes a JSON tree of `value` would draw, up to `limit`

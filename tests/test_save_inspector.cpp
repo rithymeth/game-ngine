@@ -79,8 +79,8 @@ stdfs::path MakeBagSave(const stdfs::path& dir) {
     return dir / "slot1.asav";
 }
 
-// Use the actual ImGui buttons, not the panel's unconfirmed DeleteOpen API.
-bool ClickDeleteButton(HeadlessImGui& ui, const std::function<void()>& draw,
+// Exercise the actual ImGui controls rather than calling the document actions.
+bool ClickSaveControl(HeadlessImGui& ui, const std::function<void()>& draw,
                        const char* window_name, const char* button) {
     auto* window = ImGui::FindWindowByName(window_name);
     if (!window) return false;
@@ -416,10 +416,9 @@ AETHER_TEST(SaveInspector_CopyErrorIsVisibleInsideTheModal) {
         *static_cast<std::string*>(ImGui::GetPlatformIO().Platform_ClipboardUserData) = text;
     };
 
-    ui.Frame([&] {
-        ImGui::OpenPopup("Copy save");
-        panel.Draw();
-    });
+    const auto draw = [&] { panel.Draw(); };
+    ui.Frame(draw);
+    if (!ClickSaveControl(ui, draw, "Test", "Copy as...")) { CHECK(false); return; }
     std::string reason;
     CHECK(!panel.CopyOpen("slot1", &reason) && !reason.empty());
     ui.Frame([&] {
@@ -432,6 +431,52 @@ AETHER_TEST(SaveInspector_CopyErrorIsVisibleInsideTheModal) {
     const auto error = rendered.find(reason);
     CHECK(input != std::string::npos && error != std::string::npos);
     CHECK(error > input); // the message was drawn inside the popup, after its input
+}
+
+AETHER_TEST(SaveInspector_ChangingTheOpenFileCancelsCopyAs) {
+    HeadlessImGui ui;
+    const auto root = Dir("panel_copy_switch");
+    const auto original = MakeBagSave(root / "first");
+    const auto replacement = MakeBagSave(root / "second");
+    SaveBag updated;
+    updated.SetInt("coins", 73);
+    CHECK(SaveSystem(replacement.parent_path()).Save("slot1", updated).ok);
+    CHECK(Slurp(original) != Slurp(replacement));
+    SaveInspectorDocument doc;
+    SaveInspectorPanel panel(doc);
+    CHECK(doc.Open(original));
+
+    const auto draw = [&] { panel.Draw(); };
+    ui.Frame(draw);
+    if (!ClickSaveControl(ui, draw, "Test", "Copy as...")) { CHECK(false); return; }
+    ui.Frame([&] {
+        draw();
+        CHECK(ImGui::IsPopupOpen("Copy save"));
+    });
+    if (!ClickSaveControl(ui, draw, "Copy save", "New name")) { CHECK(false); return; }
+    ImGui::GetIO().AddInputCharactersUTF8("old_choice");
+    ui.Frame(draw);
+
+    CHECK(doc.Open(replacement));
+    bool cancelled = false;
+    ui.Frame([&] {
+        draw();
+        cancelled = !ImGui::IsPopupOpen("Copy save");
+        CHECK(cancelled);
+    });
+    if (!cancelled) return;
+    CHECK(!stdfs::exists(original.parent_path() / "old_choice.asav"));
+    CHECK(!stdfs::exists(replacement.parent_path() / "old_choice.asav"));
+
+    if (!ClickSaveControl(ui, draw, "Test", "Copy as...")) { CHECK(false); return; }
+    ui.Frame(draw);
+    if (!ClickSaveControl(ui, draw, "Copy save", "New name")) { CHECK(false); return; }
+    ImGui::GetIO().AddInputCharactersUTF8("fresh");
+    ui.Frame(draw);
+    if (!ClickSaveControl(ui, draw, "Copy save", "Copy")) { CHECK(false); return; }
+    const auto copy = replacement.parent_path() / "fresh.asav";
+    CHECK(stdfs::exists(copy) && Slurp(copy) == Slurp(replacement));
+    CHECK(!stdfs::exists(original.parent_path() / "fresh.asav"));
 }
 
 AETHER_TEST(SaveInspector_ChangingTheOpenFileCancelsDeleteConfirmation) {
@@ -484,7 +529,7 @@ AETHER_TEST(SaveInspector_ConfirmDeleteRejectsACompletedSaveToTheSameSlot) {
         const auto revision = doc.Revision();
         const auto draw = [&] { panel.Draw(); };
         ui.Frame(draw);
-        if (!ClickDeleteButton(ui, draw, "Test", "Delete...")) { CHECK(false); return; }
+        if (!ClickSaveControl(ui, draw, "Test", "Delete...")) { CHECK(false); return; }
         ui.Frame(draw);
 
         SaveBag updated;
@@ -500,7 +545,7 @@ AETHER_TEST(SaveInspector_ConfirmDeleteRejectsACompletedSaveToTheSameSlot) {
         const auto primary_after_write = Slurp(file);
         const auto backup_after_write = Slurp(backup);
         CHECK(doc.Revision() == revision);
-        if (!ClickDeleteButton(ui, draw, "Delete save?", "Delete")) { CHECK(false); continue; }
+        if (!ClickSaveControl(ui, draw, "Delete save?", "Delete")) { CHECK(false); continue; }
         const bool preserved = stdfs::exists(file) && stdfs::exists(backup) &&
                                Slurp(file) == primary_after_write && Slurp(backup) == backup_after_write;
         CHECK(preserved);
@@ -509,9 +554,9 @@ AETHER_TEST(SaveInspector_ConfirmDeleteRejectsACompletedSaveToTheSameSlot) {
         // The rejected confirmation closes. A fresh review can delete an unchanged pair.
         ui.Frame([&] { draw(); CHECK(!ImGui::IsPopupOpen("Delete save?")); });
         CHECK(doc.Reload());
-        if (!ClickDeleteButton(ui, draw, "Test", "Delete...")) { CHECK(false); continue; }
+        if (!ClickSaveControl(ui, draw, "Test", "Delete...")) { CHECK(false); continue; }
         ui.Frame(draw);
-        CHECK(ClickDeleteButton(ui, draw, "Delete save?", "Delete"));
+        CHECK(ClickSaveControl(ui, draw, "Delete save?", "Delete"));
         CHECK(!stdfs::exists(file) && !stdfs::exists(backup));
     }
 }

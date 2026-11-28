@@ -185,7 +185,12 @@ void SaveInspectorPanel::Draw() {
     }
     ImGui::EndDisabled();
     ImGui::SameLine();
-    if (ImGui::Button("Copy as...")) open_copy_ = true;
+    if (ImGui::Button("Copy as...")) {
+        if (copy_revision_ != doc_.Revision()) copy_name_.clear();
+        copy_revision_ = doc_.Revision();
+        copy_error_.clear();
+        ImGui::OpenPopup("Copy save");
+    }
     ImGui::EndDisabled();
     if (!message_.empty()) {
         ImGui::SameLine();
@@ -214,17 +219,18 @@ void SaveInspectorPanel::Draw() {
         ImGui::EndPopup();
     }
     if (!ImGui::IsPopupOpen("Delete save?")) delete_backup_.reset();
-    if (open_copy_) {
-        copy_error_.clear();
-        ImGui::OpenPopup("Copy save");
-        open_copy_ = false;
-    }
     if (ImGui::BeginPopupModal("Copy save", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        if (ImGui::InputText("New name", &copy_name_)) copy_error_.clear();
-        if (ImGui::Button("Copy") && CopyOpen(copy_name_)) ImGui::CloseCurrentPopup();
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
-        if (!copy_error_.empty()) ImGui::TextWrapped("%s", copy_error_.c_str());
+        if (doc_.Revision() != copy_revision_) {
+            copy_name_.clear();
+            copy_error_.clear();
+            ImGui::CloseCurrentPopup();
+        } else {
+            if (ImGui::InputText("New name", &copy_name_)) copy_error_.clear();
+            if (ImGui::Button("Copy") && CopyOpen(copy_name_)) ImGui::CloseCurrentPopup();
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+            if (!copy_error_.empty()) ImGui::TextWrapped("%s", copy_error_.c_str());
+        }
         ImGui::EndPopup();
     }
     ImGui::Separator();
