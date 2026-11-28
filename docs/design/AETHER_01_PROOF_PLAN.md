@@ -54,6 +54,30 @@ their state at that earlier checkpoint.
 | Cook/package/standalone run | Cooker, .apak, package workflow and player executable | Existing path; clean-checkout and machine-independent launch still require end-to-end proof. |
 | Third-person camera collision | Game-owned box-segment query in AETHER-01 | Camera distance shortens at the current level's unrotated box colliders. Other shapes and rotations remain unsupported; this is not a general engine camera-collision guarantee. |
 
+## Verify the adapter used by a Shipping package
+
+On a machine with a supported graphics backend, run the **installed** package
+from outside the checkout. For example, on Windows:
+
+```powershell
+& "$gameDir/AETHER-01.exe" --require-hardware-gpu --backend d3d12 --frames 120 --size 960x540 --report --screenshot scene.bmp --user-dir gpu-profile
+if ($LASTEXITCODE -ne 0) { throw "Hardware rendering check failed" }
+python tools/verify_aether01_capture.py scene.bmp
+```
+
+Use `--backend vulkan` for a Vulkan-enabled player. The `GPU adapter:` JSON line
+reports the actual backend, adapter classification, any available identity,
+and the number of GPU frames submitted. It is available in Shipping even
+though informational logging is suppressed. The gate refuses headless
+requests, software/virtual/remote/unknown adapters where identified,
+unavailable rendering, and runs with no GPU submissions. A normal
+`--headless --report` run reports no adapter and zero GPU frames.
+
+Use the package manifest and capture to tie this evidence to the build, and
+record the driver and device on the test machine. A submission count alone
+does not prove correct pixels or completion of a playable route; validate
+the screenshot and independently replay the mission to the ending.
+
 ## Baseline verification recorded 2026-10-07
 
 On the Windows development workstation (MSVC 17.14.37, CMake 3.31.0, NVIDIA

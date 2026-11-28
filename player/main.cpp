@@ -46,6 +46,12 @@
 #include "aether/debug/crash.h"
 #include "aether/gameplay/attribute_set.h"
 #include "aether/gfx/rhi/device.h"
+#if defined(_WIN32)
+#include "aether/gfx/rhi/d3d12/d3d12_backend.h"
+#endif
+#if defined(AETHER_HAS_VULKAN)
+#include "aether/gfx/rhi/vulkan/vulkan_backend.h"
+#endif
 #include "aether/platform/window.h"
 #include "aether/pak/pak.h"
 #include "aether/reflection/serialize.h"
@@ -79,6 +85,7 @@ struct Options {
     std::string scene;
     i64 frames = -1;
     bool headless = false;
+    bool require_hardware_gpu = false;
     std::string backend;
     u32 width = 0, height = 0; // 0: the project's
     std::string quality;
@@ -145,7 +152,7 @@ private:
 void Usage() {
     std::fprintf(stderr,
                  "usage: aether_player [--pak <file|dir>]... [--scene <path>] [--frames <n>] [--headless]\n"
-                 "                     [--backend d3d12|vulkan] [--size <w>x<h>] [--quality <preset>]\n"
+                 "                     [--backend d3d12|vulkan] [--require-hardware-gpu] [--size <w>x<h>] [--quality <preset>]\n"
                  "                     [--key <64 hex digits>] [--press <Key>]... [--screenshot <file.bmp>]\n"
                  "                     [--camera-path <file.json>] [--record-dir <dir> [--record-fps <n>]]\n"
                  "                     [--report] [--user-dir <dir>] [--log-file <file>] [--replay-input <file.json>]\n"
@@ -167,6 +174,8 @@ bool ParseArgs(int argc, char** argv, Options& o) {
             o.frames = std::atoll(argv[++i]);
         } else if (a == "--headless") {
             o.headless = true;
+        } else if (a == "--require-hardware-gpu") {
+            o.require_hardware_gpu = true;
         } else if (a == "--press" && has_value) {
             o.pressed.push_back(argv[++i]);
         } else if (a == "--screenshot" && has_value) {
@@ -222,6 +231,61 @@ bool ParseArgs(int argc, char** argv, Options& o) {
         }
     }
     return true;
+}
+
+// Read the adapter owned by the actual player device, not a preferred or
+// enumerated adapter. The formal RHI interface stays unchanged.
+reflect::Json DescribeGpuAdapter(rhi::IDevice& device) {
+    const auto backend = device.GetBackend();
+    reflect::Json info = {{"backend", backend == rhi::Backend::D3D12 ? "d3d12" : "vulkan"},
+                          {"kind", "unknown"}};
+#if defined(_WIN32)
+    if (backend == rhi::Backend::D3D12) {
+        auto& native = static_cast<rhi::d3d12_backend::D3D12Device&>(device).Native();
+        Microsoft::WRL::ComPtr<IDXGIAdapter1> adapter;
+        const auto luid = native.Handle()->GetAdapterLuid();
+        DXGI_ADAPTER_DESC1 desc{};
+        if (SUCCEEDED(native.Factory()->EnumAdapterByLuid(luid, IID_PPV_ARGS(&adapter))) &&
+            SUCCEEDED(adapter->GetDesc1(&desc))) {
+            info["kind"] = (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) ? "software"
+                         : (desc.Flags & DXGI_ADAPTER_FLAG_REMOTE) ? "remote"
+                         : desc.VendorId != 0 && desc.DeviceId != 0 ? "hardware" : "unknown";
+            char name[sizeof(desc.Description) * 2]{};
+            if (WideCharToMultiByte(CP_UTF8, 0, desc.Description, -1, name,
+                                    static_cast<int>(sizeof(name)), nullptr, nullptr) > 0) {
+                info["name"] = name;
+            }
+            info["vendor_id"] = desc.VendorId;
+            info["device_id"] = desc.DeviceId;
+        }
+    }
+#endif
+#if defined(AETHER_HAS_VULKAN)
+    if (backend == rhi::Backend::Vulkan) {
+        const auto& native = static_cast<const rhi::vulkan_backend::VulkanDevice&>(device);
+        VkPhysicalDeviceProperties props{};
+        vkGetPhysicalDeviceProperties(native.PhysicalDevice(), &props);
+        switch (props.deviceType) {
+        case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU:
+        case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU: info["kind"] = "hardware"; break;
+        case VK_PHYSICAL_DEVICE_TYPE_CPU: info["kind"] = "software"; break;
+        case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU: info["kind"] = "virtual"; break;
+        default: break;
+        }
+        info["name"] = props.deviceName;
+        info["vendor_id"] = props.vendorID;
+        info["device_id"] = props.deviceID;
+        info["driver_version_raw"] = props.driverVersion;
+    }
+#endif
+    return info;
+}
+
+void PrintGpuAdapter(reflect::Json info, u64 submitted_frames) {
+    info["submitted_frames"] = submitted_frames;
+    // In Shipping the logger intentionally suppresses Info; the receipt is
+    // an explicit stdout report just like the simulation frame count.
+    std::printf("GPU adapter: %s\n", info.dump(-1, ' ', false, reflect::Json::error_handler_t::replace).c_str());
 }
 
 void WriteU16(std::ostream& stream, u16 value) {
@@ -342,6 +406,21 @@ int main(int argc, char** argv) {
         }
     }
     if (std::getenv("AETHER_PLAYER_HEADLESS")) options.headless = true;
+    if (options.require_hardware_gpu && options.headless) {
+        AETHER_LOG_ERROR("Player", "--require-hardware-gpu requires a windowed run");
+        return 2;
+    }
+    if (options.require_hardware_gpu && !options.backend.empty() && options.backend != "vulkan"
+        && options.backend != "d3d12") {
+        AETHER_LOG_ERROR("Player", "--require-hardware-gpu needs a known backend (d3d12 or vulkan)");
+        return 2;
+    }
+#if !defined(_WIN32)
+    if (options.require_hardware_gpu && options.backend == "d3d12") {
+        AETHER_LOG_ERROR("Player", "--require-hardware-gpu cannot use D3D12 on this platform");
+        return 2;
+    }
+#endif
 
 #if !defined(AETHER_HAS_WINDOW) || (!defined(_WIN32) && !defined(AETHER_HAS_VULKAN))
     if (!options.headless || !options.screenshot.empty() || !options.record_dir.empty()) {
@@ -612,6 +691,8 @@ int main(int argc, char** argv) {
         std::vector<std::unique_ptr<rhi::ICommandList>> command_lists;
         std::vector<u64> frame_fences;
         std::unique_ptr<SceneRenderer> scene_renderer;
+        reflect::Json gpu_adapter = {{"backend", "none"}, {"kind", "none"}};
+        u64 submitted_gpu_frames = 0;
         bool resized = false;
         bool can_stretch = false; // whether the swap chain may be smaller than the window (D3D12)
         if (!options.headless) {
@@ -648,6 +729,12 @@ int main(int argc, char** argv) {
             }
             device = rhi::CreateDevice(backend, config == cook::BuildConfiguration::Debug);
             if (device) {
+                if (options.report || options.require_hardware_gpu) gpu_adapter = DescribeGpuAdapter(*device);
+                if (options.require_hardware_gpu && gpu_adapter.at("kind") != "hardware") {
+                    PrintGpuAdapter(gpu_adapter, 0);
+                    AETHER_LOG_ERROR("Player", "--require-hardware-gpu rejected the selected adapter");
+                    return 4;
+                }
                 // A swap chain smaller than the window is stretched to fit by D3D12's flip model; a Vulkan surface has to match the window.
                 if (backend != rhi::Backend::D3D12 && render_scale < 1.0f) {
                     AETHER_LOG_WARN("Player", "Resolution scale x%.2f needs a stretched swap chain, which only D3D12 has here; drawing at full size", render_scale);
@@ -681,6 +768,12 @@ int main(int argc, char** argv) {
             } else {
                 AETHER_LOG_WARN("Player", "No graphics device; running without drawing");
             }
+        }
+
+        if (options.require_hardware_gpu && !swap_chain) {
+            PrintGpuAdapter(gpu_adapter, 0);
+            AETHER_LOG_ERROR("Player", "--require-hardware-gpu could not open a rendering window");
+            return 4;
         }
 
         // --press holds its keys for the whole run. They are set again every frame below: a window that loses the keyboard
@@ -896,6 +989,7 @@ int main(int argc, char** argv) {
                     }
                 }
                 swap_chain->Present(vsync);
+                ++submitted_gpu_frames;
                 frame_slot = (frame_slot + 1) % static_cast<u32>(frame_fences.size());
             }
             if (options.report) frame_report.AddFrame(std::chrono::duration<f32, std::milli>(std::chrono::steady_clock::now() - now).count());
@@ -910,6 +1004,11 @@ int main(int argc, char** argv) {
         }
         if (device) {
             for (u64 pending_fence : frame_fences) device->WaitForFence(pending_fence);
+        }
+        if (options.report || options.require_hardware_gpu) PrintGpuAdapter(gpu_adapter, submitted_gpu_frames);
+        if (options.require_hardware_gpu && submitted_gpu_frames == 0) {
+            AETHER_LOG_ERROR("Player", "--require-hardware-gpu completed without submitting a frame");
+            return 4;
         }
         if (options.report) {
             // Shipping suppresses the info log and frame timings omit warm-up samples.
