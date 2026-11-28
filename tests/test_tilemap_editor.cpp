@@ -1441,6 +1441,50 @@ AETHER_TEST(TilemapEditor_FreehandDoesNotSwitchButtonsMidStroke) {
     for (i32 x = 0; x <= 4; ++x) CHECK(doc.Map().Get(0, x, 1) == 3);
 }
 
+AETHER_TEST(TilemapEditor_MiddlePanRequiresItsOwnCanvasGesture) {
+    HeadlessImGui ui;
+    auto doc = Doc();
+    TilemapPanel panel(doc);
+    doc.brush = 3;
+    ImVec2 origin;
+    const auto draw = [&] {
+        panel.Draw();
+        const auto pad = ImGui::GetStyle().WindowPadding;
+        origin = {ImGui::GetItemRectMin().x + pad.x + 8, ImGui::GetItemRectMax().y - pad.y - 8};
+    };
+    auto& io = ImGui::GetIO();
+    const auto queue_pos = [&](i32 x, i32 y) {
+        io.AddMousePosEvent(origin.x + (x + 0.5f) * panel.zoom, origin.y - (y + 0.5f) * panel.zoom);
+    };
+    const auto move = [&](i32 x, i32 y) { queue_pos(x, y); ui.Frame(draw); };
+    const auto button = [&](ImGuiMouseButton which, bool down) {
+        io.AddMouseButtonEvent(which, down);
+        ui.Frame(draw);
+    };
+    const auto left = ImGuiMouseButton_Left, middle = ImGuiMouseButton_Middle;
+    ui.Frame(draw);
+
+    move(0, 1);
+    button(left, true);
+    button(middle, true); // A secondary button cannot pan during a paint stroke.
+    move(3, 1);
+    button(left, false);
+    button(middle, false);
+    for (i32 x = 0; x < 4; ++x) CHECK(doc.Map().Get(0, x, 1) == 3);
+    CHECK(doc.Undo() && !doc.dirty());
+
+    move(1, 1);
+    button(middle, true);
+    queue_pos(3, 1); // Last motion and release can queue together.
+    io.AddMouseButtonEvent(middle, false);
+    ui.Frame(draw);
+    CHECK(!doc.dirty()); // Panning never creates an edit.
+    move(2, 0); // The board moved right two tiles, so this is now cell (0, 0).
+    button(left, true);
+    button(left, false);
+    CHECK(doc.Map().Get(0, 0, 0) == 3 && doc.Map().Get(0, 2, 0) == kEmpty);
+}
+
 AETHER_TEST(TilemapEditor_FreehandDragsMustStartOnTheMap) {
     HeadlessImGui ui;
     TilemapData map;

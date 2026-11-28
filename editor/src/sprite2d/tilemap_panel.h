@@ -75,6 +75,7 @@ private:
     f64 pan_x_ = kDefaultPan, pan_y_ = kDefaultPan;
     int last_draw_frame_ = -1;
     bool dragging_ = false;
+    bool panning_ = false;
     bool brush_uses_right_ = false;
     struct BrushSample {
         i32 x, y;

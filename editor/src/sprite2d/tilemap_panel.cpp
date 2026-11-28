@@ -228,7 +228,7 @@ void TilemapPanel::ResetForNewMap() {
 
 void TilemapPanel::FinishCanvasGesture() {
     if (dragging_) doc_.EndStroke();
-    shape_active_ = dragging_ = false;
+    shape_active_ = dragging_ = panning_ = false;
     last_brush_sample_.reset();
 }
 
@@ -236,7 +236,7 @@ void TilemapPanel::Draw() {
     const int frame = ImGui::GetFrameCount();
     // Don't treat a release while switching back to this pane as the end
     // of a gesture that began before the canvas stopped being submitted.
-    if ((shape_active_ || dragging_) && frame - last_draw_frame_ > 1) FinishCanvasGesture();
+    if ((shape_active_ || dragging_ || panning_) && frame - last_draw_frame_ > 1) FinishCanvasGesture();
     last_draw_frame_ = frame;
     if (!pending_sheet_.pixels.empty()) {
         show_sheet_ = sheet_.Set(pending_sheet_.width, pending_sheet_.height, pending_sheet_.pixels);
@@ -723,7 +723,8 @@ void TilemapPanel::DrawCanvas() {
                            ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
     const bool hovered = ImGui::IsItemHovered();
     const bool canvas_activated = ImGui::IsItemActivated();
-    const bool canvas_deactivated = (dragging_ || shape_active_) && ImGui::IsItemDeactivated();
+    const bool canvas_active = ImGui::IsItemActive();
+    const bool canvas_deactivated = (dragging_ || shape_active_ || panning_) && ImGui::IsItemDeactivated();
     ImGuiIO& io = ImGui::GetIO();
     // Pan is measured from the canvas's bottom-left, with y pointing up.
     const auto reanchor_zoom = [&](f32 from, f32 to, f64 x, f64 y) {
@@ -742,9 +743,22 @@ void TilemapPanel::DrawCanvas() {
                       static_cast<f64>(origin.y) + size.y - io.MousePos.y);
         zoom = next;
     }
-    if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Middle, 0.0f)) {
-        pan_x_ += io.MouseDelta.x;
-        pan_y_ += io.MouseDelta.y;
+    if (canvas_activated) {
+        // ImGui gives left and right clicks priority over a simultaneous middle click.
+        panning_ = ImGui::IsMouseClicked(ImGuiMouseButton_Middle) &&
+                   !ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
+                   !ImGui::IsMouseClicked(ImGuiMouseButton_Right);
+    } else if (panning_) {
+        const bool pointer_valid = !io.AppFocusLost && ImGui::IsMousePosValid() &&
+                                   std::isfinite(io.MouseDelta.x) && std::isfinite(io.MouseDelta.y);
+        const bool moved_while_held = canvas_active && ImGui::IsMouseDown(ImGuiMouseButton_Middle);
+        const bool released = canvas_deactivated && ImGui::IsMouseReleased(ImGuiMouseButton_Middle);
+        if (pointer_valid && (moved_while_held || released)) {
+            // The release frame can contain a final queued motion.
+            pan_x_ += io.MouseDelta.x;
+            pan_y_ += io.MouseDelta.y;
+        }
+        if (!pointer_valid || !canvas_active) panning_ = false;
     }
 
     if (pending_focus_) {
@@ -895,8 +909,8 @@ void TilemapPanel::DrawCanvas() {
     const i32 cx = mouse_valid ? to_cell(io.MousePos.x - base_x) : 0;
     const i32 cy = mouse_valid ? to_cell(base_y - io.MousePos.y) : 0;
     const bool on_map = mouse_valid && hovered && map.InBounds(cx, cy);
-    const bool left = ImGui::IsMouseDown(ImGuiMouseButton_Left) && ImGui::IsItemActive();
-    const bool right = ImGui::IsMouseDown(ImGuiMouseButton_Right) && ImGui::IsItemActive();
+    const bool left = ImGui::IsMouseDown(ImGuiMouseButton_Left) && canvas_active;
+    const bool right = ImGui::IsMouseDown(ImGuiMouseButton_Right) && canvas_active;
     // Only the click that captures the canvas can start a gesture. If both
     // clicks arrive together, ImGui gives the left button priority.
     const bool start_left = on_map && canvas_activated && left && ImGui::IsMouseClicked(ImGuiMouseButton_Left);
