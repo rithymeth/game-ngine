@@ -1,4 +1,5 @@
 #include "ai/bt_document.h"
+#include "ui/staged_asset_write.h"
 
 #include <algorithm>
 #include <fstream>
@@ -77,9 +78,7 @@ bool BehaviorTreeDocument::Save(std::string* error) {
 }
 
 bool BehaviorTreeDocument::SaveAs(const std::filesystem::path& path, std::string* error) {
-    std::ofstream out(path);
-    if (!out) return Fail(error, "can't write " + path.string());
-    out << Text() << "\n";
+    if (!WriteStagedAsset(path, Text() + "\n")) return Fail(error, "can't write " + path.string());
     path_ = path;
     dirty_ = false;
     return true;

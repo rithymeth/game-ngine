@@ -9,7 +9,14 @@
 #include <cmath>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <functional>
+#include <iterator>
+
+#if defined(__linux__)
+#include <signal.h>
+#include <sys/resource.h>
+#endif
 
 // Phase 20 step 6: the AI editors - navigation and AI debug drawing, the
 // Behavior Tree document (nodes, decorators, services, keys that every
@@ -179,6 +186,56 @@ AETHER_TEST(AIEditor_AIDebugDraw) {
     DrawAIDebug(world, &crowd, o, d);
     CHECK(count(ai_colors::kSight) == 32 && count(ai_colors::kHearing) == 32 && count(ai_colors::kCorners) == 0);
 }
+
+#if defined(__linux__)
+AETHER_TEST(AIEditor_FailedBehaviorTreeSavePreservesAssets) {
+    namespace fs = std::filesystem;
+    const auto dir = fs::temp_directory_path() / "aether_bt_write_failure";
+    fs::create_directories(dir);
+    const auto original = dir / "Patrol.abt";
+    const auto other = dir / "Backup.abt";
+    const auto read = [](const fs::path& path) {
+        std::ifstream in(path, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(in), {});
+    };
+
+    BehaviorTreeDocument doc;
+    CHECK(doc.SaveAs(other) && doc.SaveAs(original));
+    const auto original_before = read(original);
+    const auto other_before = read(other);
+    CHECK(!original_before.empty() && !other_before.empty());
+    CHECK(doc.AddNode({}, BtNodeType::Log));
+    const auto pending = doc.Text();
+
+    struct rlimit previous_limit{};
+    struct sigaction previous_signal{}, ignore{};
+    ignore.sa_handler = SIG_IGN;
+    sigemptyset(&ignore.sa_mask);
+    const bool read_limit = getrlimit(RLIMIT_FSIZE, &previous_limit) == 0;
+    CHECK(read_limit);
+    if (!read_limit) return;
+    const bool changed_signal = sigaction(SIGXFSZ, &ignore, &previous_signal) == 0;
+    CHECK(changed_signal);
+    if (!changed_signal) return;
+    const struct rlimit blocked{0, previous_limit.rlim_max};
+    const bool limited = setrlimit(RLIMIT_FSIZE, &blocked) == 0;
+    std::string save_error, copy_error;
+    const bool saved = limited && doc.Save(&save_error);
+    const bool copied = limited && doc.SaveAs(other, &copy_error);
+    const bool restored = !limited || setrlimit(RLIMIT_FSIZE, &previous_limit) == 0;
+    const bool signal_restored = sigaction(SIGXFSZ, &previous_signal, nullptr) == 0;
+    CHECK(limited && restored && signal_restored);
+
+    CHECK(!saved && !save_error.empty() && !copied && !copy_error.empty());
+    CHECK(read(original) == original_before && read(other) == other_before);
+    CHECK(doc.Path() == original && doc.Dirty() && doc.CanUndo() && doc.Text() == pending);
+    CHECK(doc.Save() && !doc.Dirty());
+    BehaviorTreeDocument reloaded;
+    CHECK(reloaded.Load(original) && reloaded.Text() == pending && read(other) == other_before);
+    CHECK(std::distance(fs::directory_iterator(dir), fs::directory_iterator{}) == 2);
+    fs::remove_all(dir);
+}
+#endif
 
 AETHER_TEST(AIEditor_Document) {
     std::fprintf(stderr, "[trace] test body: before GuardDoc call\n"); std::fflush(stderr);
