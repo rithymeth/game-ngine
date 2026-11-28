@@ -557,6 +557,40 @@ AETHER_TEST(AIEditor_BehaviorTreeDeleteClearsStaleInspectorSelection) {
     CHECK(!editor.Selected() && editor.View().selection.empty());
 }
 
+AETHER_TEST(AIEditor_BehaviorTreeDragFollowsMovedNode) {
+    HeadlessImGui ui;
+    BehaviorTreeDocument doc;
+    BehaviorTreeEditor editor(doc);
+    CHECK(doc.AddNode({}, BtNodeType::Log, 0));
+    const auto draw = [&] { ui.Frame([&] { editor.Draw(); }); };
+    draw();
+    draw();
+
+    ImGuiIO& io = ImGui::GetIO();
+    const GraphViewState& view = editor.View();
+    const auto& layout = editor.Layout();
+    if (layout.size() != 3) {
+        CHECK(layout.size() == 3);
+        return;
+    }
+    const f32 x = view.CanvasToScreenX(layout[1].x + 40.0f);
+    const f32 y = view.CanvasToScreenY(layout[1].y + 8.0f);
+    const f32 target = view.CanvasToScreenX(layout[2].x + 60.0f);
+    io.AddMousePosEvent(x, y);
+    draw();
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+    draw();
+    CHECK(editor.Selected() && *editor.Selected() == BtPath{0});
+    io.AddMousePosEvent(target, y);
+    draw();
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+    draw();
+
+    CHECK(doc.Node({1}) != nullptr && doc.Node({1})->type == BtNodeType::Log);
+    CHECK(editor.Selected() && *editor.Selected() == BtPath{1});
+    CHECK(editor.View().selection.size() == 1 && editor.View().selection.count(3) == 1);
+}
+
 AETHER_TEST(AIEditor_NavigationPanel) {
     nav::NavMeshSettings s;
     s.agent_radius = 0.4f;

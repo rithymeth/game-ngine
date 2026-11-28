@@ -153,16 +153,29 @@ GraphViewModel BuildBehaviorTreeView(const BehaviorTreeAsset& tree, const std::v
     return m;
 }
 
-std::vector<std::string> ApplyBehaviorTreeEdits(BehaviorTreeDocument& doc, const std::vector<BtLayoutNode>& layout, const GraphViewResult& e) {
+namespace {
+
+struct BtNodeMove {
+    BtPath from;
+    BtPath to;
+};
+
+std::vector<std::string> ApplyGraphEdits(BehaviorTreeDocument& doc, const std::vector<BtLayoutNode>& layout, const GraphViewResult& e,
+                                        std::optional<BtNodeMove>& moved) {
     std::vector<std::string> messages;
     std::string error;
+    const auto move = [&](const BtPath& path, const BtPath& parent, usize index) {
+        const auto destination = doc.MoveNode(path, parent, index, &error);
+        if (!destination) messages.push_back(error);
+        else if (*destination != path) moved = BtNodeMove{path, *destination};
+    };
     // A wire from a composite's out to a node's in: the node moves under it (at the end).
     if (e.connect) {
         const BtLayoutNode* from = ById(layout, e.connect_from.node);
         const BtLayoutNode* to = ById(layout, e.connect_to.node);
         if (from != nullptr && to != nullptr) {
             const BtNode* parent = doc.Node(from->path);
-            if (!doc.MoveNode(to->path, from->path, parent != nullptr ? parent->children.size() : 0, &error)) messages.push_back(error);
+            move(to->path, from->path, parent != nullptr ? parent->children.size() : 0);
         }
         return messages; // the layout is stale now
     }
@@ -176,7 +189,7 @@ std::vector<std::string> ApplyBehaviorTreeEdits(BehaviorTreeDocument& doc, const
             for (const BtLayoutNode& s : layout)
                 if (s.parent == n->parent && s.id != n->id && s.x < pos.first) ++index;
             const BtPath parent(n->path.begin(), n->path.end() - 1);
-            if (!doc.MoveNode(n->path, parent, index, &error)) messages.push_back(error);
+            move(n->path, parent, index);
             return messages;
         }
     }
@@ -200,6 +213,13 @@ std::vector<std::string> ApplyBehaviorTreeEdits(BehaviorTreeDocument& doc, const
         return messages;
     }
     return messages;
+}
+
+} // namespace
+
+std::vector<std::string> ApplyBehaviorTreeEdits(BehaviorTreeDocument& doc, const std::vector<BtLayoutNode>& layout, const GraphViewResult& e) {
+    std::optional<BtNodeMove> moved;
+    return ApplyGraphEdits(doc, layout, e, moved);
 }
 
 BehaviorTreeEditor::BehaviorTreeEditor(BehaviorTreeDocument& document) : doc_(document) { view_.request_fit = true; }
@@ -425,7 +445,13 @@ void BehaviorTreeEditor::DrawTree() {
         else status_ = error;
     }
     const std::vector<BtLayoutNode> layout = layout_; // edits refresh the layout
-    for (const std::string& m : ApplyBehaviorTreeEdits(doc_, layout, r)) status_ = m;
+    std::optional<BtNodeMove> moved;
+    for (const std::string& m : ApplyGraphEdits(doc_, layout, r, moved)) status_ = m;
+    if (moved) {
+        // The previous paths and graph IDs may now belong to different nodes.
+        if (selected_ && *selected_ == moved->from) Select(moved->to);
+        else ClearSelection();
+    }
 }
 
 void BehaviorTreeEditor::DrawPalette() {
