@@ -439,6 +439,11 @@ void TilemapPanel::DrawTools() {
             const auto& name = doc_.GetTileset().autotiles[hit.rule].name;
             ImGui::TextWrapped("Invalid autotile: %s, mask %zu uses tile %d (grid has %u tiles).",
                                name.c_str(), hit.mask, hit.tile, hit.grid_count);
+            if (ImGui::SmallButton("Go to invalid autotile mask")) {
+                selected_autotile_ = static_cast<i32>(hit.rule);
+                scroll_to_invalid_mask_ = true;
+            }
+            ImGui::SetItemTooltip("Show this mask in the palette without changing your brush or painted tiles.");
         }
         if (invalid_solid_flag_) {
             const u32 count = doc_.GetTileset().TileCount();

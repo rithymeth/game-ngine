@@ -3413,6 +3413,60 @@ AETHER_TEST(TilemapEditor_CollisionDiagnosticsIgnoreNumberedTilesets) {
     CHECK(doc.GetTileset().IsSolid(4) && !doc.dirty());
 }
 
+AETHER_TEST(TilemapEditor_CanJumpToInvalidMaskWhileInvalidPaintRemains) {
+    HeadlessImGui ui;
+    TilemapData map;
+    map.Resize(4, 4);
+    map.AddLayer("Ground");
+    map.Set(0, 2, 2, 70); // A separate invalid painted tile must remain untouched.
+    Tileset tiles;
+    tiles.texture = assets::NewAssetGuid();
+    tiles.texture_width = tiles.texture_height = 64;
+    for (usize i = 0; i < 512; ++i) {
+        auto masks = Autotile{}.tiles;
+        if (i == 510) masks[15] = 99;
+        tiles.AddAutotile("Canal bank " + std::to_string(i), masks);
+    }
+    TilemapEditDocument doc(std::move(map), std::move(tiles));
+    TilemapPanel panel(doc);
+    doc.brush = 3;
+    ImGuiWindow* palette = nullptr;
+    ImGuiID jump_id = 0;
+    const auto draw = [&] {
+        ui.Frame([&] {
+            jump_id = ImGui::GetID("Go to invalid autotile mask");
+            const ImGuiID palette_id = ImGui::GetID("##left");
+            const auto* parent = ImGui::GetCurrentWindowRead();
+            panel.Draw();
+            for (ImGuiWindow* child : parent->DC.ChildWindows)
+                if (child->ChildId == palette_id) palette = child;
+        });
+    };
+    CHECK(panel.FindNextInvalidPaint()); // The normal search still goes to the canvas.
+    draw();
+    if (!palette) { CHECK(false); return; }
+    CHECK(palette->Scroll.y == 0.0f);
+    auto& io = ImGui::GetIO();
+    bool clicked = false;
+    for (f32 y = 45; !clicked && y < 240; y += 4) {
+        for (f32 x = 14; x < 400; x += 20) {
+            io.AddMousePosEvent(x, y);
+            draw();
+            if (ImGui::GetHoveredID() != jump_id) continue;
+            io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+            draw();
+            io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+            draw();
+            clicked = true;
+            break;
+        }
+    }
+    draw();
+    CHECK(clicked && palette->Scroll.y > 7000.0f);
+    CHECK(doc.Map().Get(0, 2, 2) == 70 && doc.GetTileset().autotiles[510].tiles[15] == 99);
+    CHECK(doc.brush == 3 && !doc.dirty() && !doc.CanUndo());
+}
+
 AETHER_TEST(TilemapEditor_FindingAnInvalidMaskScrollsItIntoView) {
     HeadlessImGui ui;
     TilemapData map;
