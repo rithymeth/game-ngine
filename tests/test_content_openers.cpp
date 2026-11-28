@@ -491,6 +491,98 @@ AETHER_TEST(Openers_BlendSpaceReplacementClearsTheOldSampleSelection) {
     CHECK(sample(normal) && !sample(selected));
 }
 
+AETHER_TEST(Openers_BehaviorTreeReplacementClearsTheOldSelectionAndPalette) {
+    HeadlessImGui ui;
+    ProjectPaths paths;
+    FreshProject("behavior_tree_selection", paths);
+    EditorWorkspace ws(paths.file);
+    ai::BehaviorTreeAsset tree;
+    tree.name = "First Tree";
+    tree.root.type = ai::BtNodeType::Sequence;
+    tree.root.children.emplace_back().type = ai::BtNodeType::Wait;
+    Write(paths.content / "AI/First.abt", ai::SaveBehaviorTree(tree).dump(2));
+    tree.name = "Second Tree";
+    tree.root.children.front().type = ai::BtNodeType::Succeed;
+    Write(paths.content / "AI/Second.abt", ai::SaveBehaviorTree(tree).dump(2));
+    Write(paths.content / "AI/Broken.abt", "not a behavior tree");
+
+    if (!ws.OpenAsset("AI/First.abt")) { CHECK(false); return; }
+    const i64 tool = ws.FindTool("Behavior Tree");
+    if (tool < 0) { CHECK(false); return; }
+    const auto draw = [&] { ws.DrawTool(static_cast<usize>(tool)); };
+    ui.Frame(draw);
+    ui.Frame(draw);
+    const auto mark = [](ImU32 color, ImVec2* center = nullptr) {
+        ImVec2 sum{};
+        int count = 0;
+        for (const ImDrawList* list : ImGui::GetDrawData()->CmdLists) {
+            for (const ImDrawVert& v : list->VtxBuffer) {
+                if (v.col != color) continue;
+                sum.x += v.pos.x;
+                sum.y += v.pos.y;
+                ++count;
+            }
+        }
+        if (center && count > 0) *center = ImVec2(sum.x / count, sum.y / count);
+        return count > 0;
+    };
+    constexpr ImU32 task_header = IM_COL32(112, 48, 112, 255);
+    constexpr ImU32 selected_border = IM_COL32(107, 161, 255, 255);
+    ImGuiIO& io = ImGui::GetIO();
+    const auto hover_task = [&] {
+        ImVec2 center{};
+        const bool found = mark(task_header, &center);
+        CHECK(found);
+        if (found) {
+            io.AddMousePosEvent(center.x, center.y);
+            ui.Frame(draw);
+        }
+        return found;
+    };
+    const auto select_task = [&] {
+        if (!hover_task()) return;
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+        ui.Frame(draw);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+        ui.Frame(draw);
+        CHECK(mark(selected_border));
+    };
+    const auto key = [&](ImGuiKey value) {
+        io.AddKeyEvent(value, true);
+        ui.Frame(draw);
+        io.AddKeyEvent(value, false);
+        ui.Frame(draw);
+    };
+    const auto palette_open = [] {
+        return ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+    };
+
+    select_task();
+    CHECK(!ws.OpenAsset("AI/Broken.abt"));
+    ui.Frame(draw);
+    CHECK(mark(selected_border));
+    if (!ws.OpenAsset("AI/Second.abt")) { CHECK(false); return; }
+    ui.Frame(draw);
+    if (!hover_task()) return;
+    key(ImGuiKey_Delete);
+    const bool intact = mark(task_header);
+    CHECK(intact); // The old index path must not delete the replacement tree's task.
+    if (!intact) return;
+    CHECK(!mark(selected_border));
+
+    key(ImGuiKey_Tab);
+    CHECK(palette_open());
+    CHECK(!ws.OpenAsset("AI/Broken.abt"));
+    ui.Frame(draw);
+    CHECK(palette_open());
+    if (!ws.OpenAsset("AI/First.abt")) { CHECK(false); return; } // The unselected Delete left the second tree clean.
+    ui.Frame(draw);
+    CHECK(!palette_open());
+    select_task();
+    key(ImGuiKey_Delete);
+    CHECK(!mark(task_header)); // An explicitly selected node can still be deleted.
+}
+
 AETHER_TEST(Openers_ContentBrowserCreatesAndSelectsAtlasWithoutReplacingOne) {
     ProjectPaths paths;
     FreshProject("create_sprite_atlas", paths);

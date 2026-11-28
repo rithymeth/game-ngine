@@ -1361,7 +1361,11 @@ struct EditorWorkspace::Impl {
             ui_designer->ResetForLoadedLayout();
             return true;
         }
-        if (ext == ".abt") return load(bt_doc, "Behavior Tree", "behavior tree");
+        if (ext == ".abt") {
+            if (!load(bt_doc, "Behavior Tree", "behavior tree")) return false;
+            bt_editor->ResetForLoadedTree();
+            return true;
+        }
         if (ext == ".avfx") return load(particle_doc, "Particle System", "particle system");
         if (ext == ".aterrain") return load(terrain_doc, "Terrain", "terrain");
         if (ext == ".afoliage") return load(foliage_doc, "Foliage", "foliage");

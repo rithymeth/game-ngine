@@ -45,6 +45,7 @@ public:
     explicit BehaviorTreeEditor(BehaviorTreeDocument& document);
 
     void Draw();
+    void ResetForLoadedTree();
 
     const std::optional<BtPath>& Selected() const { return selected_; }
     void Select(const BtPath& path);
@@ -82,6 +83,7 @@ private:
     u64 layout_revision_ = 0;
     std::optional<BtPath> selected_;
     bool palette_open_ = false, palette_needs_popup_ = false;
+    u32 palette_popup_id_ = 0;
     BtPath palette_parent_;
     const ai::BehaviorTreeInstance* live_ = nullptr;
     const ai::Blackboard* live_board_ = nullptr;
