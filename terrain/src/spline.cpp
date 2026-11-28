@@ -365,7 +365,7 @@ std::vector<f32> BuildSplineMesh(const Spline& spline, f32 half_width, u32 verts
         const f32 w = spline.Width(t) * half_width;
         const Vec3 left = pos - right * w;
         const Vec3 right_v = pos + right * w;
-        const Vec3 normal{0, 1, 0};
+        const Vec3 normal = up;
         const f32 v_coord = t;
 
         mesh[vidx++] = left.x;  mesh[vidx++] = left.y;  mesh[vidx++] = left.z;

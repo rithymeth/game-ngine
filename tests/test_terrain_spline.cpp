@@ -150,6 +150,27 @@ AETHER_TEST(Spline_MeshAndRoadMask) {
     AETHER_CHECK(gap);
 }
 
+AETHER_TEST(Spline_RoadNormalsFollowTheGradeAndBank) {
+    Spline road;
+    road.AddPoint({0, 0, 0});
+    road.AddPoint({10, 4, 0});
+    road.SetRoll(0, 30.0f);
+    road.SetRoll(1, 30.0f);
+    const auto mesh = BuildRoadMesh(road, 4);
+    AETHER_CHECK(mesh.size() == 5u * 2u * 8u);
+    if (mesh.size() != 5u * 2u * 8u) return;
+    for (usize i = 0; i < 5; ++i) {
+        Vec3 tangent, up, right;
+        road.Frame(static_cast<f32>(i) / 4.0f, &tangent, &up, &right);
+        for (usize side = 0; side < 2; ++side) {
+            const usize n = (i * 2 + side) * 8 + 3;
+            const Vec3 normal(mesh[n], mesh[n + 1], mesh[n + 2]);
+            AETHER_CHECK(NearEqual(normal, up, 1e-5f));
+            AETHER_CHECK(std::fabs(normal.Dot(tangent)) < 1e-5f && std::fabs(normal.Dot(right)) < 1e-5f);
+        }
+    }
+}
+
 AETHER_TEST(Spline_TangentFollowsCurve) {
     Spline sp;
     sp.AddPoint({0, 0, 0});
