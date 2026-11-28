@@ -256,6 +256,30 @@ AETHER_TEST(WorldEditor_Splines) {
     CHECK(doc.Undo() && doc.Get().Points()[0].position.x == 0.0f); // the drag, in one step
 }
 
+AETHER_TEST(WorldEditor_SplineUndoKeepsSeparateViewportDrags) {
+    SplineEditDocument doc;
+    doc.AddPoint(Vec3(0, 0, 0));
+    doc.AddPoint(Vec3(10, 0, 0));
+    SplinePanel panel(doc);
+    const auto drag = [&](float start, float middle, float finish) {
+        panel.Pointer(true, false, Vec3(start, 0, 0));
+        panel.Pointer(true, false, Vec3(middle, 0, 0));
+        panel.Pointer(true, false, Vec3(finish, 0, 0));
+        panel.Pointer(false, false, Vec3(finish, 0, 0));
+    };
+    drag(0, 1, 2);
+    drag(2, 3, 4);
+    drag(10, 11, 12);
+    const auto at = [&](aether::u32 point) { return doc.Get().Points()[point].position.x; };
+    CHECK(at(0) == 4 && at(1) == 12);
+    const bool first = doc.Undo() && at(0) == 4 && at(1) == 10;
+    CHECK(first);
+    if (!first) return; // further Undo would remove one of the fixture's points on the unfixed build
+    CHECK(doc.Undo() && at(0) == 2 && at(1) == 10);
+    CHECK(doc.Undo() && at(0) == 0 && at(1) == 10);
+    CHECK(doc.Redo() && doc.Redo() && doc.Redo() && at(0) == 4 && at(1) == 12);
+}
+
 AETHER_TEST(WorldEditor_PanelsHeadless) {
     HeadlessImGui ui;
     TerrainEditDocument terrain_doc = FlatTerrain();

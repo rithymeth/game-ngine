@@ -145,10 +145,12 @@ void FoliagePanel::Draw() {
 
 void SplinePanel::Pointer(bool down, bool add, const Vec3& ground, f32 pick_radius) {
     if (!down) {
+        if (dragging_) doc_.FinishMoveGesture();
         dragging_ = false;
         return;
     }
     if (!dragging_) {
+        doc_.FinishMoveGesture();
         dragging_ = true;
         if (add) {
             doc_.AddPoint(ground);
@@ -173,7 +175,10 @@ void SplinePanel::Draw() {
         const u32 i = *doc_.selected;
         const SplinePoint p = s.Points()[i];
         f32 pos[3] = {p.position.x, p.position.y, p.position.z};
-        if (ImGui::DragFloat3("Position", pos, 0.05f)) doc_.MovePoint(i, Vec3(pos[0], pos[1], pos[2]), ImGui::IsMouseDragging(0));
+        const bool moved = ImGui::DragFloat3("Position", pos, 0.05f);
+        if (ImGui::IsItemActivated()) doc_.FinishMoveGesture();
+        if (moved) doc_.MovePoint(i, Vec3(pos[0], pos[1], pos[2]), true);
+        if (ImGui::IsItemDeactivated()) doc_.FinishMoveGesture();
         f32 width = p.width;
         if (ImGui::DragFloat("Width", &width, 0.05f, 0.0f, 1000.0f, "%.2f m")) doc_.SetWidth(i, width);
         f32 roll = p.roll;

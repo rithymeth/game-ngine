@@ -21,6 +21,7 @@ public:
     std::optional<u32> InsertAfter(u32 index);            // halfway to the next point
     bool RemovePoint(u32 index);
     bool MovePoint(u32 index, const Vec3& position, bool merge = false); // merge: part of a drag (one undo step)
+    void FinishMoveGesture() { merging_ = false; }
     bool SetWidth(u32 index, f32 width);
     bool SetRoll(u32 index, f32 roll_degrees);
 
